@@ -2,13 +2,21 @@
 """
 CRISDEV VPN Manager
 ===================
-Panel de administración VPN para servidores Ubuntu 22.04.
+Panel de administracion VPN para servidores Ubuntu 22.04.
 Ejecutar: python3 crisdev.py
 """
 import sys
 import os
 
-# Ensure the script's directory is in the path for ui/ imports
+os.environ["TERM"] = os.environ.get("TERM", "xterm-256color")
+os.environ["PYTHONIOENCODING"] = "utf-8"
+
+# Limpiar cache de modulos para siempre cargar la ultima version
+import importlib
+for name in list(sys.modules.keys()):
+    if name.startswith("ui.") or name == "ui" or name == "menu":
+        del sys.modules[name]
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from menu import menu_main

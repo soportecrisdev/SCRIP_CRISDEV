@@ -181,6 +181,7 @@ def menu_main():
         left4 = [
             (20, "Verificar versiones"),
             (21, "Logs de servicios"),
+            (22, "Reiniciar servicios"),
         ]
         right4 = [
             (23, "Logs de auditoria"),
@@ -237,6 +238,8 @@ def menu_main():
             menu_check_versions()
         elif choice == "21":
             menu_service_logs()
+        elif choice == "22":
+            menu_restart_services()
         elif choice == "23":
             menu_audit_log()
         elif choice == "24":
@@ -925,6 +928,37 @@ def menu_service_logs():
         print(f"\n{output}")
 
 
+def menu_restart_services():
+    """Reiniciar todos los servicios VPN."""
+    breadcrumb("CRISDEV > Sistema > Reiniciar servicios")
+    section("REINICIAR SERVICIOS")
+    separator()
+
+    services = [
+        ("xray", "Xray"),
+        ("hysteria-server", "Hysteria2"),
+        ("stunnel4", "Stunnel4"),
+        ("udp-custom", "UDP Custom"),
+        ("sshd", "SSH"),
+    ]
+
+    for svc_id, svc_name in services:
+        status = check_service_status(svc_id)
+        if status == "active":
+            print(f"  Reiniciando {bold(svc_name)}...")
+            _cmd(f"systemctl restart {svc_id}")
+            new_status = check_service_status(svc_id)
+            if new_status == "active":
+                ok_msg(f"{svc_name} reiniciado correctamente")
+            else:
+                error_msg(f"{svc_name} fallo al reiniciar")
+        else:
+            warn_msg(f"{svc_name} no esta activo, omitiendo")
+
+    print()
+    ok_msg("Proceso de reinicio completado")
+
+
 def menu_audit_log():
     """Ver log de auditoria."""
     breadcrumb("CRISDEV > Sistema > Auditoria")
@@ -939,7 +973,26 @@ def menu_audit_log():
 def menu_update_crisdev():
     """Actualizar CRISDEV desde GitHub."""
     breadcrumb("CRISDEV > Sistema > Actualizar")
-    info_msg("Actualizando CRISDEV...")
-    url = "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/crisdev.sh"
-    _cmd(f"curl -fsSL {url} -o /usr/local/bin/crisdev 2>/dev/null && chmod +x /usr/local/bin/crisdev")
-    ok_msg("CRISDEV actualizado")
+    section("ACTUALIZAR CRISDEV")
+    info_msg("Descargando ultima version desde GitHub...")
+
+    repo = "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main"
+    install_dir = "/etc/crisdev"
+
+    files = [
+        ("crisdev.py", f"{install_dir}/crisdev.py"),
+        ("menu.py", f"{install_dir}/menu.py"),
+        ("ui/theme.py", f"{install_dir}/ui/theme.py"),
+        ("ui/components.py", f"{install_dir}/ui/components.py"),
+        ("ui/__init__.py", f"{install_dir}/ui/__init__.py"),
+    ]
+
+    for src, dst in files:
+        url = f"{repo}/{src}"
+        result = _cmd(f"curl -fsSL {url} -o {dst} 2>/dev/null")
+        if result is not None or os.path.exists(dst):
+            ok_msg(f"  {src} actualizado")
+        else:
+            error_msg(f"  Error descargando {src}")
+
+    ok_msg("CRISDEV actualizado. El nuevo efecto se vera al reabrir.")

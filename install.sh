@@ -58,13 +58,14 @@ echo -e "${GREEN}[OK]${NC} Dependencias instaladas"
 
 echo -e "${YELLOW}[3/5]${NC} Descargando CRISDEV VPN Manager..."
 mkdir -p "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR/ui"
 cd "$INSTALL_DIR"
 
 # Intentar clonar repo completo
 if git clone "$REPO_URL" . 2>/dev/null; then
     echo -e "${GREEN}[OK]${NC} Repositorio clonado"
 else
-    echo -e "${YELLOW}[WARN]${NC} Clon falló, descargando script directamente..."
+    echo -e "${YELLOW}[WARN]${NC} Clono falló, descargando script directamente..."
     wget -q "$REMOTE_SCRIPT" -O "$SCRIPT_NAME" 2>/dev/null || \
     curl -fsSL "$REMOTE_SCRIPT" -o "$SCRIPT_NAME" 2>/dev/null
     if [[ ! -f "$SCRIPT_NAME" ]]; then
@@ -78,7 +79,15 @@ chmod +x "$SCRIPT_NAME"
 
 echo -e "${YELLOW}[4/5]${NC} Instalando comando 'crisdev'..."
 ln -sf "$INSTALL_DIR/$SCRIPT_NAME" /usr/local/bin/crisdev
-echo -e "${GREEN}[OK]${NC} Comando 'crisdev' disponible"
+echo -e "${GREEN}[OK]${NC} Comando 'crisdev' disponible (bash script)"
+
+# Crear comando para la UI Python
+cat > /usr/local/bin/crisdev-ui << 'UIEOF'
+#!/bin/bash
+cd /opt/crisdev && python3 crisdev.py "$@"
+UIEOF
+chmod +x /usr/local/bin/crisdev-ui
+echo -e "${GREEN}[OK]${NC} Comando 'crisdev-ui' disponible (panel Python)"
 
 echo -e "${YELLOW}[5/5]${NC} Ejecutando instalación completa..."
 echo ""

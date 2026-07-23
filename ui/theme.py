@@ -31,13 +31,18 @@ def _enable_ansi_windows():
 
 _enable_ansi_windows()
 
-# Windows conhost usa cp1252 por defecto; forzamos UTF-8 para box-drawing chars
-if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+# Forzar UTF-8 en stdout para box-drawing chars y ANSI codes
+if hasattr(sys.stdout, "reconfigure"):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+# En Linux, asegurar que TERM soporta colores
+if sys.platform != "win32":
+    if "TERM" not in os.environ or os.environ["TERM"] == "dumb":
+        os.environ["TERM"] = "xterm-256color"
 
 
 # ============================================================================
@@ -52,7 +57,7 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
 #   Negrita = titulos de bloque
 #   Blanco  = prompt de entrada
 
-ESC = "\033"  # Caracter ESC real (NO usar r"\033" ni "\\033")
+ESC = chr(27)  # Caracter ESC real — chr(27) es infalible en cualquier Python
 
 # Colores de texto
 C_OK      = f"{ESC}[32m"      # Verde
