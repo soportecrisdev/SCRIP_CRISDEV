@@ -1,8 +1,7 @@
 """
 CRISDEV VPN Manager - Menu Module
 ==================================
-Menu principal y submenus con interfaz profesional.
-Todo el renderizado usa ui/components.py — ningun print() directo con colores.
+Estructura modular: cada opcion del principal abre un submenu.
 """
 import json
 import os
@@ -12,32 +11,26 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from ui import (
-    clear_screen, header, banner_welcome, dashboard,
-    section, separator, menu_item, menu_item_right, two_col_menu,
-    prompt_input, confirm_destructive, breadcrumb, pause,
+    clear_screen, header, dashboard, separator, prompt_input,
+    confirm_destructive, breadcrumb, pause,
     ok_msg, error_msg, info_msg, warn_msg,
     user_table, user_detail_card, service_status_table,
     bold, ok, error, warn, info, dim,
-    get_user_stats, check_service_status,
+    check_service_status,
 )
 
 
 # ============================================================================
-# CONFIGURACION
+# CONFIG
 # ============================================================================
 
 USERS_DB = "/etc/crisdev/data/users.json"
-SERVER_CONFIG = "/etc/crisdev/data/server_config.json"
 AUDIT_LOG = "/etc/crisdev/logs/audit.log"
+SERVER_CONFIG = "/etc/crisdev/data/server_config.json"
 
-# Puertos
 PORT_SSH = 22
-PORT_SSH_SSL = 443
 PORT_XRAY_WS = 2053
 PORT_XRAY_GRPC = 2083
-PORT_XRAY_REALITY = 8443
-PORT_XRAY_VLESS = 2096
-PORT_WEBSOCKET = 8880
 PORT_HYSTERIA = 443
 PORT_UDP_CUSTOM = "7100-7200"
 
@@ -47,7 +40,6 @@ PORT_UDP_CUSTOM = "7100-7200"
 # ============================================================================
 
 def _load_users() -> list:
-    """Carga la base de datos de usuarios."""
     try:
         with open(USERS_DB) as f:
             return json.load(f)
@@ -55,66 +47,44 @@ def _load_users() -> list:
         return []
 
 def _save_users(users: list):
-    """Guarda la base de datos de usuarios."""
     os.makedirs(os.path.dirname(USERS_DB), exist_ok=True)
     with open(USERS_DB, "w") as f:
         json.dump(users, f, indent=2)
 
 def _find_user(username: str) -> Optional[dict]:
-    """Busca un usuario por nombre."""
     for u in _load_users():
         if u.get("username") == username:
             return u
     return None
 
 def _audit(action: str, detail: str):
-    """Escribe en el log de auditoria."""
     os.makedirs(os.path.dirname(AUDIT_LOG), exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(AUDIT_LOG, "a") as f:
         f.write(f"[{ts}] {action}: {detail}\n")
 
-def _generate_uuid() -> str:
-    """Genera un UUID."""
-    try:
-        with open("/proc/sys/kernel/random/uuid") as f:
-            return f.read().strip()
-    except Exception:
-        import uuid
-        return str(uuid.uuid4())
-
 def _generate_password(length: int = 16) -> str:
-    """Genera una contrasena aleatoria."""
-    import secrets
-    import string
-    alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(length))
+    import secrets, string
+    return ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(length))
 
 def _cmd(command: str) -> str:
-    """Ejecuta un comando y retorna el output."""
     try:
-        result = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=10
-        )
-        return result.stdout.strip()
+        r = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=10)
+        return r.stdout.strip()
     except Exception:
         return ""
 
 def _server_ip() -> str:
-    """Obtiene la IP del servidor."""
     try:
         with open(SERVER_CONFIG) as f:
-            cfg = json.load(f)
-        return cfg.get("server_ip", "?.?.?.?")
+            return json.load(f).get("server_ip", "?.?.?.?")
     except Exception:
         return "?.?.?.?"
 
 def _server_domain() -> str:
-    """Obtiene el dominio del servidor."""
     try:
         with open(SERVER_CONFIG) as f:
-            cfg = json.load(f)
-        return cfg.get("domain", "")
+            return json.load(f).get("domain", "")
     except Exception:
         return ""
 
@@ -124,126 +94,36 @@ def _server_domain() -> str:
 # ============================================================================
 
 def menu_main():
-    """Menu principal del panel."""
     while True:
         clear_screen()
         header()
         dashboard(USERS_DB)
 
-        # --- USUARIOS (columna izquierda) ---
-        section("USUARIOS")
-        left = [
-            (1, "Crear usuario"),
-            (2, "Editar usuario"),
-            (3, "Eliminar usuario"),
-            (4, "Suspender usuario"),
-            (5, "Reactivar usuario"),
-        ]
-        right = [
-            (6, "Renovar usuario"),
-            (7, "Listar usuarios"),
-            (8, "Ver detalle"),
-            (9, "Buscar usuario"),
-        ]
-        two_col_menu(left, right, col_width_left=33)
         print()
-
-        # --- PROTOCOLOS ---
-        section("PROTOCOLOS")
-        left2 = [
-            (10, "SSH / SSH-SSL"),
-            (11, "SlowDNS"),
-            (12, "Xray (VLESS/VMess/Trojan)"),
-        ]
-        right2 = [
-            (13, "Hysteria2"),
-            (14, "udp-custom"),
-            (15, "Generar links de conexion"),
-        ]
-        two_col_menu(left2, right2, col_width_left=33)
+        print(f"    {bold('1)')} Usuarios")
+        print(f"    {bold('2)')} Xray / V2Ray")
+        print(f"    {bold('3)')} Puertos")
+        print(f"    {bold('4)')} Herramientas")
+        print(f"    {bold('5)')} Bot y API")
+        print(f"    {bold('6)')} Configuracion")
         print()
-
-        # --- SERVIDOR ---
-        section("SERVIDOR")
-        left3 = [
-            (16, "Estado del servidor"),
-            (17, "Firewall / puertos"),
-        ]
-        right3 = [
-            (18, "Certificados TLS"),
-            (19, "Backups"),
-        ]
-        two_col_menu(left3, right3, col_width_left=33)
-        print()
-
-        # --- SISTEMA ---
-        section("SISTEMA")
-        left4 = [
-            (20, "Verificar versiones"),
-            (21, "Logs de servicios"),
-            (22, "Reiniciar servicios"),
-        ]
-        right4 = [
-            (23, "Logs de auditoria"),
-            (24, "Actualizar CRISDEV"),
-        ]
-        two_col_menu(left4, right4, col_width_left=33)
-        print()
-
-        # --- SALIDA ---
         separator()
-        print(f"    {error('[0] Salir del script')}              {warn('[9] Reiniciar VPS')}")
+        print(f"    {error('[0] Salir')}")
 
-        choice = prompt_input("Ingresa una opcion")
+        choice = prompt_input("Opcion")
 
         if choice == "1":
-            menu_create_user()
+            mod_usuarios()
         elif choice == "2":
-            menu_edit_user()
+            mod_xray()
         elif choice == "3":
-            menu_delete_user()
+            mod_puertos()
         elif choice == "4":
-            menu_suspend_user()
+            mod_herramientas()
         elif choice == "5":
-            menu_reactivate_user()
+            mod_bot_api()
         elif choice == "6":
-            menu_renew_user()
-        elif choice == "7":
-            menu_list_users()
-        elif choice == "8":
-            menu_user_detail()
-        elif choice == "9":
-            menu_reboot_vps()
-        elif choice == "10":
-            menu_ssh()
-        elif choice == "11":
-            menu_slowdns()
-        elif choice == "12":
-            menu_xray()
-        elif choice == "13":
-            menu_hysteria2()
-        elif choice == "14":
-            menu_udp_custom()
-        elif choice == "15":
-            menu_generate_links()
-        elif choice == "16":
-            menu_server_status()
-        elif choice == "17":
-            menu_firewall()
-        elif choice == "18":
-            menu_certs()
-        elif choice == "19":
-            menu_backup()
-        elif choice == "20":
-            menu_check_versions()
-        elif choice == "21":
-            menu_service_logs()
-        elif choice == "22":
-            menu_restart_services()
-        elif choice == "23":
-            menu_audit_log()
-        elif choice == "24":
-            menu_update_crisdev()
+            mod_config()
         elif choice == "0":
             clear_screen()
             print(f"\n  {ok('Hasta luego, CRISDEV.')}\n")
@@ -251,51 +131,78 @@ def menu_main():
         else:
             error_msg("Opcion invalida")
 
+
+# ============================================================================
+# MODULO 1: USUARIOS
+# ============================================================================
+
+def mod_usuarios():
+    while True:
+        clear_screen()
+        header()
+        breadcrumb("> USUARIOS")
+        print()
+        print(f"    {bold('1)')} Crear usuario")
+        print(f"    {bold('2)')} Editar usuario")
+        print(f"    {bold('3)')} {error('Eliminar usuario')}")
+        print(f"    {bold('4)')} Suspender usuario")
+        print(f"    {bold('5)')} Reactivar usuario")
+        print(f"    {bold('6)')} Renovar usuario")
+        print(f"    {bold('7)')} Listar usuarios")
+        print(f"    {bold('8)')} Ver detalle")
+        print()
+        separator()
+        print(f"    {dim('[0] Volver')}")
+
+        opt = prompt_input("Opcion")
+        if opt == "1":
+            _usr_create()
+        elif opt == "2":
+            _usr_edit()
+        elif opt == "3":
+            _usr_delete()
+        elif opt == "4":
+            _usr_suspend()
+        elif opt == "5":
+            _usr_reactivate()
+        elif opt == "6":
+            _usr_renew()
+        elif opt == "7":
+            _usr_list()
+        elif opt == "8":
+            _usr_detail()
+        elif opt == "0":
+            return
+        else:
+            error_msg("Opcion invalida")
         pause()
 
 
-# ============================================================================
-# USUARIOS — CRUD
-# ============================================================================
-
-def menu_create_user():
-    """Crear un nuevo usuario."""
-    breadcrumb("CRISDEV > Usuarios > Crear")
-    section("CREAR USUARIO")
+def _usr_create():
     separator()
-
     username = prompt_input("Nombre de usuario")
     if not username:
-        error_msg("Nombre no puede estar vacio")
-        return
-
-    users = _load_users()
-    if any(u["username"] == username for u in users):
-        error_msg(f"Usuario {username} ya existe")
-        return
+        return error_msg("Nombre vacio")
+    if any(u["username"] == username for u in _load_users()):
+        return error_msg(f"Usuario {username} ya existe")
 
     password = prompt_input("Contrasena (vacio = auto-generar)")
     if not password:
         password = _generate_password()
 
     print()
-    print(f"  {bold('Protocolos:')}")
-    print("    1) SSH          6) Xray VMess")
-    print("    2) SSH-SSL      7) Xray Trojan")
-    print("    3) WebSocket    8) Hysteria2")
-    print("    4) SlowDNS      9) udp-custom")
-    print("    5) Xray VLESS   0) TODOS")
-    protos_input = prompt_input("Selecciona (coma separados")
-    protocols = [p.strip() for p in protos_input.split(",") if p.strip()]
+    print(f"  Protocolos:")
+    print(f"    1) SSH         4) SlowDNS    7) Xray Trojan")
+    print(f"    2) SSH-SSL     5) Xray VLESS 8) Hysteria2")
+    print(f"    3) WebSocket   6) Xray VMess 9) udp-custom")
+    proto_input = prompt_input("Selecciona (coma separados)")
+    protocols = [p.strip() for p in proto_input.split(",") if p.strip()]
 
     days_str = prompt_input("Dias de vigencia [30]")
     days = int(days_str) if days_str.isdigit() else 30
 
-    max_conn_str = prompt_input("Max conexiones simultaneas [2]")
+    max_conn_str = prompt_input("Max conexiones [2]")
     max_conn = int(max_conn_str) if max_conn_str.isdigit() else 2
-
-    bw_str = prompt_input("Limite BW en Mbps (0=sin limite) [0]")
-    bw = int(bw_str) if bw_str.isdigit() else 0
 
     exp_date = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -307,44 +214,38 @@ def menu_create_user():
         "expires_at": exp_date,
         "max_connections": max_conn,
         "current_connections": 0,
-        "bandwidth_limit": bw,
+        "bandwidth_limit": 0,
         "protocols": protocols,
         "data_used_bytes": 0,
         "last_login": None,
         "last_ip": None,
     }
+    users = _load_users()
     users.append(new_user)
     _save_users(users)
-    _audit("USER_CREATE", f"{username}, protos: {protocols}, expira: {exp_date}")
+    _audit("USER_CREATE", f"{username}")
 
     print()
-    print(f"  {bold(ok('USUARIO CREADO EXITOSAMENTE'))}")
+    print(f"  {bold(ok('USUARIO CREADO'))}")
     print(f"  Usuario:    {bold(username)}")
     print(f"  Contrasena: {bold(password)}")
     print(f"  Expira:     {bold(exp_date)}")
     print(f"  Protocolos: {bold(', '.join(protocols))}")
-    print(f"  Max conex:  {bold(str(max_conn))}")
 
 
-def menu_edit_user():
-    """Editar un usuario existente."""
-    breadcrumb("CRISDEV > Usuarios > Editar")
-    section("EDITAR USUARIO")
+def _usr_edit():
     separator()
-
     username = prompt_input("Usuario a editar")
     user = _find_user(username)
     if not user:
-        error_msg("Usuario no encontrado")
-        return
+        return error_msg("Usuario no encontrado")
 
     user_detail_card(user)
-
     print()
-    print(f"  {bold('Que deseas cambiar?')}")
-    print("    1) Contrasena       4) Limite BW")
-    print("    2) Expiracion       5) Protocolos")
-    print("    3) Max conexiones   0) Volver")
+    print(f"  Que deseas cambiar?")
+    print(f"    1) Contrasena       4) Limite BW")
+    print(f"    2) Expiracion       5) Protocolos")
+    print(f"    3) Max conexiones   0) Volver")
     opt = prompt_input("Opcion")
 
     users = _load_users()
@@ -375,41 +276,30 @@ def menu_edit_user():
             else:
                 return
             break
-
     _save_users(users)
     _audit("USER_EDIT", username)
     ok_msg(f"Usuario {username} actualizado")
 
 
-def menu_delete_user():
-    """Eliminar un usuario permanentemente."""
-    breadcrumb("CRISDEV > Usuarios > Eliminar")
-
+def _usr_delete():
+    separator()
     username = prompt_input("Usuario a eliminar")
     if not _find_user(username):
-        error_msg("Usuario no encontrado")
-        return
-
+        return error_msg("Usuario no encontrado")
     if confirm_destructive(f"ELIMINAR a {username} permanentemente? Esta accion NO se puede deshacer."):
         users = _load_users()
         users = [u for u in users if u["username"] != username]
         _save_users(users)
         _audit("USER_DELETE", username)
-        ok_msg(f"Usuario {username} eliminado completamente")
-    else:
-        info_msg("Cancelado")
+        ok_msg(f"Usuario {username} eliminado")
 
 
-def menu_suspend_user():
-    """Suspender un usuario temporalmente."""
-    breadcrumb("CRISDEV > Usuarios > Suspender")
-
+def _usr_suspend():
+    separator()
     username = prompt_input("Usuario a suspender")
     if not _find_user(username):
-        error_msg("Usuario no encontrado")
-        return
-
-    if confirm_destructive(f"Suspender a {username}? Se cerraran sus sesiones activas."):
+        return error_msg("Usuario no encontrado")
+    if confirm_destructive(f"Suspender a {username}? Se cerraran sus sesiones."):
         users = _load_users()
         for u in users:
             if u["username"] == username:
@@ -418,19 +308,13 @@ def menu_suspend_user():
         _save_users(users)
         _audit("USER_SUSPEND", username)
         ok_msg(f"Usuario {username} suspendido")
-    else:
-        info_msg("Cancelado")
 
 
-def menu_reactivate_user():
-    """Reactivar un usuario suspendido."""
-    breadcrumb("CRISDEV > Usuarios > Reactivar")
-
+def _usr_reactivate():
+    separator()
     username = prompt_input("Usuario a reactivar")
     if not _find_user(username):
-        error_msg("Usuario no encontrado")
-        return
-
+        return error_msg("Usuario no encontrado")
     users = _load_users()
     for u in users:
         if u["username"] == username:
@@ -441,15 +325,12 @@ def menu_reactivate_user():
     ok_msg(f"Usuario {username} reactivado")
 
 
-def menu_renew_user():
-    """Renovar la vigencia de un usuario."""
-    breadcrumb("CRISDEV > Usuarios > Renovar")
-
+def _usr_renew():
+    separator()
     username = prompt_input("Usuario a renovar")
     user = _find_user(username)
     if not user:
-        error_msg("Usuario no encontrado")
-        return
+        return error_msg("Usuario no encontrado")
 
     ad = prompt_input("Dias a agregar [30]")
     add_days = int(ad) if ad.isdigit() else 30
@@ -460,10 +341,7 @@ def menu_renew_user():
             if u.get("expires_at"):
                 try:
                     exp_dt = datetime.fromisoformat(u["expires_at"])
-                    if exp_dt > datetime.now():
-                        base = exp_dt
-                    else:
-                        base = datetime.now()
+                    base = exp_dt if exp_dt > datetime.now() else datetime.now()
                 except Exception:
                     base = datetime.now()
             else:
@@ -472,18 +350,14 @@ def menu_renew_user():
             u["status"] = "active"
             break
     _save_users(users)
-    _audit("USER_RENEW", f"{username} hasta {u['expires_at']}")
+    _audit("USER_RENEW", f"{username}")
     ok_msg(f"Usuario {username} renovado hasta {u['expires_at']}")
 
 
-def menu_list_users():
-    """Listar usuarios con filtros."""
-    breadcrumb("CRISDEV > Usuarios > Lista")
-    section("LISTA DE USUARIOS")
+def _usr_list():
     separator()
-
-    print("    1) Todos    3) Vencidos    5) Por vencer (3d)")
-    print("    2) Activos  4) Suspendidos 6) Por protocolo")
+    print(f"  1) Todos    3) Vencidos    5) Por vencer (3d)")
+    print(f"  2) Activos  4) Suspendidos 6) Por protocolo")
     f = prompt_input("Filtro")
 
     users = _load_users()
@@ -501,190 +375,120 @@ def menu_list_users():
     elif f == "6":
         pf = prompt_input("Protocolo")
         users = [u for u in users if pf.lower() in [p.lower() for p in u.get("protocols", [])]]
-
     user_table(users)
 
 
-def menu_user_detail():
-    """Ver detalle de un usuario."""
-    breadcrumb("CRISDEV > Usuarios > Detalle")
-
+def _usr_detail():
+    separator()
     username = prompt_input("Usuario")
     user = _find_user(username)
     if not user:
-        error_msg("Usuario no encontrado")
-        return
-
+        return error_msg("Usuario no encontrado")
     user_detail_card(user)
 
 
-def menu_reboot_vps():
-    """Reiniciar el VPS."""
-    breadcrumb("CRISDEV > Sistema > Reiniciar")
-    if confirm_destructive("Reiniciar el VPS? Se cerraran todas las conexiones."):
-        ok_msg("Reiniciando VPS...")
-        _audit("REBOOT", "VPS reiniciado desde panel")
-        subprocess.run(["reboot"], timeout=5)
-
-
 # ============================================================================
-# PROTOCOLOS
+# MODULO 2: XRAY / V2RAY
 # ============================================================================
 
-def menu_ssh():
-    """Submenu de SSH / SSH-SSL."""
-    breadcrumb("CRISDEV > Protocolos > SSH")
-    section("SSH / SSH-SSL")
-    separator()
+def mod_xray():
+    while True:
+        clear_screen()
+        header()
+        breadcrumb("> XRAY / V2Ray")
+        print()
+        print(f"    {bold('1)')} Estado Xray-core")
+        print(f"    {bold('2)')} Reiniciar Xray")
+        print(f"    {bold('3)')} Ver logs Xray")
+        print(f"    {bold('4)')} Hysteria2 estado")
+        print(f"    {bold('5)')} Reiniciar Hysteria2")
+        print(f"    {bold('6)')} udp-custom estado")
+        print(f"    {bold('7)')} Reiniciar udp-custom")
+        print(f"    {bold('8)')} Generar links de conexion")
+        print()
+        separator()
+        print(f"    {dim('[0] Volver')}")
 
-    print("    1) Ver estado SSH")
-    print("    2) Configurar SSH-SSL (stunnel)")
-    print("    3) Reiniciar SSH")
-    print("    4) Ver intentos fallidos (fail2ban)")
-    print("    5) Desbanear IP")
-    print("    0) Volver")
-    opt = prompt_input("Opcion")
-
-    if opt == "1":
-        st = check_service_status("sshd")
-        if st == "active":
-            print(f"\n  SSH: {ok('● activo')} en puerto {PORT_SSH}")
+        opt = prompt_input("Opcion")
+        if opt == "1":
+            _xray_status()
+        elif opt == "2":
+            _xray_restart("xray")
+        elif opt == "3":
+            _xray_logs()
+        elif opt == "4":
+            _svc_status("hysteria-server", "Hysteria2", PORT_HYSTERIA)
+        elif opt == "5":
+            _xray_restart("hysteria-server")
+        elif opt == "6":
+            _svc_status("udp-custom", "udp-custom", 7100)
+        elif opt == "7":
+            _xray_restart("udp-custom")
+        elif opt == "8":
+            _generate_links()
+        elif opt == "0":
+            return
         else:
-            print(f"\n  SSH: {error('○ ' + st)}")
-    elif opt == "2":
-        info_msg("Configurando stunnel (SSH-SSL)...")
-        _cmd("apt-get install -y stunnel4 2>/dev/null")
-        _cmd(f"systemctl enable stunnel4 && systemctl restart stunnel4")
-        ok_msg("SSH-SSL configurado")
-    elif opt == "3":
-        _cmd("systemctl restart sshd 2>/dev/null || systemctl restart ssh")
-        ok_msg("SSH reiniciado")
-    elif opt == "4":
-        output = _cmd("fail2ban-client status sshd 2>/dev/null")
-        print(f"\n{output}")
-    elif opt == "5":
-        ip = prompt_input("IP a desbanear")
-        if ip:
-            _cmd(f"fail2ban-client set sshd unbanip {ip} 2>/dev/null")
-            ok_msg(f"IP {ip} desbaneada")
+            error_msg("Opcion invalida")
+        pause()
 
 
-def menu_slowdns():
-    """Instalacion de SlowDNS."""
-    breadcrumb("CRISDEV > Protocolos > SlowDNS")
-    section("INSTALACION SLOWDNS")
+def _xray_status():
     separator()
-
-    domain = prompt_input("Dominio NS delegado")
-    port = prompt_input("Puerto DNS [53]")
-    if not port:
-        port = "53"
-
-    info_msg(f"Instalando SlowDNS en puerto {port}...")
-    # La instalacion real se hace desde el script bash
-    ok_msg("SlowDNS — usar crisdev.sh --install para configurar")
-
-
-def menu_xray():
-    """Submenu de Xray-core."""
-    breadcrumb("CRISDEV > Protocolos > Xray-core")
-    section("XRAY-CORE")
-    separator()
-
-    print("    1) Ver estado de Xray")
-    print("    2) Ver version")
-    print("    3) Reiniciar Xray")
-    print("    4) Ver logs recientes")
-    print("    0) Volver")
-    opt = prompt_input("Opcion")
-
-    if opt == "1":
-        st = check_service_status("xray")
-        if st == "active":
-            print(f"\n  Xray: {ok('● activo')}")
-        else:
-            print(f"\n  Xray: {error('○ ' + st)}")
-    elif opt == "2":
+    st = check_service_status("xray")
+    if st == "active":
+        print(f"\n  Xray-core: {ok('activo')}")
         v = _cmd("/opt/xray/xray version 2>/dev/null | head -1")
         if v:
-            print(f"\n  {bold(v)}")
-        else:
-            warn_msg("Xray no instalado o no encontrado")
-    elif opt == "3":
-        _cmd("systemctl restart xray")
-        ok_msg("Xray reiniciado")
-    elif opt == "4":
-        output = _cmd("journalctl -u xray --no-pager -n 30 2>/dev/null")
-        print(f"\n{output}")
+            print(f"  Version:   {bold(v)}")
+    else:
+        print(f"\n  Xray-core: {error(st)}")
 
-
-def menu_hysteria2():
-    """Submenu de Hysteria2."""
-    breadcrumb("CRISDEV > Protocolos > Hysteria2")
-    section("HYSTERIA2")
-    separator()
-
-    print("    1) Ver estado")
-    print("    2) Ver version")
-    print("    3) Reiniciar Hysteria2")
-    print("    4) Ver logs recientes")
-    print("    0) Volver")
-    opt = prompt_input("Opcion")
-
-    if opt == "1":
-        st = check_service_status("hysteria-server")
+    services = [
+        ("xray", "Xray", PORT_XRAY_WS),
+        ("hysteria-server", "Hysteria2", PORT_HYSTERIA),
+        ("udp-custom", "udp-custom", 7100),
+    ]
+    print()
+    for svc_id, svc_name, port in services:
+        st = check_service_status(svc_id)
         if st == "active":
-            print(f"\n  Hysteria2: {ok('● activo')} en puerto {PORT_HYSTERIA}/udp")
+            print(f"  {svc_name:<15} {ok('activo')}  puerto {port}")
         else:
-            print(f"\n  Hysteria2: {error('○ ' + st)}")
-    elif opt == "2":
-        v = _cmd("hysteria-server version 2>/dev/null | head -1")
-        print(f"\n  {bold(v)}" if v else warn_msg("No instalado"))
-    elif opt == "3":
-        _cmd("systemctl restart hysteria-server")
-        ok_msg("Hysteria2 reiniciado")
-    elif opt == "4":
-        output = _cmd("journalctl -u hysteria-server --no-pager -n 30 2>/dev/null")
-        print(f"\n{output}")
+            print(f"  {svc_name:<15} {error(st)}")
 
 
-def menu_udp_custom():
-    """Submenu de udp-custom."""
-    breadcrumb("CRISDEV > Protocolos > udp-custom")
-    section("UDP-CUSTOM")
+def _svc_status(svc_id, svc_name, port):
     separator()
-
-    print("    1) Ver estado")
-    print("    2) Reiniciar udp-custom")
-    print("    3) Ver logs recientes")
-    print("    0) Volver")
-    opt = prompt_input("Opcion")
-
-    if opt == "1":
-        st = check_service_status("udp-custom")
-        if st == "active":
-            print(f"\n  udp-custom: {ok('● activo')} en puerto {PORT_UDP_CUSTOM}/udp")
-        else:
-            print(f"\n  udp-custom: {error('○ ' + st)}")
-    elif opt == "2":
-        _cmd("systemctl restart udp-custom")
-        ok_msg("udp-custom reiniciado")
-    elif opt == "3":
-        output = _cmd("journalctl -u udp-custom --no-pager -n 30 2>/dev/null")
-        print(f"\n{output}")
+    st = check_service_status(svc_id)
+    if st == "active":
+        print(f"\n  {svc_name}: {ok('activo')} en puerto {port}")
+    else:
+        print(f"\n  {svc_name}: {error(st)}")
 
 
-def menu_generate_links():
-    """Generar links de conexion para un usuario."""
-    breadcrumb("CRISDEV > Protocolos > Links")
-    section("GENERAR LINKS DE CONEXION")
+def _xray_restart(svc_id):
     separator()
+    _cmd(f"systemctl restart {svc_id}")
+    st = check_service_status(svc_id)
+    if st == "active":
+        ok_msg(f"{svc_id} reiniciado correctamente")
+    else:
+        error_msg(f"{svc_id} fallo al reiniciar")
 
+
+def _xray_logs():
+    separator()
+    output = _cmd("journalctl -u xray --no-pager -n 30 2>/dev/null")
+    print(f"\n{output}" if output else dim("  No hay logs"))
+
+
+def _generate_links():
+    separator()
     username = prompt_input("Usuario")
     user = _find_user(username)
     if not user:
-        error_msg("Usuario no encontrado")
-        return
+        return error_msg("Usuario no encontrado")
 
     uid = user["username"]
     upass = user["password"]
@@ -692,14 +496,14 @@ def menu_generate_links():
     sdom = _server_domain()
     host = sdom if sdom else sip
 
+    import secrets, base64
+    rand_path = secrets.token_hex(8)
+    rand_grpc = secrets.token_hex(4)
+
     print()
     print(f"  {bold('LINKS DE CONEXION')}")
     print(f"  {dim(f'Para: {username}')}")
     separator()
-
-    import secrets
-    rand_path = secrets.token_hex(8)
-    rand_grpc = secrets.token_hex(4)
 
     print(f"\n  {bold('VLESS + WS + TLS:')}")
     print(f"    vless://{uid}@{host}:{PORT_XRAY_WS}?encryption=none&security=tls&type=ws&path=%2F{rand_path}&host={host}#CRISDEV-VLESS-WS")
@@ -709,113 +513,371 @@ def menu_generate_links():
 
     vmess_json = json.dumps({
         "v": "2", "ps": "CRISDEV-VMess", "add": host,
-        "port": str(PORT_WEBSOCKET), "id": uid, "aid": "0",
+        "port": str(8880), "id": uid, "aid": "0",
         "scy": "auto", "net": "ws", "type": "none",
         "host": host, "path": "/vmess-ws", "tls": "tls"
     })
-    import base64
     vmess_b64 = base64.b64encode(vmess_json.encode()).decode()
     print(f"\n  {bold('VMess + WS + TLS:')}")
     print(f"    vmess://{vmess_b64}")
 
     print(f"\n  {bold('Trojan + WS + TLS:')}")
-    print(f"    trojan://{upass}@{host}:{PORT_XRAY_VLESS}?type=ws&host={host}&path=%2Ftrojan-ws&security=tls#CRISDEV-Trojan")
+    print(f"    trojan://{upass}@{host}:2096?type=ws&host={host}&path=%2Ftrojan-ws&security=tls#CRISDEV-Trojan")
 
     print(f"\n  {bold('Hysteria2:')}")
     print(f"    hysteria2://{upass}@{host}:{PORT_HYSTERIA}?insecure=1&obfs=salamander&obfs-password={upass}#CRISDEV-Hysteria2")
 
 
 # ============================================================================
-# SERVIDOR
+# MODULO 3: PUERTOS
 # ============================================================================
 
-def menu_server_status():
-    """Estado completo del servidor."""
-    breadcrumb("CRISDEV > Servidor > Estado")
-    section("ESTADO DEL SERVIDOR")
-    separator()
+def mod_puertos():
+    while True:
+        clear_screen()
+        header()
+        breadcrumb("> PUERTOS / FIREWALL")
+        print()
+        print(f"    {bold('1)')} Ver reglas firewall (ufw)")
+        print(f"    {bold('2)')} Abrir puerto")
+        print(f"    {bold('3)')} Cerrar puerto")
+        print(f"    {bold('4)')} Modo panico (cerrar todo)")
+        print()
+        separator()
+        print(f"    {dim('[0] Volver')}")
 
+        opt = prompt_input("Opcion")
+        if opt == "1":
+            _fw_status()
+        elif opt == "2":
+            _fw_open()
+        elif opt == "3":
+            _fw_close()
+        elif opt == "4":
+            _fw_panic()
+        elif opt == "0":
+            return
+        else:
+            error_msg("Opcion invalida")
+        pause()
+
+
+def _fw_status():
+    separator()
+    output = _cmd("ufw status verbose 2>/dev/null")
+    print(f"\n{output}" if output else dim("  UFW no disponible"))
+
+
+def _fw_open():
+    separator()
+    port = prompt_input("Puerto a abrir")
+    proto = prompt_input("Protocolo (tcp/udp) [tcp]") or "tcp"
+    _cmd(f"ufw allow {port}/{proto}")
+    ok_msg(f"Puerto {port}/{proto} abierto")
+
+
+def _fw_close():
+    separator()
+    port = prompt_input("Puerto a cerrar")
+    proto = prompt_input("Protocolo (tcp/udp) [tcp]") or "tcp"
+    _cmd(f"ufw delete allow {port}/{proto}")
+    ok_msg(f"Puerto {port}/{proto} cerrado")
+
+
+def _fw_panic():
+    separator()
+    if confirm_destructive("ACTIVAR MODO PANICO? Se cerraran TODOS los puertos excepto SSH."):
+        _cmd("ufw disable 2>/dev/null")
+        _cmd("echo y | ufw reset 2>/dev/null")
+        _cmd("ufw default deny incoming 2>/dev/null")
+        _cmd("ufw default allow outgoing 2>/dev/null")
+        _cmd(f"ufw allow {PORT_SSH}/tcp comment 'SSH-emergency'")
+        _cmd("echo y | ufw enable 2>/dev/null")
+        _audit("PANIC", "Modo panico activado")
+        warn_msg("MODO PANICO ACTIVADO")
+
+
+# ============================================================================
+# MODULO 4: HERRAMIENTAS
+# ============================================================================
+
+def mod_herramientas():
+    while True:
+        clear_screen()
+        header()
+        breadcrumb("> HERRAMIENTAS")
+        print()
+        print(f"    {bold('1)')} Estado del servidor")
+        print(f"    {bold('2)')} Verificar versiones")
+        print(f"    {bold('3)')} Logs de servicios")
+        print(f"    {bold('4)')} Reiniciar servicios")
+        print(f"    {bold('5)')} SSH / SSH-SSL")
+        print()
+        separator()
+        print(f"    {dim('[0] Volver')}")
+
+        opt = prompt_input("Opcion")
+        if opt == "1":
+            _tool_server_status()
+        elif opt == "2":
+            _tool_versions()
+        elif opt == "3":
+            _tool_logs()
+        elif opt == "4":
+            _tool_restart_all()
+        elif opt == "5":
+            _tool_ssh()
+        elif opt == "0":
+            return
+        else:
+            error_msg("Opcion invalida")
+        pause()
+
+
+def _tool_server_status():
+    separator()
     print(f"\n  {bold('Sistema:')}")
-    print(f"    IP: {bold(_server_ip())}")
+    print(f"    IP:       {bold(_server_ip())}")
     print(f"    Hostname: {_cmd('hostname')}")
-    print(f"    OS: {_cmd(\"cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d'\\\"' -f2\")}")
-    print(f"    Kernel: {_cmd('uname -r')}")
-    print(f"    Uptime: {_cmd('uptime -p 2>/dev/null || uptime')}")
+    print(f"    Kernel:   {_cmd('uname -r')}")
+    print(f"    Uptime:   {_cmd('uptime -p 2>/dev/null || uptime')}")
 
     print(f"\n  {bold('Recursos:')}")
     cpu = _cmd("top -bn1 | grep 'Cpu(s)' | awk '{print $2}' 2>/dev/null")
-    print(f"    CPU: {cpu}%")
     mem = _cmd("free -h | awk '/Mem:/{print $3\"/\"$2}'")
+    print(f"    CPU: {cpu}%")
     print(f"    RAM: {mem}")
 
     print(f"\n  {bold('Servicios:')}")
     service_status_table()
 
-    print(f"\n  {bold('Conexiones:')}")
-    print(f"    SSH:      {_cmd(f'ss -tn | grep -c \":{PORT_SSH} \" 2>/dev/null || echo 0')}")
-    print(f"    Xray:     {_cmd(f'ss -tn | grep -cE \":({PORT_XRAY_WS}|{PORT_XRAY_GRPC}) \" 2>/dev/null || echo 0')}")
-    print(f"    Hysteria: {_cmd(f'ss -un | grep -c \":{PORT_HYSTERIA} \" 2>/dev/null || echo 0')}")
 
-
-def menu_firewall():
-    """Gestion del firewall."""
-    breadcrumb("CRISDEV > Servidor > Firewall")
-    section("FIREWALL / PUERTOS")
+def _tool_versions():
     separator()
+    xray_v = _cmd("/opt/xray/xray version 2>/dev/null | head -1")
+    hy_v = _cmd("hysteria-server version 2>/dev/null | head -1")
+    udp_v = _cmd("/opt/udp-custom/server --version 2>/dev/null")
 
-    print("    1) Ver reglas actuales (ufw status)")
-    print("    2) Abrir puerto")
-    print("    3) Cerrar puerto")
-    print("    4) Modo panico (cerrar todo)")
-    print("    0) Volver")
+    print(f"\n  Xray:       {bold(xray_v)}" if xray_v else "  Xray:       No instalado")
+    print(f"  Hysteria2:  {bold(hy_v)}" if hy_v else "  Hysteria2:  No instalado")
+    print(f"  udp-custom: {bold(udp_v)}" if udp_v else "  udp-custom: No instalado")
+
+
+def _tool_logs():
+    separator()
+    print(f"  1) Xray    3) SSH")
+    print(f"  2) Hysteria2  4) fail2ban")
+    opt = prompt_input("Servicio")
+
+    services = {"1": "xray", "2": "hysteria-server", "3": "sshd"}
+    if opt in services:
+        output = _cmd(f"journalctl -u {services[opt]} --no-pager -n 30 2>/dev/null")
+        print(f"\n{output}" if output else dim("  No hay logs"))
+    elif opt == "4":
+        output = _cmd("fail2ban-client status sshd 2>/dev/null")
+        print(f"\n{output}" if output else dim("  No hay logs"))
+
+
+def _tool_restart_all():
+    separator()
+    services = [
+        ("xray", "Xray"), ("hysteria-server", "Hysteria2"),
+        ("stunnel4", "Stunnel4"), ("udp-custom", "UDP Custom"),
+        ("sshd", "SSH"),
+    ]
+    for svc_id, svc_name in services:
+        st = check_service_status(svc_id)
+        if st == "active":
+            _cmd(f"systemctl restart {svc_id}")
+            new_st = check_service_status(svc_id)
+            if new_st == "active":
+                ok_msg(f"{svc_name} reiniciado")
+            else:
+                error_msg(f"{svc_name} fallo")
+        else:
+            warn_msg(f"{svc_name} no esta activo")
+    ok_msg("Reinicio completado")
+
+
+def _tool_ssh():
+    separator()
+    print(f"  1) Ver estado SSH")
+    print(f"  2) Reiniciar SSH")
+    print(f"  3) Ver intentos fallidos (fail2ban)")
+    print(f"  4) Desbanear IP")
     opt = prompt_input("Opcion")
 
     if opt == "1":
-        output = _cmd("ufw status verbose 2>/dev/null")
-        print(f"\n{output}")
+        st = check_service_status("sshd")
+        if st == "active":
+            print(f"\n  SSH: {ok('activo')} en puerto {PORT_SSH}")
+        else:
+            print(f"\n  SSH: {error(st)}")
     elif opt == "2":
-        port = prompt_input("Puerto")
-        proto = prompt_input("Protocolo (tcp/udp) [tcp]")
-        if not proto:
-            proto = "tcp"
-        _cmd(f"ufw allow {port}/{proto}")
-        ok_msg(f"Puerto {port}/{proto} abierto")
+        _cmd("systemctl restart sshd 2>/dev/null || systemctl restart ssh")
+        ok_msg("SSH reiniciado")
     elif opt == "3":
-        port = prompt_input("Puerto")
-        proto = prompt_input("Protocolo (tcp/udp) [tcp]")
-        if not proto:
-            proto = "tcp"
-        _cmd(f"ufw delete allow {port}/{proto}")
-        ok_msg(f"Puerto {port}/{proto} cerrado")
+        output = _cmd("fail2ban-client status sshd 2>/dev/null")
+        print(f"\n{output}" if output else dim("  No hay datos"))
     elif opt == "4":
-        if confirm_destructive("ACTIVAR MODO PANICO? Se cerraran TODOS los puertos excepto SSH."):
-            _cmd("ufw disable 2>/dev/null")
-            _cmd("echo y | ufw reset 2>/dev/null")
-            _cmd("ufw default deny incoming 2>/dev/null")
-            _cmd("ufw default allow outgoing 2>/dev/null")
-            _cmd(f"ufw allow {PORT_SSH}/tcp comment 'SSH-emergency'")
-            _cmd("echo y | ufw enable 2>/dev/null")
-            _audit("PANIC", "Modo panico activado")
-            warn_msg("MODO PANICO ACTIVADO")
+        ip = prompt_input("IP a desbanear")
+        if ip:
+            _cmd(f"fail2ban-client set sshd unbanip {ip} 2>/dev/null")
+            ok_msg(f"IP {ip} desbaneada")
 
 
-def menu_certs():
-    """Gestion de certificados TLS."""
-    breadcrumb("CRISDEV > Servidor > Certificados")
-    section("CERTIFICADOS TLS")
+# ============================================================================
+# MODULO 5: BOT Y API
+# ============================================================================
+
+def mod_bot_api():
+    while True:
+        clear_screen()
+        header()
+        breadcrumb("> BOT Y API")
+        print()
+        print(f"    {bold('1)')} Configurar bot Telegram")
+        print(f"    {bold('2)')} Ver estado bot")
+        print(f"    {bold('3)')} Reiniciar bot")
+        print(f"    {bold('4)')} Configurar API HTTP")
+        print(f"    {bold('5)')} Ver estado API")
+        print()
+        separator()
+        print(f"    {dim('[0] Volver')}")
+
+        opt = prompt_input("Opcion")
+        if opt == "1":
+            _bot_config()
+        elif opt == "2":
+            _bot_status()
+        elif opt == "3":
+            _bot_restart()
+        elif opt == "4":
+            _api_config()
+        elif opt == "5":
+            _api_status()
+        elif opt == "0":
+            return
+        else:
+            error_msg("Opcion invalida")
+        pause()
+
+
+def _bot_config():
     separator()
+    info_msg("Configuracion del bot Telegram")
+    token = prompt_input("Token del bot (de @BotFather)")
+    if token:
+        os.makedirs("/etc/crisdev/bot", exist_ok=True)
+        with open("/etc/crisdev/bot/token.txt", "w") as f:
+            f.write(token)
+        ok_msg("Token guardado. Reinicia el bot para aplicar.")
+    else:
+        error_msg("Token vacio")
 
+
+def _bot_status():
+    separator()
+    st = check_service_status("crisdev-bot")
+    if st == "active":
+        print(f"\n  Bot Telegram: {ok('activo')}")
+    else:
+        print(f"\n  Bot Telegram: {error(st)}")
+    token_file = "/etc/crisdev/bot/token.txt"
+    if os.path.exists(token_file):
+        with open(token_file) as f:
+            t = f.read().strip()
+        if t:
+            print(f"  Token: {t[:10]}...{t[-5:]}")
+    else:
+        print(f"  Token: {dim('no configurado')}")
+
+
+def _bot_restart():
+    separator()
+    _cmd("systemctl restart crisdev-bot 2>/dev/null")
+    st = check_service_status("crisdev-bot")
+    if st == "active":
+        ok_msg("Bot reiniciado")
+    else:
+        warn_msg("Servicio crisdev-bot no encontrado o no activo")
+
+
+def _api_config():
+    separator()
+    info_msg("Configuracion de la API HTTP")
+    port = prompt_input("Puerto de la API [8080]") or "8080"
+    os.makedirs("/etc/crisdev/api", exist_ok=True)
+    with open("/etc/crisdev/api/config.json", "w") as f:
+        json.dump({"port": int(port)}, f, indent=2)
+    ok_msg(f"API configurada en puerto {port}. Reinicia para aplicar.")
+
+
+def _api_status():
+    separator()
+    st = check_service_status("crisdev-api")
+    if st == "active":
+        print(f"\n  API HTTP: {ok('activo')}")
+    else:
+        print(f"\n  API HTTP: {error(st)}")
+    cfg_file = "/etc/crisdev/api/config.json"
+    if os.path.exists(cfg_file):
+        with open(cfg_file) as f:
+            cfg = json.load(f)
+        print(f"  Puerto: {cfg.get('port', 'N/A')}")
+    else:
+        print(f"  Puerto: {dim('no configurado')}")
+
+
+# ============================================================================
+# MODULO 6: CONFIGURACION
+# ============================================================================
+
+def mod_config():
+    while True:
+        clear_screen()
+        header()
+        breadcrumb("> CONFIGURACION")
+        print()
+        print(f"    {bold('1)')} Certificados TLS")
+        print(f"    {bold('2)')} Backups")
+        print(f"    {bold('3)')} Logs de auditoria")
+        print(f"    {bold('4)')} Actualizar CRISDEV")
+        print(f"    {bold('5)')} {error('Reiniciar VPS')}")
+        print()
+        separator()
+        print(f"    {dim('[0] Volver')}")
+
+        opt = prompt_input("Opcion")
+        if opt == "1":
+            _cfg_certs()
+        elif opt == "2":
+            _cfg_backups()
+        elif opt == "3":
+            _cfg_audit()
+        elif opt == "4":
+            _cfg_update()
+        elif opt == "5":
+            _cfg_reboot()
+        elif opt == "0":
+            return
+        else:
+            error_msg("Opcion invalida")
+        pause()
+
+
+def _cfg_certs():
+    separator()
     cert_path = "/etc/crisdev/certs/fullchain.pem"
-    print("    1) Ver certificado actual")
-    print("    2) Generar certificado autofirmado")
-    print("    3) Renovar certificados (Let's Encrypt)")
-    print("    0) Volver")
+    print(f"  1) Ver certificado actual")
+    print(f"  2) Generar certificado autofirmado")
+    print(f"  3) Renovar certificados (Let's Encrypt)")
     opt = prompt_input("Opcion")
 
     if opt == "1":
         if os.path.exists(cert_path):
             output = _cmd(f"openssl x509 -in {cert_path} -noout -subject -dates 2>/dev/null")
-            print(f"\n{output}")
+            print(f"\n{output}" if output else dim("  No se pudo leer"))
         else:
             warn_msg("No hay certificado instalado")
     elif opt == "2":
@@ -831,34 +893,26 @@ def menu_certs():
         ok_msg("Certificados renovados")
 
 
-def menu_backup():
-    """Gestion de backups."""
-    breadcrumb("CRISDEV > Servidor > Backups")
-    section("BACKUPS")
+def _cfg_backups():
     separator()
-
-    print("    1) Crear backup")
-    print("    2) Listar backups")
-    print("    3) Restaurar backup")
-    print("    0) Volver")
-    opt = prompt_input("Opcion")
-
     backup_dir = "/etc/crisdev/backups"
     os.makedirs(backup_dir, exist_ok=True)
 
+    print(f"  1) Crear backup")
+    print(f"  2) Listar backups")
+    print(f"  3) Restaurar backup")
+    opt = prompt_input("Opcion")
+
     if opt == "1":
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        bf = f"{backup_dir}/crisdev_backup_{ts}.tar.gz"
-        _cmd(f"tar -czf {bf} -C / etc/crisdev/data etc/crisdev/certs etc/hysteria usr/local/etc/xray 2>/dev/null")
+        bf = f"{backup_dir}/crisdev_{ts}.tar.gz"
+        _cmd(f"tar -czf {bf} -C / etc/crisdev/data etc/crisdev/certs 2>/dev/null")
         size = _cmd(f"du -h {bf} | awk '{{print $1}}'")
-        ok_msg(f"Backup: {bf} ({size})")
-        _audit("BACKUP", f"{bf} ({size})")
+        ok_msg(f"Backup creado: {bf} ({size})")
+        _audit("BACKUP", f"{bf}")
     elif opt == "2":
         output = _cmd(f"ls -la {backup_dir}/*.tar.gz 2>/dev/null")
-        if output:
-            print(f"\n{output}")
-        else:
-            warn_msg("No hay backups disponibles")
+        print(f"\n{output}" if output else dim("  No hay backups"))
     elif opt == "3":
         output = _cmd(f"ls {backup_dir}/*.tar.gz 2>/dev/null | nl")
         if output:
@@ -873,126 +927,34 @@ def menu_backup():
             else:
                 error_msg("Backup no encontrado")
         else:
-            warn_msg("No hay backups disponibles")
+            warn_msg("No hay backups")
 
 
-# ============================================================================
-# SISTEMA
-# ============================================================================
-
-def menu_check_versions():
-    """Verificar versiones de servicios."""
-    breadcrumb("CRISDEV > Sistema > Versiones")
-    section("VERSIONES INSTALADAS")
+def _cfg_audit():
     separator()
-
-    print(f"\n  {bold('Instaladas:')}")
-    xray_v = _cmd("/opt/xray/xray version 2>/dev/null | head -1")
-    hy_v = _cmd("hysteria-server version 2>/dev/null | head -1")
-    udp_v = _cmd("/opt/udp-custom/server --version 2>/dev/null")
-
-    print(f"    Xray:       {bold(xray_v)}" if xray_v else "    Xray:       No instalado")
-    print(f"    Hysteria2:  {bold(hy_v)}" if hy_v else "    Hysteria2:  No instalado")
-    print(f"    udp-custom: {bold(udp_v)}" if udp_v else "    udp-custom: No instalado")
-
-    print(f"\n  {bold('Ultimas disponibles:')}")
-    xray_latest = _cmd("curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name' 2>/dev/null")
-    hy_latest = _cmd("curl -s https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name' 2>/dev/null")
-    print(f"    Xray: {xray_latest}")
-    print(f"    Hysteria2: {hy_latest}")
-
-
-def menu_service_logs():
-    """Ver logs de servicios."""
-    breadcrumb("CRISDEV > Sistema > Logs")
-    section("LOGS DE SERVICIOS")
-    separator()
-
-    print("    1) Xray (ultimas 30 lineas)")
-    print("    2) Hysteria2")
-    print("    3) SSH")
-    print("    4) fail2ban")
-    print("    0) Volver")
-    opt = prompt_input("Opcion")
-
-    services = {
-        "1": "xray",
-        "2": "hysteria-server",
-        "3": "sshd",
-    }
-    if opt in services:
-        output = _cmd(f"journalctl -u {services[opt]} --no-pager -n 30 2>/dev/null")
-        print(f"\n{output}")
-    elif opt == "4":
-        output = _cmd("fail2ban-client status sshd 2>/dev/null")
-        print(f"\n{output}")
-
-
-def menu_restart_services():
-    """Reiniciar todos los servicios VPN."""
-    breadcrumb("CRISDEV > Sistema > Reiniciar servicios")
-    section("REINICIAR SERVICIOS")
-    separator()
-
-    services = [
-        ("xray", "Xray"),
-        ("hysteria-server", "Hysteria2"),
-        ("stunnel4", "Stunnel4"),
-        ("udp-custom", "UDP Custom"),
-        ("sshd", "SSH"),
-    ]
-
-    for svc_id, svc_name in services:
-        status = check_service_status(svc_id)
-        if status == "active":
-            print(f"  Reiniciando {bold(svc_name)}...")
-            _cmd(f"systemctl restart {svc_id}")
-            new_status = check_service_status(svc_id)
-            if new_status == "active":
-                ok_msg(f"{svc_name} reiniciado correctamente")
-            else:
-                error_msg(f"{svc_name} fallo al reiniciar")
-        else:
-            warn_msg(f"{svc_name} no esta activo, omitiendo")
-
-    print()
-    ok_msg("Proceso de reinicio completado")
-
-
-def menu_audit_log():
-    """Ver log de auditoria."""
-    breadcrumb("CRISDEV > Sistema > Auditoria")
-    print()
     if os.path.exists(AUDIT_LOG):
         output = _cmd(f"tail -50 {AUDIT_LOG}")
-        print(output if output else dim("  Log vacio"))
+        print(f"\n{output}" if output else dim("  Log vacio"))
     else:
         warn_msg("No hay log de auditoria")
 
 
-def menu_update_crisdev():
-    """Actualizar CRISDEV desde GitHub."""
-    breadcrumb("CRISDEV > Sistema > Actualizar")
-    section("ACTUALIZAR CRISDEV")
-    info_msg("Descargando ultima version desde GitHub...")
-
+def _cfg_update():
+    separator()
+    info_msg("Descargando ultima version...")
     repo = "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main"
-    install_dir = "/etc/crisdev"
+    d = "/etc/crisdev"
+    files = ["crisdev.py", "menu.py", "ui/theme.py", "ui/components.py", "ui/__init__.py"]
+    for f in files:
+        url = f"{repo}/{f}"
+        _cmd(f"curl -fsSL {url} -o {d}/{f} 2>/dev/null")
+        ok_msg(f"  {f}")
+    ok_msg("CRISDEV actualizado. Reabre el panel.")
 
-    files = [
-        ("crisdev.py", f"{install_dir}/crisdev.py"),
-        ("menu.py", f"{install_dir}/menu.py"),
-        ("ui/theme.py", f"{install_dir}/ui/theme.py"),
-        ("ui/components.py", f"{install_dir}/ui/components.py"),
-        ("ui/__init__.py", f"{install_dir}/ui/__init__.py"),
-    ]
 
-    for src, dst in files:
-        url = f"{repo}/{src}"
-        result = _cmd(f"curl -fsSL {url} -o {dst} 2>/dev/null")
-        if result is not None or os.path.exists(dst):
-            ok_msg(f"  {src} actualizado")
-        else:
-            error_msg(f"  Error descargando {src}")
-
-    ok_msg("CRISDEV actualizado. El nuevo efecto se vera al reabrir.")
+def _cfg_reboot():
+    separator()
+    if confirm_destructive("Reiniciar el VPS? Se cerraran todas las conexiones."):
+        ok_msg("Reiniciando VPS...")
+        _audit("REBOOT", "VPS reiniciado desde panel")
+        subprocess.run(["reboot"], timeout=5)

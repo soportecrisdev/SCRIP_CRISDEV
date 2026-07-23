@@ -2,8 +2,6 @@
 CRISDEV VPN Manager - UI Components
 ====================================
 Funciones reutilizables para renderizar la interfaz.
-Ningun modulo de logica de negocio debe hacer print() directo —
-todos usan estas funciones.
 """
 import os
 import subprocess
@@ -17,31 +15,25 @@ from ui.theme import (
 
 
 # ============================================================================
-# HELPERS DE COLOR — Funciones basicas
+# HELPERS DE COLOR
 # ============================================================================
 
 def bold(text: str) -> str:
-    """Texto en negrita."""
     return f"{C_BOLD}{text}{C_RESET}"
 
 def ok(text: str) -> str:
-    """Texto verde (activo/OK/exito)."""
     return f"{C_OK}{text}{C_RESET}"
 
 def error(text: str) -> str:
-    """Texto rojo (expirado/bloqueado/destructivo)."""
     return f"{C_ERROR}{text}{C_RESET}"
 
 def warn(text: str) -> str:
-    """Texto amarillo (advertencia/atencion)."""
     return f"{C_WARN}{text}{C_RESET}"
 
 def info(text: str) -> str:
-    """Texto cyan (informacion neutra)."""
     return f"{C_INFO}{text}{C_RESET}"
 
 def dim(text: str) -> str:
-    """Texto gris apagado (secundario)."""
     return f"{C_DIM}{text}{C_RESET}"
 
 
@@ -50,31 +42,23 @@ def dim(text: str) -> str:
 # ============================================================================
 
 def clear_screen():
-    """Limpia la pantalla de la terminal."""
     os.system("cls" if os.name == "nt" else "clear")
 
 def get_server_ip() -> str:
-    """Obtiene la IP publica del servidor."""
     try:
-        result = subprocess.run(
-            ["curl", "-s4", "--max-time", "5", "ifconfig.me"],
-            capture_output=True, text=True, timeout=10
-        )
-        ip = result.stdout.strip()
-        if ip:
-            return ip
+        r = subprocess.run(["curl", "-s4", "--max-time", "5", "ifconfig.me"],
+                           capture_output=True, text=True, timeout=10)
+        if r.stdout.strip():
+            return r.stdout.strip()
     except Exception:
         pass
     try:
-        result = subprocess.run(
-            ["hostname", "-I"], capture_output=True, text=True, timeout=5
-        )
-        return result.stdout.strip().split()[0]
+        r = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5)
+        return r.stdout.strip().split()[0]
     except Exception:
         return "?.?.?.?"
 
 def get_server_os() -> str:
-    """Obtiene el nombre del OS."""
     try:
         with open("/etc/os-release") as f:
             for line in f:
@@ -85,54 +69,37 @@ def get_server_os() -> str:
     return "Linux"
 
 def get_uptime() -> str:
-    """Obtiene el uptime del servidor."""
     try:
-        result = subprocess.run(["uptime", "-p"], capture_output=True, text=True, timeout=5)
-        return result.stdout.strip()
+        r = subprocess.run(["uptime", "-p"], capture_output=True, text=True, timeout=5)
+        return r.stdout.strip()
     except Exception:
         return "N/A"
 
 def check_service_status(service: str) -> str:
-    """Retorna 'active', 'inactive', 'dead' o 'not-found'."""
     try:
-        result = subprocess.run(
-            ["systemctl", "is-active", service],
-            capture_output=True, text=True, timeout=5
-        )
-        return result.stdout.strip()
+        r = subprocess.run(["systemctl", "is-active", service],
+                           capture_output=True, text=True, timeout=5)
+        return r.stdout.strip()
     except Exception:
         return "not-found"
 
 def check_service_latency(service: str, port: Optional[int] = None) -> Optional[int]:
-    """
-    Mide latencia real de un servicio (ms).
-    Retorna None si no se pudo medir.
-    """
-    if port:
-        try:
-            result = subprocess.run(
-                ["bash", "-c", f"echo > /dev/tcp/127.0.0.1/{port}"],
-                capture_output=True, text=True, timeout=3
-            )
-            if result.returncode == 0:
-                # Medir con curl para latencia real
-                result2 = subprocess.run(
-                    ["curl", "-so", "/dev/null", "-w", "%{time_total}",
-                     f"http://127.0.0.1:{port}/"],
-                    capture_output=True, text=True, timeout=5
-                )
-                if result2.returncode == 0:
-                    ms = int(float(result2.stdout.strip()) * 1000)
-                    return ms
-        except Exception:
-            pass
+    if not port:
+        return None
+    try:
+        r = subprocess.run(["bash", "-c", f"echo > /dev/tcp/127.0.0.1/{port}"],
+                           capture_output=True, text=True, timeout=3)
+        if r.returncode == 0:
+            r2 = subprocess.run(["curl", "-so", "/dev/null", "-w", "%{time_total}",
+                                 f"http://127.0.0.1:{port}/"],
+                                capture_output=True, text=True, timeout=5)
+            if r2.returncode == 0:
+                return int(float(r2.stdout.strip()) * 1000)
+    except Exception:
+        pass
     return None
 
 def get_user_stats(users_db: str) -> dict:
-    """
-    Retorna estadisticas de usuarios desde la base de datos JSON.
-    Retorna dict con: total, active, expiring_soon, suspended, expired
-    """
     stats = {"total": 0, "active": 0, "expiring_soon": 0, "suspended": 0, "expired": 0}
     try:
         with open(users_db) as f:
@@ -140,10 +107,10 @@ def get_user_stats(users_db: str) -> dict:
         stats["total"] = len(users)
         now = datetime.now()
         for u in users:
-            status = u.get("status", "active")
-            if status == "suspended":
+            st = u.get("status", "active")
+            if st == "suspended":
                 stats["suspended"] += 1
-            elif status == "active":
+            elif st == "active":
                 stats["active"] += 1
                 exp = u.get("expires_at")
                 if exp:
@@ -154,7 +121,7 @@ def get_user_stats(users_db: str) -> dict:
                             stats["expiring_soon"] += 1
                     except Exception:
                         pass
-            elif status == "expired":
+            elif st == "expired":
                 stats["expired"] += 1
     except (FileNotFoundError, json.JSONDecodeError):
         pass
@@ -162,123 +129,78 @@ def get_user_stats(users_db: str) -> dict:
 
 
 # ============================================================================
-# COMPONENTES DE INTERFAZ
+# HEADER - 3 lineas fijas
 # ============================================================================
 
 def header():
-    """
-    Encabezado compacto — se repite en TODAS las pantallas internas.
-    3 lineas fijas, sin banner ASCII.
-    """
     ip = get_server_ip()
-    os_name = get_server_os()[:20]
+    os_name = get_server_os()[:25]
     date_str = datetime.now().strftime("%d-%m-%Y %H:%M")
-    print(f"{C_INFO}{'━' * 62}{C_RESET}")
-    print(f" {bold('CRISDEV VPN MANAGER v1.1.0')}                    {dim('@CRISIS1823')}")
-    print(f" IP: {bold(ip)}   |   {os_name}   |   {date_str}")
-    print(f"{C_INFO}{'━' * 62}{C_RESET}")
-
-
-def banner_welcome():
-    """
-    Banner ASCII grande — SOLO para la primera pantalla de bienvenida.
-    """
     print()
-    print(f"{C_BOLD}{C_INFO}")
-    print("     ██████╗██████╗ ██╗██████╗ ████████╗███████╗██████╗ ███╗   ██╗")
-    print("    ██╔════╝██╔══██╗██║██╔══██╗╚══██╔══╝██╔════╝██╔══██╗████╗  ██║")
-    print("    ██║     ██████╔╝██║██████╔╝   ██║   █████╗  ██████╔╝██╔██╗ ██║")
-    print("    ██║     ██╔══██╗██║██╔═══╝    ██║   ██╔══╝  ██╔══██╗██║╚██╗██║")
-    print("    ╚██████╗██║  ██║██║██║        ██║   ███████╗██║  ██║██║ ╚████║")
-    print("     ╚═════╝╚═╝  ╚═╝╚═╝╚═╝        ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝")
-    print(f"{C_RESET}")
-    print(f"          {bold('VPN Manager v1.1.0')}    {dim('by CRISDEV / @CRISIS1823')}")
-    print()
+    print(f"  {bold('CRISDEV VPN MANAGER')}  {dim('v1.1')}  {dim('@CRISIS1823')}")
+    print(f"  IP: {bold(ip)}  |  {os_name}  |  {date_str}")
+    print(f"  {dim(chr(9472) * 58)}")
 
+
+# ============================================================================
+# DASHBOARD - Status bar compacto
+# ============================================================================
 
 def dashboard(users_db: str):
-    """
-    Panel de estado en vivo — siempre debajo del encabezado en el menu principal.
-    Muestra: activos/expirados/suspendidos/bloqueados y servicios con latencia.
-    """
     stats = get_user_stats(users_db)
-    print()
 
-    # Contadores de usuarios
-    total = stats["total"]
     active = stats["active"]
-    expiring = stats["expiring_soon"]
     suspended = stats["suspended"]
+    expiring = stats["expiring_soon"]
+    total = stats["total"]
 
-    # Linea de usuarios
-    exp_str = f" {warn(f'({expiring} vencen en <3d)')}" if expiring > 0 else ""
-    print(
-        f"  {bold('USUARIOS')}  "
-        f"{ok(f'ACTIVOS: {active}')}{exp_str}  "
-        f"{error(f'SUSPENDIDOS: {suspended}')}  "
-        f"TOTAL: {total}"
-    )
+    exp_str = f" {warn(f'{expiring} por vencer')} " if expiring > 0 else ""
 
-    # Servicios con indicador y latencia
-    services = [
-        ("xray", 2053),
-        ("hysteria-server", 443),
-        ("stunnel4", 443),
-        ("udp-custom", 7100),
-        ("sshd", 22),
-    ]
     parts = []
-    for svc_name, port in services:
-        status = check_service_status(svc_name)
-        if status == "active":
-            lat = check_service_latency(svc_name, port)
-            if lat:
-                parts.append(f"{ok('●')}{svc_name}{dim(f' ({lat}ms)')}")
-            else:
-                parts.append(f"{ok('●')}{svc_name}")
-        else:
-            parts.append(f"{error('○')}{svc_name}")
+    parts.append(f"{ok(str(active))} activos")
+    if suspended:
+        parts.append(f"{error(str(suspended))} susp")
+    if expiring:
+        parts.append(warn(f"{expiring} vence"))
+    parts.append(f"total {total}")
 
-    print(f"  {bold('SERVICOS')}  {' '.join(parts)}")
+    print(f"  USUARIOS: {' | '.join(parts)}")
+
+    services = [
+        ("xray", "xray"),
+        ("hysteria-server", "hysteria"),
+        ("stunnel4", "stunnel"),
+        ("udp-custom", "udp"),
+        ("sshd", "ssh"),
+    ]
+    svc_parts = []
+    for svc_id, svc_name in services:
+        st = check_service_status(svc_id)
+        if st == "active":
+            svc_parts.append(f"{ok(svc_name)}")
+        else:
+            svc_parts.append(f"{error(svc_name)}")
+
+    print(f"  SERVICIOS: {' | '.join(svc_parts)}")
     print()
 
+
+# ============================================================================
+# SECTION / SEPARATOR
+# ============================================================================
 
 def section(title: str):
-    """Encabezado de seccion del menu."""
-    print(f"  {bold(f'{C_INFO}{title}{C_RESET}')}")
-
+    print(f"\n  {bold(title)}")
 
 def separator():
-    """Linea separadora visual."""
-    print(f"  {dim('─' * 52)}")
+    print(f"  {dim(chr(9472) * 52)}")
 
 
-def menu_item(number: int, label: str, col_width: int = 33, destructive: bool = False) -> str:
-    """
-    Retorna un string de item de menu alineado.
-    - number: numero de la opcion
-    - label: texto de la opcion
-    - col_width: ancho fijo de la columna izquierda
-    - destructive: si es True, se muestra en rojo
-    """
-    prefix = f"{number})"
-    if destructive:
-        return f"    {error(f'{bold(prefix)} {label}'):<{col_width}}"
-    return f"    {bold(prefix)} {label:<{col_width - len(prefix) - 1}}"
-
-
-def menu_item_right(number: int, label: str, col_width: int = 22) -> str:
-    """Item de menu para la columna derecha (2 columnas)."""
-    prefix = f"{number})"
-    return f"{bold(prefix)} {label:<{col_width - len(prefix) - 1}}"
-
+# ============================================================================
+# MENU
+# ============================================================================
 
 def two_col_menu(left_items: list, right_items: list, col_width_left: int = 33):
-    """
-    Renderiza un menu en 2 columnas alineadas.
-    left_items: [(number, label), ...]
-    right_items: [(number, label), ...]
-    """
     max_rows = max(len(left_items), len(right_items))
     for i in range(max_rows):
         left_str = ""
@@ -292,8 +214,7 @@ def two_col_menu(left_items: list, right_items: list, col_width_left: int = 33):
         print(f"{left_str}{right_str}")
 
 
-def prompt_input(message: str = "Ingresa una opcion") -> str:
-    """Prompt de entrada con estilo."""
+def prompt_input(message: str = "Opcion") -> str:
     print()
     try:
         return input(f"  {C_PROMPT}{message}: {C_RESET}").strip()
@@ -302,55 +223,41 @@ def prompt_input(message: str = "Ingresa una opcion") -> str:
 
 
 def confirm_destructive(message: str) -> bool:
-    """
-    Confirmacion de doble paso para acciones destructivas.
-    Requiere escribir literalmente 'SI' en mayusculas.
-    Fondo visual rojo para distinguir de prompts normales.
-    """
     print()
-    print(f"  {C_BOLD}{C_ERROR}╔══════════════════════════════════════════════════╗{C_RESET}")
-    print(f"  {C_BOLD}{C_ERROR}║  ⚠  ACCION DESTRUCTIVA                         ║{C_RESET}")
-    print(f"  {C_ERROR}║{C_RESET}  {message}")
-    print(f"  {C_BOLD}{C_ERROR}╚══════════════════════════════════════════════════╝{C_RESET}")
+    print(f"  {bold(error('  PELIGRO'))}  {message}")
     print()
     try:
-        resp = input(f"  {C_ERROR}Escribe {bold('SI')} para confirmar: {C_RESET}").strip()
+        resp = input(f"  {error('Escribe SI para confirmar: ')}").strip()
     except (EOFError, KeyboardInterrupt):
         return False
     return resp == "SI"
 
 
 def breadcrumb(path: str):
-    """Breadcrumb de navegacion en submenus."""
     print()
     print(f"  {dim(path)}")
     print()
 
 
 def pause():
-    """Espera a que el usuario presione Enter."""
     print()
     try:
-        input(f"  {dim('Presiona Enter para continuar...')}")
+        input(f"  {dim('Presiona Enter...')}")
     except (EOFError, KeyboardInterrupt):
         pass
 
 
 def ok_msg(message: str):
-    """Mensaje de exito."""
     print(f"  {ok('[OK]')} {message}")
 
 def error_msg(message: str):
-    """Mensaje de error."""
-    print(f"  {error('[ERROR]')} {message}")
+    print(f"  {error('[!]')} {message}")
 
 def info_msg(message: str):
-    """Mensaje informativo."""
-    print(f"  {ok('[INFO]')} {message}")
+    print(f"  {info('[i]')} {message}")
 
 def warn_msg(message: str):
-    """Mensaje de advertencia."""
-    print(f"  {warn('[WARN]')} {message}")
+    print(f"  {warn('[!]')} {message}")
 
 
 # ============================================================================
@@ -358,12 +265,7 @@ def warn_msg(message: str):
 # ============================================================================
 
 def user_table(users: list, show_all: bool = False):
-    """
-    Renderiza la tabla de usuarios con colores semanticos.
-    users: lista de dicts del JSON
-    """
     print()
-    # Headers con ancho fijo
     header_str = (
         f"  {bold('USUARIO'):<15} "
         f"{bold('ESTADO'):<12} "
@@ -372,7 +274,7 @@ def user_table(users: list, show_all: bool = False):
         f"{bold('PROTOCOLOS')}"
     )
     print(header_str)
-    print(f"  {dim('─' * 65)}")
+    print(f"  {dim(chr(9472) * 65)}")
 
     for u in users:
         username = u.get("username", "?")
@@ -381,7 +283,6 @@ def user_table(users: list, show_all: bool = False):
         max_conn = u.get("max_connections", 0)
         protocols = u.get("protocols", [])
 
-        # Color por estado
         if status == "active":
             status_display = ok("active")
         elif status == "suspended":
@@ -389,16 +290,13 @@ def user_table(users: list, show_all: bool = False):
         else:
             status_display = error(status)
 
-        # Protocolos como string abreviado
         proto_str = ", ".join(protocols) if isinstance(protocols, list) else str(protocols)
-
-        # Truncar protocolos si es muy largo
         if len(proto_str) > 25:
             proto_str = proto_str[:22] + "..."
 
         print(
             f"  {username:<15} "
-            f"{status_display:<22} "  # 12 chars + color codes
+            f"{status_display:<22} "
             f"{expires:<14} "
             f"{max_conn:<6} "
             f"{proto_str}"
@@ -415,12 +313,9 @@ def user_table(users: list, show_all: bool = False):
 # ============================================================================
 
 def user_detail_card(user: dict):
-    """Renderiza el detalle de un usuario como tarjeta visual."""
     print()
-    print(f"  {C_BOLD}{C_INFO}┌─────────────────────────────────────────────┐{C_RESET}")
-    print(f"  {C_BOLD}{C_INFO}│  DETALLE DE USUARIO                         │{C_RESET}")
-    print(f"  {C_BOLD}{C_INFO}└─────────────────────────────────────────────┘{C_RESET}")
-    print()
+    print(f"  {bold('DETALLE DE USUARIO')}")
+    print(f"  {dim(chr(9472) * 42)}")
     fields = [
         ("Usuario", user.get("username", "?")),
         ("Estado", user.get("status", "?")),
@@ -443,10 +338,9 @@ def user_detail_card(user: dict):
 # ============================================================================
 
 def service_status_table():
-    """Tabla de estado de servicios con indicador visual y latencia."""
     print()
     print(f"  {bold('Servicio'):<20} {bold('Estado'):<12} {bold('Latencia')}")
-    print(f"  {dim('─' * 45)}")
+    print(f"  {dim(chr(9472) * 45)}")
 
     services = [
         ("xray", "Xray-core", 2053),
@@ -472,3 +366,33 @@ def service_status_table():
             lat_display = dim("—")
 
         print(f"  {svc_name:<20} {status_display}        {lat_display}")
+
+
+# ============================================================================
+# BANNER - Solo primera pantalla
+# ============================================================================
+
+def banner_welcome():
+    print()
+    print(f"{C_BOLD}{C_INFO}")
+    print("     ██████╗██████╗ ██╗██████╗ ████████╗███████╗██████╗ ███╗   ██╗")
+    print("    ██╔════╝██╔══██╗██║██╔══██╗╚══██╔══╝██╔════╝██╔══██╗████╗  ██║")
+    print("    ██║     ██████╔╝██║██████╔╝   ██║   █████╗  ██████╔╝██╔██╗ ██║")
+    print("    ██║     ██╔══██╗██║██╔═══╝    ██║   ██╔══╝  ██╔══██╗██║╚██╗██║")
+    print("    ╚██████╗██║  ██║██║██║        ██║   ███████╗██║  ██║██║ ╚████║")
+    print("     ╚═════╝╚═╝  ╚═╝╚═╝╚═╝        ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝")
+    print(f"{C_RESET}")
+    print(f"          {bold('VPN Manager v1.1')}    {dim('by CRISDEV / @CRISIS1823')}")
+    print()
+
+
+def menu_item(number: int, label: str, col_width: int = 33, destructive: bool = False) -> str:
+    prefix = f"{number})"
+    if destructive:
+        return f"    {error(f'{bold(prefix)} {label}'):<{col_width}}"
+    return f"    {bold(prefix)} {label:<{col_width - len(prefix) - 1}}"
+
+
+def menu_item_right(number: int, label: str, col_width: int = 22) -> str:
+    prefix = f"{number})"
+    return f"{bold(prefix)} {label:<{col_width - len(prefix) - 1}}"
