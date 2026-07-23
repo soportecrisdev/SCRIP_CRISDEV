@@ -21,18 +21,28 @@ from ui import (
 
 
 # ============================================================================
-# CONFIG
+# CONFIG - Puertos compatibles con Cloudflare Free
 # ============================================================================
+# Cloudflare free solo permite: 80, 443, 8080, 8443, 2053, 2083, 2087, 2096
+# Para VPN, usar estos puertos para que funcione a traves de Cloudflare proxy
 
 USERS_DB = "/etc/crisdev/data/users.json"
 AUDIT_LOG = "/etc/crisdev/logs/audit.log"
 SERVER_CONFIG = "/etc/crisdev/data/server_config.json"
+CERT_DIR = "/etc/crisdev/certs"
 
+# Puertos Cloudflare-compatible
 PORT_SSH = 22
-PORT_XRAY_WS = 2053
-PORT_XRAY_GRPC = 2083
-PORT_HYSTERIA = 443
+PORT_STUNNEL = 443          # SSH-SSL via Stunnel (puerto estandar HTTPS)
+PORT_XRAY_WS = 443          # Xray WebSocket (via Cloudflare)
+PORT_XRAY_GRPC = 2083       # Xray gRPC (Cloudflare compatible)
+PORT_XRAY_VLESS = 2096      # Xray VLESS
+PORT_HYSTERIA = 443         # Hysteria2 UDP
 PORT_UDP_CUSTOM = "7100-7200"
+PORT_BADVPN = 7300
+PORT_SLOWDNS = 5300
+PORT_SOCKS = 7777           # Python SOCKS proxy
+PORT_WS_EPRO = 80           # WebSocket Python (Cloudflare HTTP)
 
 
 # ============================================================================
@@ -87,6 +97,211 @@ def _server_domain() -> str:
             return json.load(f).get("domain", "")
     except Exception:
         return ""
+
+
+# ============================================================================
+# HELPERS - Puertos y Certificados
+# ============================================================================
+
+def _get_real_port(svc_name: str) -> str:
+    """Detecta el puerto real de un servicio usando ss."""
+    # Buscar en TCP
+    port = _cmd(
+        f"ss -tlnp 2>/dev/null | grep -i '{svc_name}' | awk '{{print $4}}' | "
+        f"grep -oP '\\d+$' | head -1"
+    )
+    if port:
+        return port
+    # Buscar en UDP
+    port = _cmd(
+        f"ss -ulnp 2>/dev/null | grep -i '{svc_name}' | awk '{{print $4}}' | "
+        f"grep -oP '\\d+$' | head -1"
+    )
+    return port or ""
+
+
+def _get_all_listening_ports() -> dict:
+    """Obtiene todos los puertos TCP/UDP activos del servidor."""
+    ports = {}
+    # TCP
+    output = _cmd("ss -tlnp 2>/dev/null | tail -n +2")
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) >= 4:
+            addr = parts[3]
+            port = addr.rsplit(":", 1)[-1] if ":" in addr else ""
+            proc = ""
+            if "users:" in line:
+                proc = line.split("users:")[1].split('"')[1] if '"' in line.split("users:")[1] else ""
+            if port and port.isdigit():
+                ports[port] = {"proto": "tcp", "proc": proc}
+    # UDP
+    output = _cmd("ss -ulnp 2>/dev/null | tail -n +2")
+    for line in output.splitlines():
+        parts = line.split()
+        if len(parts) >= 4:
+            addr = parts[3]
+            port = addr.rsplit(":", 1)[-1] if ":" in addr else ""
+            proc = ""
+            if "users:" in line:
+                proc = line.split("users:")[1].split('"')[1] if '"' in line.split("users:")[1] else ""
+            if port and port.isdigit():
+                ports[port] = {"proto": "udp", "proc": proc}
+    return ports
+
+
+def _is_port_open(port: str) -> bool:
+    """Verifica si un puerto esta escuchando."""
+    result = _cmd(f"ss -tlnp 2>/dev/null | grep ':{port} '")
+    if not result:
+        result = _cmd(f"ss -ulnp 2>/dev/null | grep ':{port} '")
+    return bool(result)
+
+
+def _generate_self_signed_cert(domain: str = "crisdev-vpn"):
+    """Genera certificado SSL autofirmado de alta calidad (4096 bits, 10 anios)."""
+    os.makedirs(CERT_DIR, exist_ok=True)
+    key_path = f"{CERT_DIR}/server.key"
+    cert_path = f"{CERT_DIR}/server.crt"
+    info_msg("Generando certificado SSL de alta calidad...")
+
+    # Generar key RSA 4096 bits
+    _cmd(f"openssl genrsa -out {key_path} 4096 2>/dev/null")
+
+    # Generar certificado con mejor calidad
+    _cmd(
+        f"openssl req -new -x509 -days 3650 -key {key_path} -out {cert_path} "
+        f"-subj '/C=US/ST=VPN/L=CRISDEV/O=CRISDEV/CN={domain}' "
+        f"-addext 'subjectAltName=DNS:{domain},DNS:*.{domain},IP:{_server_ip()}' "
+        f"2>/dev/null"
+    )
+
+    # Verificar que se genero correctamente
+    if os.path.exists(cert_path) and os.path.exists(key_path):
+        size = _cmd(f"openssl x509 -in {cert_path} -noout -text 2>/dev/null | grep 'Public-Key:'")
+        ok_msg(f"Certificado generado correctamente")
+        print(f"  {dim(f'Ubicacion: {CERT_DIR}/')}")
+        print(f"  {dim(f'Tamano: {size.strip()}')}")
+        print(f"  {dim('Validez: 10 anios')}")
+        _audit("CERT_GENERATE", f"Self-signed para {domain}")
+        return True
+    else:
+        error_msg("Error al generar certificado")
+        return False
+
+
+def _generate_cloudflare_origin_cert(domain: str):
+    """Genera certificado Cloudflare Origin (si el usuario tiene acceso a CF dashboard)."""
+    os.makedirs(CERT_DIR, exist_ok=True)
+    info_msg("Certificado Cloudflare Origin")
+    print()
+    print(f"  {dim('Para usar Cloudflare Origin Certificate:')}")
+    print(f"  1) Ve a Cloudflare Dashboard > SSL/TLS > Origin Server")
+    print(f"  2) Crea un certificado para: {domain}")
+    print(f"  3) Copia el certificado y la clave a estos archivos:")
+    print(f"     {CERT_DIR}/cf-origin.pem")
+    print(f"     {CERT_DIR}/cf-origin.key")
+    print()
+    cf_cert = prompt_input("Pega el certificado (o Enter para saltar)")
+    if cf_cert:
+        with open(f"{CERT_DIR}/cf-origin.pem", "w") as f:
+            f.write(cf_cert)
+        cf_key = prompt_input("Pega la clave privada")
+        if cf_key:
+            with open(f"{CERT_DIR}/cf-origin.key", "w") as f:
+                f.write(cf_key)
+            ok_msg("Certificado Cloudflare Origin guardado")
+            return True
+    return False
+
+
+def _setup_stunnel_ssl():
+    """Configura Stunnel para SSH-SSL con el certificado generado."""
+    cert_file = f"{CERT_DIR}/server.crt"
+    key_file = f"{CERT_DIR}/server.key"
+
+    if not os.path.exists(cert_file):
+        info_msg("No hay certificado SSL. Generando uno nuevo...")
+        _generate_self_signed_cert()
+
+    # Configurar stunnel
+    stunnel_conf = f"""pid = /var/run/stunnel4/stunnel.pid
+foreground = no
+debug = 4
+logfile = /var/log/stunnel4.log
+
+[ssh]
+accept = 443
+connect = 127.0.0.1:{PORT_SSH}
+cert = {cert_file}
+key = {key_file}
+"""
+    os.makedirs("/etc/stunnel", exist_ok=True)
+    with open("/etc/stunnel/stunnel.conf", "w") as f:
+        f.write(stunnel_conf)
+
+    _cmd("systemctl enable stunnel4 2>/dev/null")
+    _cmd("systemctl restart stunnel4 2>/dev/null")
+    ok_msg("Stunnel SSL configurado en puerto 443")
+    _audit("STUNNEL_CONFIG", "Puerto 443 SSL")
+
+
+def _get_service_info():
+    """Retorna informacion de todos los servicios con puertos reales."""
+    services = []
+
+    # Definicion de servicios: (svc_id, display_name, default_port, cloudflare_ok)
+    defs = [
+        ("sshd", "SSH", "22", False),
+        ("dropbear", "Dropbear", "110", False),
+        ("stunnel4", "Stunnel SSL", "443", True),
+        ("slowdns", "SlowDNS", "5300", False),
+        ("udp-custom", "UDP-Custom", "7100", False),
+        ("hysteria-server", "Hysteria2", "443", True),
+        ("xray", "Xray/V2Ray", "443", True),
+        ("badvpn-udpgw", "BadVPN-UDPGW", "7300", False),
+        ("squid", "Squid", "3128", False),
+        ("openvpn", "OpenVPN", "1194", False),
+        ("wireguard", "WireGuard", "51820", False),
+        ("filebrowser", "FileBrowser", "8080", True),
+    ]
+
+    for svc_id, name, default_port, cf_ok in defs:
+        st = check_service_status(svc_id)
+        is_active = st == "active"
+        real_port = ""
+        if is_active:
+            real_port = _get_real_port(svc_id)
+        port = real_port or default_port
+        services.append({
+            "id": svc_id,
+            "name": name,
+            "port": port,
+            "active": is_active,
+            "cloudflare": cf_ok,
+        })
+
+    # Python SOCKS
+    py_port = _get_real_port("python3")
+    services.append({
+        "id": "python3",
+        "name": "SOCKS Python",
+        "port": py_port or "7777",
+        "active": bool(py_port),
+        "cloudflare": False,
+    })
+
+    # WS-EPRO (Python en puerto 80)
+    ws_active = _is_port_open("80")
+    services.append({
+        "id": "ws-epro",
+        "name": "WS-EPRO",
+        "port": "80",
+        "active": ws_active,
+        "cloudflare": True,
+    })
+
+    return services
 
 
 # ============================================================================
@@ -539,16 +754,14 @@ def mod_puertos():
         _puertos_dashboard()
 
         print()
-        print(f"    {bold('[1]>')}  Ajustes SSH        {bold('[9]>')}  BadVPN-UDPGW")
-        print(f"    {bold('[2]>')}  Dropbear          {bold('[10]>')} Squid")
-        print(f"    {bold('[3]>')}  SOCKS Python      {bold('[11]>')} OpenVPN")
-        print(f"    {bold('[4]>')}  Stunnel (SSL)     {bold('[12]>')} CheckUser Online")
-        print(f"    {bold('[5]>')}  SlowDNS           {bold('[13]>')} ATKEN / HASH")
-        print(f"    {bold('[6]>')}  WS-EPRO           {bold('[14]>')} FileBrowser")
-        print(f"    {bold('[7]>')}  UDP-Custom        {bold('[15]>')} V2Ray / Xray")
-        print(f"    {bold('[8]>')}  UDP-Hysteria      {bold('[16]>')} WireGuard")
-        print(f"    {bold('[17]>')} Abrir puerto       {bold('[18]>')} Cerrar puerto")
-        print(f"    {bold('[19]>')} Modo panico")
+        print(f"    {bold('[1]>')}  SSH              {bold('[9]>')}  BadVPN-UDPGW")
+        print(f"    {bold('[2]>')}  Dropbear         {bold('[10]>')} Squid")
+        print(f"    {bold('[3]>')}  SOCKS Python     {bold('[11]>')} OpenVPN")
+        print(f"    {bold('[4]>')}  Stunnel SSL      {bold('[12]>')} WireGuard")
+        print(f"    {bold('[5]>')}  SlowDNS          {bold('[13]>')} FileBrowser")
+        print(f"    {bold('[6]>')}  WS-EPRO (Py)     {bold('[14]>')} V2Ray / Xray")
+        print(f"    {bold('[7]>')}  UDP-Custom       {bold('[15]>')} Certificados SSL")
+        print(f"    {bold('[8]>')}  UDP-Hysteria     {bold('[16]>')} Firewall (UFW)")
         print()
         separator()
         print(f"    {dim('[0] Volver')}")
@@ -559,218 +772,505 @@ def mod_puertos():
         elif opt == "1":
             _port_ssh_menu()
         elif opt == "2":
-            _port_service_menu("dropbear", "Dropbear", "110,8080")
+            _port_svc_menu("dropbear", "Dropbear", "110")
         elif opt == "3":
-            _port_service_menu("python3", "SOCKS Python", "7777")
+            _port_svc_menu("python3", "SOCKS Python", "7777")
         elif opt == "4":
-            _port_service_menu("stunnel4", "Stunnel SSL", "442")
+            _port_stunnel_menu()
         elif opt == "5":
-            _port_service_menu("slowdns", "SlowDNS", "5300")
+            _port_svc_menu("slowdns", "SlowDNS", "5300")
         elif opt == "6":
-            _port_service_menu("ws-epro", "WS-EPRO", "80")
+            _port_wsepro_menu()
         elif opt == "7":
-            _port_service_menu("udp-custom", "UDP-Custom", "36717")
+            _port_svc_menu("udp-custom", "UDP-Custom", "7100")
         elif opt == "8":
-            _port_service_menu("udp-hysteria", "UDP-Hysteria", "36712")
+            _port_svc_menu("hysteria-server", "UDP-Hysteria", "443")
         elif opt == "9":
-            _port_service_menu("badvpn-udpgw", "BadVPN-UDPGW", "7300")
+            _port_svc_menu("badvpn-udpgw", "BadVPN-UDPGW", "7300")
         elif opt == "10":
-            _port_service_menu("squid", "Squid", "3128")
+            _port_svc_menu("squid", "Squid", "3128")
         elif opt == "11":
-            _port_service_menu("openvpn", "OpenVPN", "1194")
+            _port_svc_menu("openvpn", "OpenVPN", "1194")
         elif opt == "12":
-            _port_service_menu("checkuser", "CheckUser Online", "80")
+            _port_svc_menu("wireguard", "WireGuard", "51820")
         elif opt == "13":
-            _port_service_menu("atken", "ATKEN/HASH", "N/A")
+            _port_svc_menu("filebrowser", "FileBrowser", "8080")
         elif opt == "14":
-            _port_service_menu("filebrowser", "FileBrowser", "8080")
+            _port_xray_menu()
         elif opt == "15":
-            _port_service_menu("xray", "V2Ray/Xray", "443")
+            _port_ssl_menu()
         elif opt == "16":
-            _port_service_menu("wireguard", "WireGuard", "51820")
-        elif opt == "17":
-            _fw_open()
-        elif opt == "18":
-            _fw_close()
-        elif opt == "19":
-            _fw_panic()
+            _port_firewall_menu()
         else:
             error_msg("Opcion invalida")
         pause()
 
 
-def _scan_ports():
-    """Escanea servicios reales del sistema y retorna dict {service: port}."""
-    detected = {}
-
-    # Mapeo de servicio systemd -> nombre display y puertos default
-    services = [
-        ("sshd", "SSH", "22"),
-        ("dropbear", "Dropbear", "110"),
-        ("stunnel4", "Stunnel", "442"),
-        ("slowdns", "SlowDNS", "5300"),
-        ("udp-custom", "UDP-Custom", "36717"),
-        ("udp-hysteria", "UDP-Hysteria", "36712"),
-        ("hysteria-server", "UDP-Hysteria", "36712"),
-        ("xray", "Xray", "443"),
-        ("badvpn-udpgw", "BadVPN", "7300"),
-        ("squid", "Squid", "3128"),
-        ("openvpn", "OpenVPN", "1194"),
-        ("wireguard", "WireGuard", "51820"),
-        ("filebrowser", "FileBrowser", "8080"),
-        ("ufw", "Firewall", ""),
-    ]
-
-    for svc_id, name, default_port in services:
-        st = check_service_status(svc_id)
-        if st == "active":
-            # Intentar detectar puerto real con ss
-            real_port = _cmd(
-                f"ss -tlnp 2>/dev/null | grep '{svc_id}' | awk '{{print $4}}' | "
-                f"grep -oP '\\d+$' | head -1"
-            )
-            if not real_port:
-                # Para servicios UDP o con otro nombre
-                real_port = _cmd(
-                    f"ss -ulnp 2>/dev/null | grep '{svc_id}' | awk '{{print $4}}' | "
-                    f"grep -oP '\\d+$' | head -1"
-                )
-            detected[name] = {
-                "port": real_port or default_port,
-                "status": True,
-                "svc_id": svc_id,
-            }
-        else:
-            detected[name] = {
-                "port": default_port,
-                "status": False,
-                "svc_id": svc_id,
-            }
-
-    # Detectar servicios extras que no son systemd
-    # Python SOCKS
-    py_sock = _cmd("ss -tlnp 2>/dev/null | grep python | awk '{print $4}' | grep -oP '\\d+$' | head -1")
-    if py_sock:
-        detected["SOCKS Python"] = {"port": py_sock, "status": True, "svc_id": "python3"}
-    else:
-        detected["SOCKS Python"] = {"port": "7777", "status": False, "svc_id": "python3"}
-
-    # WS-EPRO / Badvpn
-    ws_epro = _cmd("ss -tlnp 2>/dev/null | grep ':80 ' | awk '{print $4}' | head -1")
-    if ws_epro:
-        detected["WS-EPRO"] = {"port": "80", "status": True, "svc_id": "ws-epro"}
-    else:
-        detected["WS-EPRO"] = {"port": "80", "status": False, "svc_id": "ws-epro"}
-
-    # CheckUser
-    detected["CheckUser"] = {"port": "80", "status": False, "svc_id": "checkuser"}
-
-    # ATKEN
-    detected["ATKEN/HASH"] = {"port": "N/A", "status": False, "svc_id": "atken"}
-
-    return detected
-
-
 def _puertos_dashboard():
-    """Muestra el cuadro de servicios con puertos."""
-    detected = _scan_ports()
-
-    # Lista de servicios para mostrar en el cuadro
-    display = [
-        ("BADVPN", detected.get("BadVPN", {}).get("port", "7300")),
-        ("DROPBEAR", detected.get("Dropbear", {}).get("port", "110")),
-        ("PYTHON3", detected.get("SOCKS Python", {}).get("port", "7777")),
-        ("SLOWDNS", detected.get("SlowDNS", {}).get("port", "5300")),
-        ("SSH", detected.get("SSH", {}).get("port", "22")),
-        ("STUNNEL", detected.get("Stunnel", {}).get("port", "442")),
-        ("UDP-CUSTOM", detected.get("UDP-Custom", {}).get("port", "36717")),
-        ("UDP-HYSTERIA", detected.get("UDP-Hysteria", {}).get("port", "36712")),
-        ("WS-EPRO", detected.get("WS-EPRO", {}).get("port", "80")),
-        ("XRAY", detected.get("Xray", {}).get("port", "443")),
-    ]
+    """Panel principal con todos los servicios y puertos reales."""
+    services = _get_service_info()
 
     print()
     print(f"  {dim(chr(9552) * 58)}")
     print(f"  {bold('ADMINISTRADOR DE PROTOCOLOS'):^58}")
     print(f"  {dim(chr(9552) * 58)}")
 
-    # Imprimir en dos columnas
-    col_width = 29
-    for i in range(0, len(display), 2):
-        left_name, left_port = display[i]
-        if i + 1 < len(display):
-            right_name, right_port = display[i + 1]
-            left_str = f"  {left_name:<15} {bold(left_port):<12}"
-            right_str = f"{right_name:<15} {bold(right_port)}"
-            print(f"{left_str}{right_str}")
+    # Organizar en dos columnas
+    col1 = []
+    col2 = []
+    for i, svc in enumerate(services[:12]):
+        name = svc["name"].upper()
+        port = svc["port"]
+        if svc["active"]:
+            status = ok("ON")
         else:
-            print(f"  {left_name:<15} {bold(left_port)}")
+            status = error("OFF")
+        line = f"  {name:<16} {bold(port):<8} [{status}]"
+        if i < 6:
+            col1.append(line)
+        else:
+            col2.append(line)
+
+    for i in range(max(len(col1), len(col2))):
+        left = col1[i] if i < len(col1) else " " * 36
+        right = col2[i] if i < len(col2) else ""
+        print(f"{left}{right}")
 
     print(f"  {dim(chr(9552) * 58)}")
 
 
-def _port_service_menu(svc_id, svc_name, default_port):
-    """Submenu para un servicio individual."""
-    st = check_service_status(svc_id)
+def _port_ssh_menu():
+    """Submenu SSH con opciones completas."""
+    st = check_service_status("sshd")
     is_active = st == "active"
-
-    status_str = ok("ON") if is_active else error("OFF")
-    port_info = ""
-
-    if is_active:
-        real_port = _cmd(
-            f"ss -tlnp 2>/dev/null | grep '{svc_id}' | awk '{{print $4}}' | "
-            f"grep -oP '\\d+$' | head -1"
-        )
-        if not real_port:
-            real_port = _cmd(
-                f"ss -ulnp 2>/dev/null | grep '{svc_id}' | awk '{{print $4}}' | "
-                f"grep -oP '\\d+$' | head -1"
-            )
-        port_info = real_port or default_port
-    else:
-        port_info = default_port
+    port = _get_real_port("sshd") or "22"
+    stunnel_st = check_service_status("stunnel4")
+    stunnel_active = stunnel_st == "active"
 
     separator()
     print()
-    print(f"  {bold(svc_name.upper())}  [{status_str}]  Puerto: {bold(port_info)}")
+    print(f"  {bold('SSH / SSH-SSL')}")
+    print(f"  SSH:      [{ok('ON') if is_active else error('OFF')}]  Puerto: {bold(port)}")
+    print(f"  Stunnel:  [{ok('ON') if stunnel_active else error('OFF')}]  Puerto: {bold('443')}")
+    conns = _cmd("ss -tn | grep ':22 ' | wc -l").strip() if is_active else "0"
+    print(f"  Conexiones activas: {bold(conns)}")
+    print()
+
+    print(f"    {bold('1)')} Ver estado detallado")
+    print(f"    {bold('2)')} Reiniciar SSH")
+    print(f"    {bold('3)')} Cambiar puerto SSH")
+    print(f"    {bold('4)')} Ver config SSH")
+    print(f"    {bold('5)')} Ver intentos fallidos (fail2ban)")
+    print(f"    {bold('6)')} Desbanear IP")
+    print(f"    {bold('7)')} Configurar Stunnel SSL (puerto 443)")
+    print(f"    {bold('8)')} Reiniciar Stunnel")
+
+    print()
+    opt = prompt_input("Opcion")
+
+    if opt == "1":
+        print()
+        if is_active:
+            print(f"  SSH: {ok('activo')} en puerto {port}")
+            print(f"  Conexiones: {bold(conns)}")
+            # Mostrar usuarios conectados
+            users = _cmd("ss -tn | grep ':22 ' | awk '{print $5}' | cut -d: -f1 | sort | uniq")
+            if users:
+                print(f"  IPs conectadas:")
+                for u in users.splitlines()[:5]:
+                    print(f"    {u}")
+        else:
+            print(f"  SSH: {error(st)}")
+    elif opt == "2":
+        _cmd("systemctl restart sshd 2>/dev/null || systemctl restart ssh")
+        ok_msg("SSH reiniciado")
+    elif opt == "3":
+        new_port = prompt_input(f"Nuevo puerto SSH (actual: {port})")
+        if new_port and new_port.isdigit():
+            _cmd(f"ufw allow {new_port}/tcp")
+            _cmd(f"sed -i 's/^Port .*/Port {new_port}/' /etc/ssh/sshd_config")
+            _cmd("systemctl restart sshd")
+            ok_msg(f"SSH cambiado a puerto {new_port}")
+            _audit("SSH_PORT", f"Cambiado a {new_port}")
+    elif opt == "4":
+        output = _cmd("cat /etc/ssh/sshd_config 2>/dev/null | grep -v '^#' | grep -v '^$' | head -30")
+        print(f"\n  {dim('/etc/ssh/sshd_config')}")
+        print(output)
+    elif opt == "5":
+        output = _cmd("fail2ban-client status sshd 2>/dev/null")
+        print(f"\n{output}" if output else dim("  No hay datos"))
+    elif opt == "6":
+        ip = prompt_input("IP a desbanear")
+        if ip:
+            _cmd(f"fail2ban-client set sshd unbanip {ip} 2>/dev/null")
+            ok_msg(f"IP {ip} desbaneada")
+    elif opt == "7":
+        _setup_stunnel_ssl()
+    elif opt == "8":
+        _cmd("systemctl restart stunnel4")
+        ok_msg("Stunnel reiniciado")
+
+
+def _port_stunnel_menu():
+    """Submenu Stunnel SSL."""
+    st = check_service_status("stunnel4")
+    is_active = st == "active"
+    port = _get_real_port("stunnel4") or "443"
+    cert_exists = os.path.exists(f"{CERT_DIR}/server.crt")
+
+    separator()
+    print()
+    print(f"  {bold('STUNNEL SSL')}")
+    print(f"  Estado:  [{ok('ON') if is_active else error('OFF')}]")
+    print(f"  Puerto:  {bold(port)}")
+    print(f"  Cert:    [{ok('SI') if cert_exists else error('NO')}]")
+    print()
+
+    print(f"    {bold('1)')} Ver estado")
+    print(f"    {bold('2)')} Reiniciar Stunnel")
+    print(f"    {bold('3)')} Cambiar puerto (acepta 443, 8443, etc)")
+    print(f"    {bold('4)')} Ver configuracion")
+    print(f"    {bold('5)')} Generar certificado SSL")
+    print(f"    {bold('6)')} Configurar Stunnel automaticamente")
+
+    print()
+    opt = prompt_input("Opcion")
+
+    if opt == "1":
+        st = check_service_status("stunnel4")
+        if st == "active":
+            print(f"\n  Stunnel: {ok('activo')} en puerto {port}")
+            print(f"  SSL: {'Conectado' if cert_exists else 'Sin certificado'}")
+        else:
+            print(f"\n  Stunnel: {error(st)}")
+    elif opt == "2":
+        _cmd("systemctl restart stunnel4")
+        ok_msg("Stunnel reiniciado")
+    elif opt == "3":
+        new_port = prompt_input(f"Nuevo puerto (actual: {port})")
+        if new_port and new_port.isdigit():
+            _cmd(f"echo y | ufw allow {new_port}/tcp")
+            # Actualizar config
+            conf = "/etc/stunnel/stunnel.conf"
+            if os.path.exists(conf):
+                _cmd(f"sed -i 's/^accept = .*/accept = {new_port}/' {conf}")
+            _cmd("systemctl restart stunnel4")
+            ok_msg(f"Stunnel cambiado a puerto {new_port}")
+            _audit("STUNNEL_PORT", f"Cambiado a {new_port}")
+    elif opt == "4":
+        conf = "/etc/stunnel/stunnel.conf"
+        if os.path.exists(conf):
+            output = _cmd(f"cat {conf}")
+            print(f"\n  {dim(conf)}")
+            print(output)
+        else:
+            warn_msg("No hay config. Usa opcion 6 para configurar.")
+    elif opt == "5":
+        domain = prompt_input("Dominio (vacio = IP directa)") or _server_ip()
+        _generate_self_signed_cert(domain)
+    elif opt == "6":
+        _setup_stunnel_ssl()
+
+
+def _port_wsepro_menu():
+    """Submenu WS-EPRO (Python WebSocket en puerto 80)."""
+    port_80 = _is_port_open("80")
+    is_active = port_80
+
+    separator()
+    print()
+    print(f"  {bold('WS-EPRO (Python WebSocket)')}")
+    print(f"  Estado:  [{ok('ON') if is_active else error('OFF')}]")
+    print(f"  Puerto:  {bold('80')}")
+    print(f"  Nota:    {dim('Puerto 80 compatible con Cloudflare')}")
+    print()
+
+    print(f"    {bold('1)')} Ver estado")
+    print(f"    {bold('2)')} Iniciar WS-EPRO")
+    print(f"    {bold('3)')} Detener WS-EPRO")
+    print(f"    {bold('4)')} Configurar WS-EPRO")
+    print(f"    {bold('5)')} Ver logs")
+
+    print()
+    opt = prompt_input("Opcion")
+
+    if opt == "1":
+        if is_active:
+            print(f"\n  WS-EPRO: {ok('activo')} en puerto 80")
+            conns = _cmd("ss -tn | grep ':80 ' | wc -l").strip()
+            print(f"  Conexiones: {bold(conns)}")
+        else:
+            print(f"\n  WS-EPRO: {error('inactivo')}")
+    elif opt == "2":
+        # Buscar script de WS-EPRO
+        ws_script = _cmd("find / -name 'ws_epro.py' -o -name 'wsepro.py' 2>/dev/null | head -1")
+        if ws_script:
+            _cmd(f"nohup python3 {ws_script} > /var/log/ws-epro.log 2>&1 &")
+            ok_msg("WS-EPRO iniciado en puerto 80")
+        else:
+            warn_msg("No se encontro ws_epro.py. Instalalo primero.")
+    elif opt == "3":
+        _cmd("pkill -f 'ws_epro\\|wsepro' 2>/dev/null")
+        ok_msg("WS-EPRO detenido")
+    elif opt == "4":
+        print(f"\n  {dim('Configuracion de WS-EPRO:')}")
+        print(f"  Puerto: 80 (fijo, compatible con Cloudflare)")
+        print(f"  Path: /ws")
+        print()
+        info_msg("Edita /etc/crisdev/ws-epro.json para configurar")
+    elif opt == "5":
+        output = _cmd("tail -30 /var/log/ws-epro.log 2>/dev/null")
+        print(f"\n{output}" if output else dim("  No hay logs"))
+
+
+def _port_xray_menu():
+    """Submenu Xray/V2Ray."""
+    st = check_service_status("xray")
+    is_active = st == "active"
+    port = _get_real_port("xray") or "443"
+
+    separator()
+    print()
+    print(f"  {bold('V2RAY / XRAY')}")
+    print(f"  Estado:  [{ok('ON') if is_active else error('OFF')}]")
+    print(f"  Puerto:  {bold(port)}")
+    print(f"  Config:  {dim('/usr/local/etc/xray/config.json')}")
+    print()
+
+    print(f"    {bold('1)')} Ver estado")
+    print(f"    {bold('2)')} Reiniciar Xray")
+    print(f"    {bold('3)')} Ver version")
+    print(f"    {bold('4)')} Ver config")
+    print(f"    {bold('5)')} Ver logs")
+    print(f"    {bold('6)')} Cambiar puerto")
+
+    print()
+    opt = prompt_input("Opcion")
+
+    if opt == "1":
+        if is_active:
+            print(f"\n  Xray: {ok('activo')} en puerto {port}")
+            v = _cmd("/opt/xray/xray version 2>/dev/null | head -1")
+            if v:
+                print(f"  Version: {bold(v)}")
+        else:
+            print(f"\n  Xray: {error(st)}")
+    elif opt == "2":
+        _cmd("systemctl restart xray")
+        ok_msg("Xray reiniciado")
+    elif opt == "3":
+        v = _cmd("/opt/xray/xray version 2>/dev/null | head -1")
+        print(f"\n  {bold(v)}" if v else warn_msg("No instalado"))
+    elif opt == "4":
+        output = _cmd("cat /usr/local/etc/xray/config.json 2>/dev/null | head -40")
+        print(f"\n  {dim('/usr/local/etc/xray/config.json')}")
+        print(output)
+    elif opt == "5":
+        output = _cmd("journalctl -u xray --no-pager -n 30 2>/dev/null")
+        print(f"\n{output}" if output else dim("  No hay logs"))
+    elif opt == "6":
+        new_port = prompt_input(f"Nuevo puerto (actual: {port})")
+        if new_port and new_port.isdigit():
+            _cmd(f"echo y | ufw allow {new_port}/tcp")
+            # Actualizar config xray
+            conf = "/usr/local/etc/xray/config.json"
+            if os.path.exists(conf):
+                _cmd(f"sed -i 's/\"port\":{port}/\"port\":{new_port}/' {conf}")
+            _cmd("systemctl restart xray")
+            ok_msg(f"Xray cambiado a puerto {new_port}")
+
+
+def _port_ssl_menu():
+    """Menu de certificados SSL."""
+    separator()
+    print()
+    print(f"  {bold('CERTIFICADOS SSL')}")
+    cert_exists = os.path.exists(f"{CERT_DIR}/server.crt")
+    cf_cert = os.path.exists(f"{CERT_DIR}/cf-origin.pem")
+
+    if cert_exists:
+        info = _cmd(f"openssl x509 -in {CERT_DIR}/server.crt -noout -subject -dates 2>/dev/null")
+        print(f"  Self-signed: {ok('INSTALADO')}")
+        if info:
+            for line in info.splitlines():
+                print(f"    {dim(line)}")
+    else:
+        print(f"  Self-signed: {error('NO INSTALADO')}")
+
+    if cf_cert:
+        print(f"  Cloudflare:  {ok('INSTALADO')}")
+    else:
+        print(f"  Cloudflare:  {dim('no disponible')}")
+    print()
+
+    print(f"    {bold('1)')} Generar certificado self-signed (4096 bits)")
+    print(f"    {bold('2)')} Importar certificado Cloudflare Origin")
+    print(f"    {bold('3)')} Verificar certificado actual")
+    print(f"    {bold('4)')} Configurar HTTPS en Nginx/Apache")
+
+    print()
+    opt = prompt_input("Opcion")
+
+    if opt == "1":
+        domain = prompt_input("Dominio (vacio = IP directa)") or _server_ip()
+        _generate_self_signed_cert(domain)
+    elif opt == "2":
+        domain = prompt_input("Tu dominio Cloudflare")
+        if domain:
+            _generate_cloudflare_origin_cert(domain)
+    elif opt == "3":
+        if cert_exists:
+            output = _cmd(f"openssl x509 -in {CERT_DIR}/server.crt -noout -text 2>/dev/null | head -20")
+            print(f"\n{output}")
+        else:
+            warn_msg("No hay certificado instalado")
+    elif opt == "4":
+        info_msg("Para configurar HTTPS:")
+        print(f"  1) Instala Nginx: apt install nginx")
+        print(f"  2) Copia los certificados a /etc/nginx/ssl/")
+        print(f"  3) Configura el virtual host con SSL")
+        print(f"  {dim('Los certificados estan en: ' + CERT_DIR)}")
+
+
+def _port_firewall_menu():
+    """Menu de firewall UFW."""
+    separator()
+    print()
+    print(f"  {bold('FIREWALL (UFW)')}")
+    # Mostrar estado
+    ufw_status = _cmd("ufw status 2>/dev/null | head -1")
+    print(f"  Estado: {bold(ufw_status)}")
+
+    # Mostrar reglas activas
+    rules = _cmd("ufw status numbered 2>/dev/null | tail -n +4")
+    if rules:
+        print(f"\n  {dim('Reglas activas:')}")
+        for line in rules.splitlines()[:10]:
+            print(f"    {line}")
+    print()
+
+    print(f"    {bold('1)')} Ver reglas completas")
+    print(f"    {bold('2)')} Abrir puerto")
+    print(f"    {bold('3)')} Cerrar puerto")
+    print(f"    {bold('4)')} Abrir puertos Cloudflare (80,443,8080,8443)")
+    print(f"    {bold('5)')} Abrir puertos VPN (todos)")
+    print(f"    {bold('6)')} Activar UFW")
+    print(f"    {bold('7)')} Desactivar UFW")
+    print(f"    {bold('8)')} Modo panico (solo SSH)")
+
+    print()
+    opt = prompt_input("Opcion")
+
+    if opt == "1":
+        output = _cmd("ufw status verbose 2>/dev/null")
+        print(f"\n{output}")
+    elif opt == "2":
+        port = prompt_input("Puerto a abrir")
+        proto = prompt_input("Protocolo (tcp/udp/both) [tcp]") or "tcp"
+        if proto == "both":
+            _cmd(f"echo y | ufw allow {port}")
+        else:
+            _cmd(f"echo y | ufw allow {port}/{proto}")
+        ok_msg(f"Puerto {port}/{proto} abierto")
+    elif opt == "3":
+        port = prompt_input("Puerto a cerrar")
+        proto = prompt_input("Protocolo (tcp/udp) [tcp]") or "tcp"
+        _cmd(f"echo y | ufw delete allow {port}/{proto}")
+        ok_msg(f"Puerto {port}/{proto} cerrado")
+    elif opt == "4":
+        # Puertos esenciales para Cloudflare
+        cf_ports = [80, 443, 8080, 8443, 2053, 2083, 2087, 2096]
+        for p in cf_ports:
+            _cmd(f"echo y | ufw allow {p}/tcp")
+        ok_msg(f"Puertos Cloudflare abiertos: {', '.join(map(str, cf_ports))}")
+        _audit("FIREWALL", "Puertos Cloudflare abiertos")
+    elif opt == "5":
+        # Puertos para VPN
+        vpn_ports = [22, 80, 443, 110, 442, 1194, 3128, 5300, 7300, 7777,
+                     8080, 8443, 2053, 2083, 2087, 2096, 51820, "7100:7200"]
+        for p in vpn_ports:
+            _cmd(f"echo y | ufw allow {p}")
+        ok_msg("Puertos VPN abiertos")
+        _audit("FIREWALL", "Puertos VPN abiertos")
+    elif opt == "6":
+        _cmd("echo y | ufw enable")
+        ok_msg("UFW activado")
+    elif opt == "7":
+        if confirm_destructive("Desactivar UFW?"):
+            _cmd("ufw disable")
+            ok_msg("UFW desactivado")
+    elif opt == "8":
+        if confirm_destructive("MODO PANICO? Solo SSH abierto."):
+            _cmd("ufw disable 2>/dev/null")
+            _cmd("echo y | ufw reset 2>/dev/null")
+            _cmd("ufw default deny incoming 2>/dev/null")
+            _cmd("ufw default allow outgoing 2>/dev/null")
+            _cmd(f"ufw allow {PORT_SSH}/tcp comment 'SSH-emergency'")
+            _cmd("echo y | ufw enable 2>/dev/null")
+            _audit("PANIC", "Modo panico activado")
+            warn_msg("MODO PANICO ACTIVADO")
+
+
+def _port_svc_menu(svc_id, svc_name, default_port):
+    """Submenu generico para servicios."""
+    st = check_service_status(svc_id)
+    is_active = st == "active"
+    port = _get_real_port(svc_id) or default_port
+
+    separator()
+    print()
+    print(f"  {bold(svc_name.upper())}")
+    print(f"  Estado:  [{ok('ON') if is_active else error('OFF')}]")
+    print(f"  Puerto:  {bold(port)}")
     print()
 
     if is_active:
-        print(f"    {bold('1)')} Reiniciar servicio")
-        print(f"    {bold('2)')} Detener servicio")
-        print(f"    {bold('3)')} Ver logs recientes")
-        print(f"    {bold('4)')} Ver configuracion")
+        print(f"    {bold('1)')} Ver estado")
+        print(f"    {bold('2)')} Reiniciar servicio")
+        print(f"    {bold('3)')} Detener servicio")
+        print(f"    {bold('4)')} Ver logs")
+        print(f"    {bold('5)')} Ver configuracion")
+        print(f"    {bold('6)')} Cambiar puerto")
     else:
-        print(f"    {bold('1)')} Iniciar servicio")
-        print(f"    {bold('2)')} Instalar servicio")
+        print(f"    {bold('1)')} Ver estado")
+        print(f"    {bold('2)')} Iniciar servicio")
+        print(f"    {bold('3)')} Verificar instalacion")
 
     print()
     opt = prompt_input("Opcion")
 
     if is_active:
         if opt == "1":
+            st = check_service_status(svc_id)
+            if st == "active":
+                print(f"\n  {svc_name}: {ok('activo')} en puerto {port}")
+            else:
+                print(f"\n  {svc_name}: {error(st)}")
+        elif opt == "2":
             _cmd(f"systemctl restart {svc_id}")
             new_st = check_service_status(svc_id)
             if new_st == "active":
                 ok_msg(f"{svc_name} reiniciado correctamente")
             else:
                 error_msg(f"{svc_name} fallo al reiniciar")
-        elif opt == "2":
+        elif opt == "3":
             if confirm_destructive(f"Detener {svc_name}?"):
                 _cmd(f"systemctl stop {svc_id}")
                 ok_msg(f"{svc_name} detenido")
-        elif opt == "3":
+        elif opt == "4":
             output = _cmd(f"journalctl -u {svc_id} --no-pager -n 30 2>/dev/null")
             print(f"\n{output}" if output else dim("  No hay logs"))
-        elif opt == "4":
-            # Mostrar archivos de configuracion relevantes
+        elif opt == "5":
             configs = {
-                "ssh": "/etc/ssh/sshd_config",
-                "stunnel4": "/etc/stunnel/stunnel.conf",
-                "xray": "/usr/local/etc/xray/config.json",
-                "udp-custom": "/etc/udp-custom/config.json",
+                "dropbear": "/etc/dropbear/dropbear_config",
                 "slowdns": "/etc/slowdns/config",
+                "udp-custom": "/etc/udp-custom/config.json",
+                "hysteria-server": "/etc/hysteria/config.json",
+                "badvpn-udpgw": "/etc/default/badvpn-udpgw",
+                "squid": "/etc/squid/squid.conf",
+                "openvpn": "/etc/openvpn/server.conf",
+                "wireguard": "/etc/wireguard/wg0.conf",
+                "filebrowser": "/etc/filebrowser/config.json",
             }
             cfg = configs.get(svc_id)
             if cfg and os.path.exists(cfg):
@@ -779,102 +1279,30 @@ def _port_service_menu(svc_id, svc_name, default_port):
                 print(output)
             else:
                 warn_msg("No se encontro archivo de configuracion")
+        elif opt == "6":
+            new_port = prompt_input(f"Nuevo puerto (actual: {port})")
+            if new_port and new_port.isdigit():
+                _cmd(f"echo y | ufw allow {new_port}")
+                ok_msg(f"Puerto {new_port} abierto en firewall")
+                info_msg("Reinicia el servicio para aplicar el cambio de puerto")
     else:
         if opt == "1":
+            st = check_service_status(svc_id)
+            print(f"\n  {svc_name}: {error(st)}")
+        elif opt == "2":
             _cmd(f"systemctl start {svc_id}")
             new_st = check_service_status(svc_id)
             if new_st == "active":
                 ok_msg(f"{svc_name} iniciado")
             else:
                 error_msg(f"No se pudo iniciar {svc_name}")
-        elif opt == "2":
-            info_msg(f"Para instalar {svc_name} usa: crisdev.sh --install")
-
-
-def _port_ssh_menu():
-    """Submenu especifico para SSH."""
-    st = check_service_status("sshd")
-    is_active = st == "active"
-    status_str = ok("ON") if is_active else error("OFF")
-
-    separator()
-    print()
-    print(f"  {bold('SSH / SSH-SSL')}  [{status_str}]  Puerto: {bold('22')}")
-    print()
-
-    print(f"    {bold('1)')} Ver estado SSH")
-    print(f"    {bold('2)')} Reiniciar SSH")
-    print(f"    {bold('3)')} Ver intentos fallidos (fail2ban)")
-    print(f"    {bold('4)')} Desbanear IP")
-    print(f"    {bold('5)')} Ver config SSH")
-    print(f"    {bold('6)')} Stunnel (SSH-SSL) estado")
-    print(f"    {bold('7)')} Reiniciar Stunnel")
-
-    print()
-    opt = prompt_input("Opcion")
-
-    if opt == "1":
-        st = check_service_status("sshd")
-        if st == "active":
-            print(f"\n  SSH: {ok('activo')} en puerto 22")
-            # Mostrar conexiones activas
-            conns = _cmd("ss -tn | grep ':22 ' | wc -l")
-            print(f"  Conexiones activas: {bold(conns)}")
-        else:
-            print(f"\n  SSH: {error(st)}")
-    elif opt == "2":
-        _cmd("systemctl restart sshd 2>/dev/null || systemctl restart ssh")
-        ok_msg("SSH reiniciado")
-    elif opt == "3":
-        output = _cmd("fail2ban-client status sshd 2>/dev/null")
-        print(f"\n{output}" if output else dim("  No hay datos"))
-    elif opt == "4":
-        ip = prompt_input("IP a desbanear")
-        if ip:
-            _cmd(f"fail2ban-client set sshd unbanip {ip} 2>/dev/null")
-            ok_msg(f"IP {ip} desbaneada")
-    elif opt == "5":
-        output = _cmd("cat /etc/ssh/sshd_config 2>/dev/null | grep -v '^#' | grep -v '^$' | head -30")
-        print(f"\n  {dim('/etc/ssh/sshd_config')}")
-        print(output)
-    elif opt == "6":
-        st = check_service_status("stunnel4")
-        if st == "active":
-            print(f"\n  Stunnel: {ok('activo')} en puerto 442")
-        else:
-            print(f"\n  Stunnel: {error(st)}")
-    elif opt == "7":
-        _cmd("systemctl restart stunnel4")
-        ok_msg("Stunnel reiniciado")
-
-
-def _fw_open():
-    separator()
-    port = prompt_input("Puerto a abrir")
-    proto = prompt_input("Protocolo (tcp/udp) [tcp]") or "tcp"
-    _cmd(f"echo y | ufw allow {port}/{proto}")
-    ok_msg(f"Puerto {port}/{proto} abierto")
-
-
-def _fw_close():
-    separator()
-    port = prompt_input("Puerto a cerrar")
-    proto = prompt_input("Protocolo (tcp/udp) [tcp]") or "tcp"
-    _cmd(f"echo y | ufw delete allow {port}/{proto}")
-    ok_msg(f"Puerto {port}/{proto} cerrado")
-
-
-def _fw_panic():
-    separator()
-    if confirm_destructive("ACTIVAR MODO PANICO? Se cerraran TODOS los puertos excepto SSH."):
-        _cmd("ufw disable 2>/dev/null")
-        _cmd("echo y | ufw reset 2>/dev/null")
-        _cmd("ufw default deny incoming 2>/dev/null")
-        _cmd("ufw default allow outgoing 2>/dev/null")
-        _cmd(f"ufw allow {PORT_SSH}/tcp comment 'SSH-emergency'")
-        _cmd("echo y | ufw enable 2>/dev/null")
-        _audit("PANIC", "Modo panico activado")
-        warn_msg("MODO PANICO ACTIVADO")
+        elif opt == "3":
+            # Verificar si esta instalado
+            result = _cmd(f"which {svc_id} 2>/dev/null")
+            if result:
+                print(f"\n  {svc_name}: {ok('instalado')} en {result}")
+            else:
+                warn_msg(f"{svc_name} no encontrado. Instala con: crisdev.sh --install")
 
 
 # ============================================================================
