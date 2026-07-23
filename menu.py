@@ -536,43 +536,323 @@ def mod_puertos():
     while True:
         clear_screen()
         header()
-        breadcrumb("> PUERTOS / FIREWALL")
+        _puertos_dashboard()
+
         print()
-        print(f"    {bold('1)')} Ver reglas firewall (ufw)")
-        print(f"    {bold('2)')} Abrir puerto")
-        print(f"    {bold('3)')} Cerrar puerto")
-        print(f"    {bold('4)')} Modo panico (cerrar todo)")
+        print(f"    {bold('[1]>')}  Ajustes SSH        {bold('[9]>')}  BadVPN-UDPGW")
+        print(f"    {bold('[2]>')}  Dropbear          {bold('[10]>')} Squid")
+        print(f"    {bold('[3]>')}  SOCKS Python      {bold('[11]>')} OpenVPN")
+        print(f"    {bold('[4]>')}  Stunnel (SSL)     {bold('[12]>')} CheckUser Online")
+        print(f"    {bold('[5]>')}  SlowDNS           {bold('[13]>')} ATKEN / HASH")
+        print(f"    {bold('[6]>')}  WS-EPRO           {bold('[14]>')} FileBrowser")
+        print(f"    {bold('[7]>')}  UDP-Custom        {bold('[15]>')} V2Ray / Xray")
+        print(f"    {bold('[8]>')}  UDP-Hysteria      {bold('[16]>')} WireGuard")
+        print(f"    {bold('[17]>')} Abrir puerto       {bold('[18]>')} Cerrar puerto")
+        print(f"    {bold('[19]>')} Modo panico")
         print()
         separator()
         print(f"    {dim('[0] Volver')}")
 
         opt = prompt_input("Opcion")
-        if opt == "1":
-            _fw_status()
-        elif opt == "2":
-            _fw_open()
-        elif opt == "3":
-            _fw_close()
-        elif opt == "4":
-            _fw_panic()
-        elif opt == "0":
+        if opt == "0":
             return
+        elif opt == "1":
+            _port_ssh_menu()
+        elif opt == "2":
+            _port_service_menu("dropbear", "Dropbear", "110,8080")
+        elif opt == "3":
+            _port_service_menu("python3", "SOCKS Python", "7777")
+        elif opt == "4":
+            _port_service_menu("stunnel4", "Stunnel SSL", "442")
+        elif opt == "5":
+            _port_service_menu("slowdns", "SlowDNS", "5300")
+        elif opt == "6":
+            _port_service_menu("ws-epro", "WS-EPRO", "80")
+        elif opt == "7":
+            _port_service_menu("udp-custom", "UDP-Custom", "36717")
+        elif opt == "8":
+            _port_service_menu("udp-hysteria", "UDP-Hysteria", "36712")
+        elif opt == "9":
+            _port_service_menu("badvpn-udpgw", "BadVPN-UDPGW", "7300")
+        elif opt == "10":
+            _port_service_menu("squid", "Squid", "3128")
+        elif opt == "11":
+            _port_service_menu("openvpn", "OpenVPN", "1194")
+        elif opt == "12":
+            _port_service_menu("checkuser", "CheckUser Online", "80")
+        elif opt == "13":
+            _port_service_menu("atken", "ATKEN/HASH", "N/A")
+        elif opt == "14":
+            _port_service_menu("filebrowser", "FileBrowser", "8080")
+        elif opt == "15":
+            _port_service_menu("xray", "V2Ray/Xray", "443")
+        elif opt == "16":
+            _port_service_menu("wireguard", "WireGuard", "51820")
+        elif opt == "17":
+            _fw_open()
+        elif opt == "18":
+            _fw_close()
+        elif opt == "19":
+            _fw_panic()
         else:
             error_msg("Opcion invalida")
         pause()
 
 
-def _fw_status():
+def _scan_ports():
+    """Escanea servicios reales del sistema y retorna dict {service: port}."""
+    detected = {}
+
+    # Mapeo de servicio systemd -> nombre display y puertos default
+    services = [
+        ("sshd", "SSH", "22"),
+        ("dropbear", "Dropbear", "110"),
+        ("stunnel4", "Stunnel", "442"),
+        ("slowdns", "SlowDNS", "5300"),
+        ("udp-custom", "UDP-Custom", "36717"),
+        ("udp-hysteria", "UDP-Hysteria", "36712"),
+        ("hysteria-server", "UDP-Hysteria", "36712"),
+        ("xray", "Xray", "443"),
+        ("badvpn-udpgw", "BadVPN", "7300"),
+        ("squid", "Squid", "3128"),
+        ("openvpn", "OpenVPN", "1194"),
+        ("wireguard", "WireGuard", "51820"),
+        ("filebrowser", "FileBrowser", "8080"),
+        ("ufw", "Firewall", ""),
+    ]
+
+    for svc_id, name, default_port in services:
+        st = check_service_status(svc_id)
+        if st == "active":
+            # Intentar detectar puerto real con ss
+            real_port = _cmd(
+                f"ss -tlnp 2>/dev/null | grep '{svc_id}' | awk '{{print $4}}' | "
+                f"grep -oP '\\d+$' | head -1"
+            )
+            if not real_port:
+                # Para servicios UDP o con otro nombre
+                real_port = _cmd(
+                    f"ss -ulnp 2>/dev/null | grep '{svc_id}' | awk '{{print $4}}' | "
+                    f"grep -oP '\\d+$' | head -1"
+                )
+            detected[name] = {
+                "port": real_port or default_port,
+                "status": True,
+                "svc_id": svc_id,
+            }
+        else:
+            detected[name] = {
+                "port": default_port,
+                "status": False,
+                "svc_id": svc_id,
+            }
+
+    # Detectar servicios extras que no son systemd
+    # Python SOCKS
+    py_sock = _cmd("ss -tlnp 2>/dev/null | grep python | awk '{print $4}' | grep -oP '\\d+$' | head -1")
+    if py_sock:
+        detected["SOCKS Python"] = {"port": py_sock, "status": True, "svc_id": "python3"}
+    else:
+        detected["SOCKS Python"] = {"port": "7777", "status": False, "svc_id": "python3"}
+
+    # WS-EPRO / Badvpn
+    ws_epro = _cmd("ss -tlnp 2>/dev/null | grep ':80 ' | awk '{print $4}' | head -1")
+    if ws_epro:
+        detected["WS-EPRO"] = {"port": "80", "status": True, "svc_id": "ws-epro"}
+    else:
+        detected["WS-EPRO"] = {"port": "80", "status": False, "svc_id": "ws-epro"}
+
+    # CheckUser
+    detected["CheckUser"] = {"port": "80", "status": False, "svc_id": "checkuser"}
+
+    # ATKEN
+    detected["ATKEN/HASH"] = {"port": "N/A", "status": False, "svc_id": "atken"}
+
+    return detected
+
+
+def _puertos_dashboard():
+    """Muestra el cuadro de servicios con puertos."""
+    detected = _scan_ports()
+
+    # Lista de servicios para mostrar en el cuadro
+    display = [
+        ("BADVPN", detected.get("BadVPN", {}).get("port", "7300")),
+        ("DROPBEAR", detected.get("Dropbear", {}).get("port", "110")),
+        ("PYTHON3", detected.get("SOCKS Python", {}).get("port", "7777")),
+        ("SLOWDNS", detected.get("SlowDNS", {}).get("port", "5300")),
+        ("SSH", detected.get("SSH", {}).get("port", "22")),
+        ("STUNNEL", detected.get("Stunnel", {}).get("port", "442")),
+        ("UDP-CUSTOM", detected.get("UDP-Custom", {}).get("port", "36717")),
+        ("UDP-HYSTERIA", detected.get("UDP-Hysteria", {}).get("port", "36712")),
+        ("WS-EPRO", detected.get("WS-EPRO", {}).get("port", "80")),
+        ("XRAY", detected.get("Xray", {}).get("port", "443")),
+    ]
+
+    print()
+    print(f"  {dim(chr(9552) * 58)}")
+    print(f"  {bold('ADMINISTRADOR DE PROTOCOLOS'):^58}")
+    print(f"  {dim(chr(9552) * 58)}")
+
+    # Imprimir en dos columnas
+    col_width = 29
+    for i in range(0, len(display), 2):
+        left_name, left_port = display[i]
+        if i + 1 < len(display):
+            right_name, right_port = display[i + 1]
+            left_str = f"  {left_name:<15} {bold(left_port):<12}"
+            right_str = f"{right_name:<15} {bold(right_port)}"
+            print(f"{left_str}{right_str}")
+        else:
+            print(f"  {left_name:<15} {bold(left_port)}")
+
+    print(f"  {dim(chr(9552) * 58)}")
+
+
+def _port_service_menu(svc_id, svc_name, default_port):
+    """Submenu para un servicio individual."""
+    st = check_service_status(svc_id)
+    is_active = st == "active"
+
+    status_str = ok("ON") if is_active else error("OFF")
+    port_info = ""
+
+    if is_active:
+        real_port = _cmd(
+            f"ss -tlnp 2>/dev/null | grep '{svc_id}' | awk '{{print $4}}' | "
+            f"grep -oP '\\d+$' | head -1"
+        )
+        if not real_port:
+            real_port = _cmd(
+                f"ss -ulnp 2>/dev/null | grep '{svc_id}' | awk '{{print $4}}' | "
+                f"grep -oP '\\d+$' | head -1"
+            )
+        port_info = real_port or default_port
+    else:
+        port_info = default_port
+
     separator()
-    output = _cmd("ufw status verbose 2>/dev/null")
-    print(f"\n{output}" if output else dim("  UFW no disponible"))
+    print()
+    print(f"  {bold(svc_name.upper())}  [{status_str}]  Puerto: {bold(port_info)}")
+    print()
+
+    if is_active:
+        print(f"    {bold('1)')} Reiniciar servicio")
+        print(f"    {bold('2)')} Detener servicio")
+        print(f"    {bold('3)')} Ver logs recientes")
+        print(f"    {bold('4)')} Ver configuracion")
+    else:
+        print(f"    {bold('1)')} Iniciar servicio")
+        print(f"    {bold('2)')} Instalar servicio")
+
+    print()
+    opt = prompt_input("Opcion")
+
+    if is_active:
+        if opt == "1":
+            _cmd(f"systemctl restart {svc_id}")
+            new_st = check_service_status(svc_id)
+            if new_st == "active":
+                ok_msg(f"{svc_name} reiniciado correctamente")
+            else:
+                error_msg(f"{svc_name} fallo al reiniciar")
+        elif opt == "2":
+            if confirm_destructive(f"Detener {svc_name}?"):
+                _cmd(f"systemctl stop {svc_id}")
+                ok_msg(f"{svc_name} detenido")
+        elif opt == "3":
+            output = _cmd(f"journalctl -u {svc_id} --no-pager -n 30 2>/dev/null")
+            print(f"\n{output}" if output else dim("  No hay logs"))
+        elif opt == "4":
+            # Mostrar archivos de configuracion relevantes
+            configs = {
+                "ssh": "/etc/ssh/sshd_config",
+                "stunnel4": "/etc/stunnel/stunnel.conf",
+                "xray": "/usr/local/etc/xray/config.json",
+                "udp-custom": "/etc/udp-custom/config.json",
+                "slowdns": "/etc/slowdns/config",
+            }
+            cfg = configs.get(svc_id)
+            if cfg and os.path.exists(cfg):
+                output = _cmd(f"cat {cfg} 2>/dev/null | head -30")
+                print(f"\n  {dim(cfg)}")
+                print(output)
+            else:
+                warn_msg("No se encontro archivo de configuracion")
+    else:
+        if opt == "1":
+            _cmd(f"systemctl start {svc_id}")
+            new_st = check_service_status(svc_id)
+            if new_st == "active":
+                ok_msg(f"{svc_name} iniciado")
+            else:
+                error_msg(f"No se pudo iniciar {svc_name}")
+        elif opt == "2":
+            info_msg(f"Para instalar {svc_name} usa: crisdev.sh --install")
+
+
+def _port_ssh_menu():
+    """Submenu especifico para SSH."""
+    st = check_service_status("sshd")
+    is_active = st == "active"
+    status_str = ok("ON") if is_active else error("OFF")
+
+    separator()
+    print()
+    print(f"  {bold('SSH / SSH-SSL')}  [{status_str}]  Puerto: {bold('22')}")
+    print()
+
+    print(f"    {bold('1)')} Ver estado SSH")
+    print(f"    {bold('2)')} Reiniciar SSH")
+    print(f"    {bold('3)')} Ver intentos fallidos (fail2ban)")
+    print(f"    {bold('4)')} Desbanear IP")
+    print(f"    {bold('5)')} Ver config SSH")
+    print(f"    {bold('6)')} Stunnel (SSH-SSL) estado")
+    print(f"    {bold('7)')} Reiniciar Stunnel")
+
+    print()
+    opt = prompt_input("Opcion")
+
+    if opt == "1":
+        st = check_service_status("sshd")
+        if st == "active":
+            print(f"\n  SSH: {ok('activo')} en puerto 22")
+            # Mostrar conexiones activas
+            conns = _cmd("ss -tn | grep ':22 ' | wc -l")
+            print(f"  Conexiones activas: {bold(conns)}")
+        else:
+            print(f"\n  SSH: {error(st)}")
+    elif opt == "2":
+        _cmd("systemctl restart sshd 2>/dev/null || systemctl restart ssh")
+        ok_msg("SSH reiniciado")
+    elif opt == "3":
+        output = _cmd("fail2ban-client status sshd 2>/dev/null")
+        print(f"\n{output}" if output else dim("  No hay datos"))
+    elif opt == "4":
+        ip = prompt_input("IP a desbanear")
+        if ip:
+            _cmd(f"fail2ban-client set sshd unbanip {ip} 2>/dev/null")
+            ok_msg(f"IP {ip} desbaneada")
+    elif opt == "5":
+        output = _cmd("cat /etc/ssh/sshd_config 2>/dev/null | grep -v '^#' | grep -v '^$' | head -30")
+        print(f"\n  {dim('/etc/ssh/sshd_config')}")
+        print(output)
+    elif opt == "6":
+        st = check_service_status("stunnel4")
+        if st == "active":
+            print(f"\n  Stunnel: {ok('activo')} en puerto 442")
+        else:
+            print(f"\n  Stunnel: {error(st)}")
+    elif opt == "7":
+        _cmd("systemctl restart stunnel4")
+        ok_msg("Stunnel reiniciado")
 
 
 def _fw_open():
     separator()
     port = prompt_input("Puerto a abrir")
     proto = prompt_input("Protocolo (tcp/udp) [tcp]") or "tcp"
-    _cmd(f"ufw allow {port}/{proto}")
+    _cmd(f"echo y | ufw allow {port}/{proto}")
     ok_msg(f"Puerto {port}/{proto} abierto")
 
 
@@ -580,7 +860,7 @@ def _fw_close():
     separator()
     port = prompt_input("Puerto a cerrar")
     proto = prompt_input("Protocolo (tcp/udp) [tcp]") or "tcp"
-    _cmd(f"ufw delete allow {port}/{proto}")
+    _cmd(f"echo y | ufw delete allow {port}/{proto}")
     ok_msg(f"Puerto {port}/{proto} cerrado")
 
 
