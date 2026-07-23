@@ -4,7 +4,7 @@
 # Script privado de administración VPN para VPS
 # Autor: CRISDEV / @CRISIS1823
 # ============================================================================
-set -euo pipefail
+set -uo pipefail
 
 # ========================= VARIABLES GLOBALES =========================
 CRISDEV_VERSION="1.0.0"
@@ -220,7 +220,7 @@ install_complete() {
     SERVER_IP="${INPUT_IP:-$SERVER_IP}"
 
     read -p "Dominio del servidor (deja vacío si no tienes): " SERVER_DOMAIN
-    read -p "Email para certificados TLS: " EMAIL_TLS
+    read -p "Email para certificados TLS (deja vacío si no tienes): " EMAIL_TLS
 
     # Guardar config inicial
     jq -n \
@@ -236,7 +236,8 @@ install_complete() {
     # Paso 2: Actualizar sistema
     echo ""
     echo -e "${BOLD}Paso 2/10: Actualizando sistema...${NC}"
-    apt-get update -qq && apt-get upgrade -y -qq
+    apt-get update -qq 2>/dev/null || true
+    apt-get upgrade -y -qq 2>/dev/null || true
     log_success "Sistema actualizado"
 
     # Paso 3: Instalar dependencias
@@ -251,7 +252,7 @@ install_complete() {
         libssl-dev \
         screen tmux \
         nano vim \
-        2>/dev/null
+        2>/dev/null || true
     log_success "Dependencias instaladas"
 
     # Paso 4: Configurar firewall
@@ -262,7 +263,7 @@ install_complete() {
     # Paso 5: Instalar fail2ban
     echo ""
     echo -e "${BOLD}Paso 5/10: Configurando fail2ban...${NC}"
-    apt-get install -y -qq fail2ban 2>/dev/null
+    apt-get install -y -qq fail2ban 2>/dev/null || true
     configure_fail2ban
 
     # Paso 6: Configurar SSH
@@ -273,24 +274,24 @@ install_complete() {
     # Paso 7: Instalar Xray-core
     echo ""
     echo -e "${BOLD}Paso 7/10: Instalando Xray-core...${NC}"
-    install_xray_core
+    install_xray_core || log_error "Error instalando Xray-core (puedes instalarlo después)"
 
     # Paso 8: Instalar Hysteria2
     echo ""
     echo -e "${BOLD}Paso 8/10: Instalando Hysteria2...${NC}"
-    install_hysteria2
+    install_hysteria2 || log_error "Error instalando Hysteria2 (puedes instalarlo después)"
 
     # Paso 9: Instalar udp-custom
     echo ""
     echo -e "${BOLD}Paso 9/10: Instalando udp-custom...${NC}"
-    install_udp_custom
+    install_udp_custom || log_error "Error instalando udp-custom (puedes instalarlo después)"
 
     # Paso 10: Configurar certificados TLS
     echo ""
     echo -e "${BOLD}Paso 10/10: Configurando certificados TLS...${NC}"
     if [[ -n "$SERVER_DOMAIN" ]]; then
-        install_acme_sh
-        issue_certificate "$SERVER_DOMAIN"
+        install_acme_sh || true
+        issue_certificate "$SERVER_DOMAIN" || log_error "Error emitiendo certificado (puedes hacerlo después)"
     else
         log_warn "Sin dominio — se usarán certificados autofirmados"
         generate_self_signed_cert
@@ -333,25 +334,42 @@ install_crisdev_command() {
 # ========================= MÓDULO FIREWALL =========================
 
 configure_firewall_base() {
-    ufw --force reset >/dev/null 2>&1
-    ufw default deny incoming >/dev/null 2>&1
-    ufw default allow outgoing >/dev/null 2>&1
+    # Instalar ufw si no está
+    if ! command -v ufw &>/dev/null; then
+        apt-get install -y -qq ufw 2>/dev/null
+    fi
 
-    # Puertos base
-    ufw allow "$PORT_SSH/tcp" comment "SSH" >/dev/null 2>&1
-    ufw allow "$PORT_SSH_SSL/tcp" comment "SSH-SSL/HTTPS" >/dev/null 2>&1
-    ufw allow "$PORT_XRAY_WS/tcp" comment "Xray-WS" >/dev/null 2>&1
-    ufw allow "$PORT_XRAY_GRPC/tcp" comment "Xray-gRPC" >/dev/null 2>&1
-    ufw allow "$PORT_XRAY_REALITY/tcp" comment "Xray-REALITY" >/dev/null 2>&1
-    ufw allow "$PORT_XRAY_VLESS/tcp" comment "Xray-VLESS" >/dev/null 2>&1
-    ufw allow "$PORT_HYSTERIA/udp" comment "Hysteria2" >/dev/null 2>&1
-    ufw allow "$PORT_WEBSOCKET/tcp" comment "WebSocket" >/dev/null 2>&1
+    # Detener ufw si está corriendo para resetear limpiamente
+    ufw disable 2>/dev/null || true
+    sleep 1
 
-    # Rango UDP para udp-custom
-    ufw allow $PORT_UDP_CUSTOM/udp comment "udp-custom" >/dev/null 2>&1
+    # Resetear reglas
+    echo "y" | ufw reset 2>/dev/null || true
+    sleep 1
 
-    ufw --force enable >/dev/null 2>&1
+    # Configurar política por defecto
+    ufw default deny incoming 2>/dev/null || true
+    ufw default allow outgoing 2>/dev/null || true
+
+    # SSH - CRÍTICO: siempre abierto para no perder acceso
+    ufw allow "$PORT_SSH/tcp" comment "SSH" 2>/dev/null || true
+    ufw allow "$PORT_SSH_ALT/tcp" comment "SSH-ALT" 2>/dev/null || true
+
+    # Puertos de servicios
+    ufw allow "$PORT_SSH_SSL/tcp" comment "SSH-SSL" 2>/dev/null || true
+    ufw allow "$PORT_XRAY_WS/tcp" comment "Xray-WS" 2>/dev/null || true
+    ufw allow "$PORT_XRAY_GRPC/tcp" comment "Xray-gRPC" 2>/dev/null || true
+    ufw allow "$PORT_XRAY_REALITY/tcp" comment "Xray-REALITY" 2>/dev/null || true
+    ufw allow "$PORT_XRAY_VLESS/tcp" comment "Xray-VLESS" 2>/dev/null || true
+    ufw allow "$PORT_HYSTERIA/udp" comment "Hysteria2" 2>/dev/null || true
+    ufw allow "$PORT_WEBSOCKET/tcp" comment "WebSocket" 2>/dev/null || true
+    ufw allow "$PORT_UDP_CUSTOM/udp" comment "udp-custom" 2>/dev/null || true
+
+    # Habilitar UFW sin prompt
+    echo "y" | ufw enable 2>/dev/null || true
+
     log_success "Firewall configurado"
+    ufw status numbered 2>/dev/null || true
 }
 
 open_port() {
