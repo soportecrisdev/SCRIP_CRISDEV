@@ -1,0 +1,7 @@
+# CRISDEV VPN Manager
+# Ignorar archivos del sistema
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db

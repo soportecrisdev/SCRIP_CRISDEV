@@ -1,0 +1,87 @@
+CRISDEV VPN Manager — Plan Funcional Completo
+1. Alcance y filosofía del proyecto
+Script privado, de un solo dueño (CRISDEV / @CRISIS1823), para administrar VPS propios que dan servicio a tu app Android.
+Un solo comando de entrada: crisdev, con menú de texto (sin dependencias gráficas, corre por SSH en cualquier VPS mínimo).
+Todo el estado (usuarios, puertos, expiraciones, dominios, certificados) vive en un archivo de estado central — nada de "adivinar" el estado leyendo /etc/passwd y systemctl status cada vez de formas distintas en cada módulo.
+Cada protocolo es un módulo independiente y desacoplado del resto, para poder agregar/quitar protocolos sin tocar los demás.
+Todo servicio corre bajo systemd con reinicio automático — coherente con el trabajo de resiliencia que ya hicimos del lado del cliente Android.
+2. Protocolos/servicios a administrar
+SSH directo (puerto 22 y alterno configurable)
+SSH + SSL/TLS (stunnel-style, "SSH-SSL") — típicamente puerto 443 compartido
+SSH + Payload/WebSocket (para bypass de DPI)
+SlowDNS (túnel sobre DNS, para redes que solo permiten DNS)
+Xray-core: VLESS, VMess, Trojan — con transporte WS+TLS, gRPC, y soporte REALITY
+Hysteria2 (QUIC/UDP)
+udp-custom (el proyecto open source, no forks propietarios)
+V2Ray legacy (compatibilidad hacia atrás, opcional/desactivable)
+
+Todos deben poder coexistir en el mismo VPS sin pisarse puertos.
+
+3. Módulo: Gestión de usuarios (transversal a todos los protocolos)
+
+Funciones necesarias:
+
+Crear usuario — con selección de a qué protocolo(s) aplica (un usuario SSH puede o no compartir credenciales con Xray/Hysteria, según decidas el diseño: ¿credenciales unificadas o por protocolo?). Esto hay que decidirlo explícitamente antes de programar, porque cambia todo el modelo de datos.
+Editar usuario — cambiar password, límite de conexiones, fecha de expiración, protocolo(s) habilitado(s), límite de ancho de banda (si aplica), límite de datos consumidos (cuota mensual, si se quiere ofrecer planes con tope de GB).
+Eliminar usuario — debe cerrar sesiones activas del usuario en todos los protocolos donde exista, no solo borrar la entrada.
+Suspender/reactivar — distinto de eliminar: bloquear temporalmente sin perder configuración ni tener que recrear todo.
+Renovar/extender vigencia — sumar días a la expiración actual (no resetear desde hoy si aún le quedaba tiempo).
+Listar usuarios — con filtros: por protocolo, por estado (activos/vencidos/suspendidos), por vencer pronto (ej. próximos 3 días), ordenado por fecha de vencimiento.
+Ver detalle de un usuario — historial de conexión, IP de última conexión, sesiones activas ahora mismo, consumo de datos si se implementa cuota.
+Búsqueda — por nombre parcial.
+Exportar/importar usuarios — respaldo del estado completo (útil antes de migrar de VPS o reinstalar).
+Notificación de vencimiento — opcionalmente, aviso automático (por Telegram, ya que tienes tu propio @CRISIS1823 y podrías tener un bot) X días antes de que un usuario expire.
+4. Módulo: SSH / SSH-SSL / SlowDNS
+Creación de usuarios de sistema restringidos (sin shell real, solo forwarding).
+Enforcement real de expiración a nivel de sistema operativo (no solo un campo en JSON).
+Enforcement de límite de conexiones simultáneas por usuario.
+Configuración y gestión del proceso de SlowDNS (requiere: dominio NS delegado, par de llaves pública/privada, proceso del servidor DNS-tunnel corriendo en :53).
+Gestión de banners de bienvenida por SSH (mensaje personalizado con marca CRISDEV al conectar).
+Rotación/regeneración de host keys si se sospecha compromiso.
+Reporte de intentos de fuerza bruta bloqueados por fail2ban.
+5. Módulo: Xray-core
+Generador de inbounds: VLESS+WS+TLS, VLESS+gRPC, VMess+WS+TLS, Trojan+TLS, y VLESS+REALITY (sin necesidad de certificado propio, usando el truco de "camuflarse" contra un sitio real).
+Un usuario = un UUID (VLESS/VMess) o password (Trojan) — gestionado desde el mismo módulo de usuarios central.
+Generación automática del link de importación (vless://, vmess:// en base64, trojan://) y su código QR para pegar directo en la app.
+Rotación de UUID de un usuario sin tener que borrarlo y recrearlo (para revocar acceso ante fuga de credencial).
+Multiplexado de varios inbounds en el mismo puerto 443 usando el propio routing de Xray por SNI/path, para no competir por puertos con Hysteria2/SSH-SSL.
+Prueba de salud del inbound (con MeasureOutboundDelay, ya identificado en el AAR actualizado) para saber si un usuario específico puede conectar de verdad, no solo si el proceso está "corriendo".
+Rollback automático de configuración si un cambio deja el JSON inválido (Xray no debe quedar caído por un error de edición).
+6. Módulo: Hysteria2
+Generación del config.yaml del servidor: puerto, certificado (ACME automático o auto-firmado + insecure en cliente), obfs salamander, límites de ancho de banda por defecto del servidor.
+Gestión de usuarios vía el mecanismo de auth de Hysteria2 (userpass o external HTTP auth — decidir cuál).
+Si se usa auth externo vía HTTP, esto abre la puerta a integrarlo directo con el módulo central de usuarios (Hysteria2 le pregunta a tu propio backend si el usuario es válido en tiempo real) — más flexible que archivos estáticos, pero requiere correr un pequeño servicio HTTP interno.
+Reporte de tráfico por usuario (Hysteria2 expone estadísticas).
+7. Módulo: udp-custom
+Gestión de proceso vía systemd, con múltiples instancias si se necesitan puertos distintos por plan/usuario.
+Generación de config.json de servidor acorde al proyecto open source real.
+Gestión de rango de puertos para UDP hopping.
+8. Módulo: Firewall dinámico
+Apertura/cierre de puertos automática, disparada por la creación/eliminación de servicios (no reglas fijas escritas a mano en el instalador).
+Reglas por IP para el panel de administración (opcional: restringir quién puede siquiera intentar SSH al puerto de gestión).
+Integración con fail2ban: ver baneos activos, desbanear manualmente desde el panel.
+Modo "pánico": cerrar todo excepto el puerto de administración, para cuando se sospeche abuso o ataque.
+9. Módulo: Certificados TLS
+Emisión automática vía acme.sh una vez el dominio apunta al VPS.
+Renovación automática (cron) y recarga de los servicios que dependen del certificado (Xray, Hysteria2, SSH-SSL) sin caída notoria.
+Alerta si la renovación falla (dominio dejó de apuntar, rate-limit de Let's Encrypt, etc.).
+Soporte para múltiples dominios/subdominios en el mismo VPS.
+10. Módulo: Monitoreo y salud del servidor
+Estado consolidado de todos los servicios (Xray, Hysteria2, udp-custom, sshd) en una sola pantalla, no systemctl status disperso.
+Uso de CPU/RAM/disco del VPS.
+Ancho de banda consumido (total y por protocolo) — útil para saber si te estás quedando corto de plan con el proveedor del VPS.
+Latencia/salud de cada protocolo probada activamente (no solo "el proceso está corriendo", sino "efectivamente responde").
+Alertas automáticas (Telegram) si un servicio cae y no se recupera solo tras N intentos de systemd.
+11. Módulo: Backups y actualizaciones
+Backup de: usuarios, configuraciones de cada protocolo, certificados — a un archivo único descargable/exportable.
+Restaurar desde backup en un VPS nuevo (para cuando migres de proveedor).
+Comando de actualización del propio panel CRISDEV (crisdev update) que jale la última versión del script sin romper configuración existente.
+Verificación de versión de cada binario (Xray, Hysteria2) contra el último release oficial, con opción de actualizar el binario sin perder configuración.
+12. Módulo: Reportes y estadísticas para el negocio
+Cuántos usuarios activos, por protocolo, por fecha de creación.
+Usuarios por vencer en los próximos N días (para gestión comercial/renovaciones).
+Consumo total de datos del servidor en el período de facturación del proveedor de VPS.
+13. Seguridad del propio panel
+El panel corre solo como root, localmente por SSH — no expone ningún puerto web de administración.
+Log de auditoría de acciones hechas desde el panel (quién creó/borró qué usuario y cuándo) — importante si en algún momento delegas administración a alguien más.
+Opción de bloqueo con PIN/segunda confirmación para acciones destructivas (eliminar usuario, modo pánico, restaurar backup).
