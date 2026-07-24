@@ -429,6 +429,29 @@ SSHEOF
 BANNER
     systemctl restart sshd >/dev/null 2>&1 || systemctl restart ssh >/dev/null 2>&1
     ui_ok "SSH configurado (puertos $PORT_SSH, $PORT_SSH_ALT)"
+    # Desactivar Dropbear si esta corriendo para evitar conflicto
+    systemctl stop dropbear 2>/dev/null || true
+    systemctl disable dropbear 2>/dev/null || true
+}
+
+configure_dropbear() {
+    local port="${1:-110}"
+    # Asegurar que SSH no este en el puerto de Dropbear
+    if ss -tlnp 2>/dev/null | grep -q ":$port "; then
+        ui_error "Puerto $port ya esta en uso"
+        return 1
+    fi
+    # Configurar Dropbear
+    sed -i 's/^NO_START=1/NO_START=0/' /etc/default/dropbear 2>/dev/null || true
+    sed -i "s/^DROPBEAR_PORT=.*/DROPBEAR_PORT=$port/" /etc/default/dropbear 2>/dev/null || true
+    # Si el archivo no tiene DROPBEAR_PORT, agregarlo
+    if ! grep -q "DROPBEAR_PORT" /etc/default/dropbear 2>/dev/null; then
+        echo -e "DROPBEAR_PORT=$port\nDROPBEAR_EXTRA_ARGS=\"\"\nNO_START=0" >> /etc/default/dropbear
+    fi
+    systemctl enable dropbear >/dev/null 2>&1
+    systemctl restart dropbear >/dev/null 2>&1
+    open_port "$port" "tcp" "Dropbear"
+    ui_ok "Dropbear SSH configurado en puerto $port"
 }
 
 create_ssh_user() {
@@ -449,12 +472,13 @@ configure_stunnel() {
 pid = /var/run/stunnel4/stunnel.pid
 setuid = stunnel4
 setgid = stunnel4
-debug = 4
+debug = 0
 foreground = no
 [ssh-tunnel]
 accept = 0.0.0.0:$port
-connect = 127.0.0.1:$PORT_SSH_SSL
+connect = 127.0.0.1:$PORT_SSH
 cert = $CERT_DIR/stunnel.pem
+TIMEOUTclose = 0
 STEOF
     if [[ ! -f "$CERT_DIR/stunnel.pem" ]]; then
         openssl req -new -x509 -days 3650 -nodes -out "$CERT_DIR/stunnel.pem" -keyout "$CERT_DIR/stunnel.key" -subj "/CN=crisdev-stunnel" 2>/dev/null
@@ -542,8 +566,19 @@ generate_xray_config() {
     local UUID_VMESS; UUID_VMESS=$(generate_uuid)
     local WS_PATH="/$(openssl rand -hex 8)"
     local GRPC_SERVICE="grpc-$(openssl rand -hex 4)"
+    local TROJAN_PASS; TROJAN_PASS=$(generate_password)
     local CERT_PATH="$CERT_DIR/fullchain.pem" KEY_PATH="$CERT_DIR/privkey.pem"
     [[ ! -f "$CERT_PATH" ]] && CERT_PATH="$CERT_DIR/self-signed.pem" && KEY_PATH="$CERT_DIR/self-signed-key.pem"
+    # Generar claves REALITY ANTES de escribir config
+    local REALITY_PUB=""
+    local REALITY_KEY=""
+    if [[ -f /opt/xray/xray ]]; then
+        local RK; RK=$(/opt/xray/xray x25519 2>/dev/null || echo "")
+        if [[ -n "$RK" ]]; then
+            REALITY_KEY=$(echo "$RK" | grep "Private" | awk '{print $3}')
+            REALITY_PUB=$(echo "$RK" | grep "Public" | awk '{print $3}')
+        fi
+    fi
 
     cat > /usr/local/etc/xray/config.json <<XRAYEOF
 {
@@ -552,30 +587,28 @@ generate_xray_config() {
         {"tag":"vless-ws","listen":"0.0.0.0","port":$PORT_XRAY_WS,"protocol":"vless","settings":{"clients":[{"id":"$UUID_VLESS","flow":""}],"decryption":"none"},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"$CERT_PATH","keyFile":"$KEY_PATH"}],"minVersion":"1.2","alpn":["h2","http/1.1"]},"wsSettings":{"path":"$WS_PATH","headers":{"Host":"${SERVER_DOMAIN:-$SERVER_IP}"}}},"sniffing":{"enabled":true,"destOverride":["http","tls"]}},
         {"tag":"vless-grpc","listen":"0.0.0.0","port":$PORT_XRAY_GRPC,"protocol":"vless","settings":{"clients":[{"id":"$UUID_VLESS","flow":""}],"decryption":"none"},"streamSettings":{"network":"grpc","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"$CERT_PATH","keyFile":"$KEY_PATH"}],"minVersion":"1.2","alpn":["h2"]},"grpcSettings":{"serviceName":"$GRPC_SERVICE"}},"sniffing":{"enabled":true,"destOverride":["http","tls"]}},
         {"tag":"vmess-ws","listen":"0.0.0.0","port":$PORT_WEBSOCKET,"protocol":"vmess","settings":{"clients":[{"id":"$UUID_VMESS","alterId":0}]},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"$CERT_PATH","keyFile":"$KEY_PATH"}],"minVersion":"1.2","alpn":["h2","http/1.1"]},"wsSettings":{"path":"/vmess-ws","headers":{"Host":"${SERVER_DOMAIN:-$SERVER_IP}"}}},"sniffing":{"enabled":true,"destOverride":["http","tls"]}},
-        {"tag":"vless-reality","listen":"0.0.0.0","port":$PORT_XRAY_REALITY,"protocol":"vless","settings":{"clients":[{"id":"$UUID_VLESS","flow":"xtls-rprx-vision"}],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"show":false,"dest":"www.microsoft.com:443","xver":0,"serverNames":["www.microsoft.com","www.apple.com","www.samsung.com"],"privateKey":"","shortIds":["","6ba85179e30d4fc2"]}},"sniffing":{"enabled":true,"destOverride":["http","tls"]}},
-        {"tag":"trojan-ws","listen":"0.0.0.0","port":$PORT_XRAY_VLESS,"protocol":"trojan","settings":{"clients":[{"password":"$(generate_password)"}]},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"$CERT_PATH","keyFile":"$KEY_PATH"}],"minVersion":"1.2","alpn":["h2","http/1.1"]},"wsSettings":{"path":"/trojan-ws"}},"sniffing":{"enabled":true,"destOverride":["http","tls"]}}
+        {"tag":"vless-reality","listen":"0.0.0.0","port":$PORT_XRAY_REALITY,"protocol":"vless","settings":{"clients":[{"id":"$UUID_VLESS","flow":"xtls-rprx-vision"}],"decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"show":false,"dest":"www.microsoft.com:443","xver":0,"serverNames":["www.microsoft.com","www.apple.com","www.samsung.com"],"privateKey":"$REALITY_KEY","publicKey":"$REALITY_PUB","shortIds":["6ba85179e30d4fc2"]}},"sniffing":{"enabled":true,"destOverride":["http","tls"]}},
+        {"tag":"trojan-ws","listen":"0.0.0.0","port":$PORT_XRAY_VLESS,"protocol":"trojan","settings":{"clients":[{"password":"$TROJAN_PASS"}]},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"certificates":[{"certificateFile":"$CERT_PATH","keyFile":"$KEY_PATH"}],"minVersion":"1.2","alpn":["h2","http/1.1"]},"wsSettings":{"path":"/trojan-ws"}},"sniffing":{"enabled":true,"destOverride":["http","tls"]}}
     ],
     "routing":{"domainStrategy":"AsIs","rules":[{"type":"field","outboundTag":"blocked","ip":["geoip:private"]}]},
     "outbounds":[{"protocol":"freedom","tag":"direct"},{"protocol":"blackhole","tag":"blocked"}]
 }
 XRAYEOF
     mkdir -p /var/log/xray; touch /var/log/xray/access.log /var/log/xray/error.log
-    generate_reality_keys
+    # Mostrar claves REALITY
+    if [[ -n "$REALITY_PUB" ]]; then
+        ui_info "REALITY Public Key: $REALITY_PUB"
+    fi
+    # Guardar paths y UUIDs para que generate_user_links los use
+    local tmp; tmp=$(mktemp)
+    jq --arg ws "$WS_PATH" --arg grpc "$GRPC_SERVICE" --arg uuid "$UUID_VLESS" \
+       --arg vmess "$UUID_VMESS" --arg trojan "$TROJAN_PASS" \
+       '. + {xray_ws_path: $ws, xray_grpc_service: $grpc, uuid_vless: $uuid, uuid_vmess: $vmess, trojan_pass: $trojan}' \
+       "$SERVER_CONFIG" > "$tmp" 2>/dev/null && mv "$tmp" "$SERVER_CONFIG"
     ui_ok "Configuracion Xray generada (VLESS-WS, VLESS-gRPC, VMess-WS, VLESS-REALITY, Trojan-WS)"
     log_audit "XRAY" "Configuracion generada"
 }
 
-generate_reality_keys() {
-    local RK; RK=$(/opt/xray/xray x25519 2>/dev/null || echo "")
-    if [[ -n "$RK" ]]; then
-        local PK; PK=$(echo "$RK" | grep "Private" | awk '{print $3}')
-        local PUBK; PUBK=$(echo "$RK" | grep "Public" | awk '{print $3}')
-        local tmp; tmp=$(mktemp)
-        jq --arg pk "$PK" '.inbounds[] | select(.tag == "vless-reality") | .streamSettings.realitySettings.privateKey = $pk' /usr/local/etc/xray/config.json > "$tmp" 2>/dev/null && mv "$tmp" /usr/local/etc/xray/config.json
-        echo -e "  REALITY Private: ${C_BOLD}$PK${C_NORM}"
-        echo -e "  REALITY Public:  ${C_BOLD}$PUBK${C_NORM}"
-    fi
-}
 
 # ========================= HYSTERIA2 =========================
 
@@ -621,6 +654,11 @@ masquerade:
 HYEOF
     systemctl enable hysteria-server >/dev/null 2>&1; systemctl restart hysteria-server 2>/dev/null || true
     open_port "$port" "udp" "Hysteria2"
+    # Guardar passwords para generate_user_links
+    local tmp; tmp=$(mktemp)
+    jq --arg auth "$AUTH_PASS" --arg obfs "$OBFS_PASS" \
+       '. + {hysteria_auth_pass: $auth, hysteria_obfs_pass: $obfs}' \
+       "$SERVER_CONFIG" > "$tmp" 2>/dev/null && mv "$tmp" "$SERVER_CONFIG"
     ui_ok "Hysteria2 configurado en puerto $port"
     if [[ "$AUTO_MODE" == "auto" ]]; then
         ui_info "Auth password: $AUTH_PASS"
@@ -995,30 +1033,46 @@ generate_user_links() {
     local SDOM; SDOM=$(get_server_domain)
     local H="${SDOM:-$SIP}"
 
+    # Leer paths y UUIDs del config guardado
+    local WS_PATH; WS_PATH=$(jq -r '.xray_ws_path // "/'"$(openssl rand -hex 8)"'"' "$SERVER_CONFIG" 2>/dev/null)
+    local GRPC_SVC; GRPC_SVC=$(jq -r '.xray_grpc_service // "grpc-'"$(openssl rand -hex 4)"'"' "$SERVER_CONFIG" 2>/dev/null)
+    local UUID_VL; UUID_VL=$(jq -r '.uuid_vless // ""' "$SERVER_CONFIG" 2>/dev/null)
+    local UUID_VM; UUID_VM=$(jq -r '.uuid_vmess // ""' "$SERVER_CONFIG" 2>/dev/null)
+    local TROJAN_P; TROJAN_P=$(jq -r '.trojan_pass // ""' "$SERVER_CONFIG" 2>/dev/null)
+    # Si no hay UUIDs guardados, usar el username como fallback
+    [[ -z "$UUID_VL" ]] && UUID_VL="$uid"
+    [[ -z "$UUID_VM" ]] && UUID_VM="$uid"
+    [[ -z "$TROJAN_P" ]] && TROJAN_P="$upass"
+
     echo ""
     echo -e "  ${C_BOLD}${C_INFO}LINKS DE CONEXION${C_NORM}"
     echo -e "  ${C_DIM}Para: $username${C_NORM}"
     ui_separator
 
-    local vws="vless://${uid}@${H}:${PORT_XRAY_WS}?encryption=none&security=tls&type=ws&path=%2F$(openssl rand -hex 8)&host=${H}#CRISDEV-VLESS-WS"
+    local vws="vless://${UUID_VL}@${H}:${PORT_XRAY_WS}?encryption=none&security=tls&type=ws&path=${WS_PATH}&host=${H}#CRISDEV-VLESS-WS"
     echo -e "\n  ${C_BOLD}VLESS + WS + TLS:${C_NORM}"
     echo "    $vws"
 
-    local vgc="vless://${uid}@${H}:${PORT_XRAY_GRPC}?encryption=none&security=tls&type=grpc&serviceName=grpc-$(openssl rand -hex 4)&fp=chrome#CRISDEV-VLESS-gRPC"
+    local vgc="vless://${UUID_VL}@${H}:${PORT_XRAY_GRPC}?encryption=none&security=tls&type=grpc&serviceName=${GRPC_SVC}&fp=chrome#CRISDEV-VLESS-gRPC"
     echo -e "\n  ${C_BOLD}VLESS + gRPC + TLS:${C_NORM}"
     echo "    $vgc"
 
-    local vmj="{\"v\":\"2\",\"ps\":\"CRISDEV-VMess\",\"add\":\"${H}\",\"port\":\"${PORT_WEBSOCKET}\",\"id\":\"${uid}\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"${H}\",\"path\":\"/vmess-ws\",\"tls\":\"tls\"}"
+    local vmj="{\"v\":\"2\",\"ps\":\"CRISDEV-VMess\",\"add\":\"${H}\",\"port\":\"${PORT_WEBSOCKET}\",\"id\":\"${UUID_VM}\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"${H}\",\"path\":\"/vmess-ws\",\"tls\":\"tls\"}"
     echo -e "\n  ${C_BOLD}VMess + WS + TLS:${C_NORM}"
     echo "    vmess://$(echo -n "$vmj" | base64 -w0 2>/dev/null || echo -n "$vmj" | base64)"
 
-    local trj="trojan://${upass}@${H}:${PORT_XRAY_VLESS}?type=ws&host=${H}&path=%2Ftrojan-ws&security=tls#CRISDEV-Trojan"
+    local trj="trojan://${TROJAN_P}@${H}:${PORT_XRAY_VLESS}?type=ws&host=${H}&path=%2Ftrojan-ws&security=tls#CRISDEV-Trojan"
     echo -e "\n  ${C_BOLD}Trojan + WS + TLS:${C_NORM}"
     echo "    $trj"
 
-    local hy2="hysteria2://${upass}@${H}:${PORT_HYSTERIA}?insecure=1&obfs=salamander&obfs-password=${upass}#CRISDEV-Hysteria2"
-    echo -e "\n  ${C_BOLD}Hysteria2:${C_NORM}"
-    echo "    $hy2"
+    # Hysteria2 - leer passwords del config
+    local HY_AUTH; HY_AUTH=$(jq -r '.hysteria_auth_pass // ""' "$SERVER_CONFIG" 2>/dev/null)
+    local HY_OBFS; HY_OBFS=$(jq -r '.hysteria_obfs_pass // ""' "$SERVER_CONFIG" 2>/dev/null)
+    if [[ -n "$HY_AUTH" ]]; then
+        local hy2="hysteria2://${HY_AUTH}@${H}:${PORT_HYSTERIA}?obfs=salamander&obfs-password=${HY_OBFS}#CRISDEV-Hysteria2"
+        echo -e "\n  ${C_BOLD}Hysteria2:${C_NORM}"
+        echo "    $hy2"
+    fi
 
     if command -v qrencode &>/dev/null; then
         echo -e "\n  ${C_BOLD}QR Code VLESS-WS:${C_NORM}"
@@ -1054,6 +1108,154 @@ check_versions() {
     echo -e "\n  ${C_BOLD}Ultimas disponibles:${C_NORM}"
     echo "    Xray: $(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name' 2>/dev/null)"
     echo "    Hysteria2: $(curl -s https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name' 2>/dev/null)"
+}
+
+# ========================= VALIDACION DE PROTOCOLOS =========================
+
+validate_all_protocols() {
+    ui_breadcrumb "CRISDEV > Protocolos > Validar"
+    echo -e "  ${C_BOLD}${C_INFO}VALIDACION DE PROTOCOLOS${C_NORM}"
+    ui_separator
+    local SIP; SIP=$(get_server_ip)
+    local SDOM; SDOM=$(get_server_domain)
+    local H="${SDOM:-$SIP}"
+    local OK=0 FAIL=0
+
+    # SSH
+    echo -ne "  SSH ($PORT_SSH/tcp):           "
+    if ss -tlnp 2>/dev/null | grep -q ":$PORT_SSH "; then
+        echo -e "${C_OK}[OK]${C_NORM}"; ((OK++))
+    else
+        echo -e "${C_ERROR}[FAIL]${C_NORM}"; ((FAIL++))
+    fi
+
+    # SSH-SSL (Stunnel)
+    echo -ne "  SSH-SSL ($PORT_SSH_SSL/tcp):     "
+    if ss -tlnp 2>/dev/null | grep -q ":$PORT_SSH_SSL "; then
+        # Verificar que connect apunta a SSH (no loop)
+        if grep -q "connect = 127.0.0.1:$PORT_SSH" /etc/stunnel/stunnel.conf 2>/dev/null; then
+            echo -e "${C_OK}[OK]${C_NORM}"; ((OK++))
+        else
+            echo -e "${C_ERROR}[BAD CONFIG]${C_NORM} - connect no apunta a SSH"; ((FAIL++))
+        fi
+    else
+        echo -e "${C_ERROR}[OFF]${C_NORM}"; ((FAIL++))
+    fi
+
+    # Xray VLESS-WS
+    echo -ne "  Xray VLESS-WS ($PORT_XRAY_WS/tcp):  "
+    if ss -tlnp 2>/dev/null | grep -q ":$PORT_XRAY_WS "; then
+        # Verificar que xray responde
+        if curl -sk --connect-timeout 3 "https://$H:$PORT_XRAY_WS" >/dev/null 2>&1 || \
+           ss -tlnp 2>/dev/null | grep -q "xray"; then
+            echo -e "${C_OK}[OK]${C_NORM}"; ((OK++))
+        else
+            echo -e "${C_WARN}[RUNNING - UNTESTED]${C_NORM}"; ((OK++))
+        fi
+    else
+        echo -e "${C_ERROR}[OFF]${C_NORM}"; ((FAIL++))
+    fi
+
+    # Hysteria2
+    echo -ne "  Hysteria2 ($PORT_HYSTERIA/udp):     "
+    if ss -ulnp 2>/dev/null | grep -q ":$PORT_HYSTERIA "; then
+        echo -e "${C_OK}[OK]${C_NORM}"; ((OK++))
+    else
+        echo -e "${C_ERROR}[OFF]${C_NORM}"; ((FAIL++))
+    fi
+
+    # UDP-Custom
+    echo -ne "  UDP-Custom ($PORT_UDP_CUSTOM/udp):  "
+    if ss -ulnp 2>/dev/null | grep -q ":7100 "; then
+        echo -e "${C_OK}[OK]${C_NORM}"; ((OK++))
+    else
+        echo -e "${C_ERROR}[OFF]${C_NORM}"; ((FAIL++))
+    fi
+
+    # Certificados
+    echo -ne "  Certificados TLS:            "
+    if [[ -f "$CERT_DIR/fullchain.pem" ]]; then
+        local EXPIRY; EXPIRY=$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -enddate 2>/dev/null | cut -d= -f2)
+        echo -e "${C_OK}[OK]${C_NORM} Expira: $EXPIRY"; ((OK++))
+    elif [[ -f "$CERT_DIR/self-signed.pem" ]]; then
+        echo -e "${C_WARN}[SELF-SIGNED]${C_NORM}"; ((OK++))
+    else
+        echo -e "${C_ERROR}[NO CERT]${C_NORM}"; ((FAIL++))
+    fi
+
+    echo ""
+    ui_separator
+    echo -e "  Resultado: ${C_OK}$OK OK${C_NORM} | ${C_ERROR}$FAIL FAIL${C_NORM}"
+
+    if [[ $FAIL -gt 0 ]]; then
+        echo ""
+        ui_info "Para arreglar los protocolos con FAIL:"
+        echo "    1) Re-ejecuta: crisdev --install"
+        echo "    2) O configura manualmente desde el menu"
+    fi
+}
+
+show_connection_info() {
+    ui_breadcrumb "CRISDEV > Protocolos > Info"
+    echo -e "  ${C_BOLD}${C_INFO}INFORMACION DE CONEXION${C_NORM}"
+    ui_separator
+    local SIP; SIP=$(get_server_ip)
+    local SDOM; SDOM=$(get_server_domain)
+    local H="${SDOM:-$SIP}"
+
+    echo -e "\n  ${C_BOLD}Servidor:${C_NORM} $H ($SIP)"
+    echo -e "\n  ${C_BOLD}Protocolos Disponibles:${C_NORM}"
+
+    # SSH
+    echo -e "\n  ${C_BOLD}1. SSH (OpenSSH)${C_NORM}"
+    echo -e "    Puerto: $PORT_SSH/tcp"
+    echo -e "    Conexion: ${C_INFO}ssh root@$H -p $PORT_SSH${C_NORM}"
+
+    # SSH-SSL
+    echo -e "\n  ${C_BOLD}2. SSH-SSL (Stunnel)${C_NORM}"
+    echo -e "    Puerto: $PORT_SSH_SSL/tcp (TLS)"
+    echo -e "    Clientes: Stunnel, HTTPS Tunnel, SSLSocket"
+    echo -e "    Conexion: Conectar Stunnel a $H:$PORT_SSH_SSL, luego SSH a 127.0.0.1:22"
+
+    # Xray links
+    echo -e "\n  ${C_BOLD}3. Xray/V2Ray${C_NORM}"
+    if [[ -f "$SERVER_CONFIG" ]]; then
+        local WS_PATH; WS_PATH=$(jq -r '.xray_ws_path // ""' "$SERVER_CONFIG" 2>/dev/null)
+        local GRPC_SVC; GRPC_SVC=$(jq -r '.xray_grpc_service // ""' "$SERVER_CONFIG" 2>/dev/null)
+        local UUID_VL; UUID_VL=$(jq -r '.uuid_vless // ""' "$SERVER_CONFIG" 2>/dev/null)
+        if [[ -n "$UUID_VL" ]]; then
+            echo -e "    UUID: ${C_BOLD}$UUID_VL${C_NORM}"
+            echo -e "    VLESS-WS: vless://$UUID_VL@$H:$PORT_XRAY_WS?encryption=none&security=tls&type=ws&path=$WS_PATH&host=$H"
+            echo -e "    VLESS-gRPC: vless://$UUID_VL@$H:$PORT_XRAY_GRPC?encryption=none&security=tls&type=grpc&serviceName=$GRPC_SVC"
+        else
+            echo -e "    ${C_WARN}No configurado - ejecuta 'Configurar Xray' primero${C_NORM}"
+        fi
+    else
+        echo -e "    ${C_WARN}No configurado${C_NORM}"
+    fi
+
+    # Hysteria2
+    echo -e "\n  ${C_BOLD}4. Hysteria2 (QUIC/UDP)${C_NORM}"
+    if [[ -f "$SERVER_CONFIG" ]]; then
+        local HY_AUTH; HY_AUTH=$(jq -r '.hysteria_auth_pass // ""' "$SERVER_CONFIG" 2>/dev/null)
+        local HY_OBFS; HY_OBFS=$(jq -r '.hysteria_obfs_pass // ""' "$SERVER_CONFIG" 2>/dev/null)
+        if [[ -n "$HY_AUTH" ]]; then
+            echo -e "    Puerto: $PORT_HYSTERIA/udp"
+            echo -e "    Auth: ${C_BOLD}$HY_AUTH${C_NORM}"
+            echo -e "    Obfs: ${C_BOLD}$HY_OBFS${C_NORM}"
+            echo -e "    Link: ${C_INFO}hysteria2://$HY_AUTH@$H:$PORT_HYSTERIA?obfs=salamander&obfs-password=$HY_OBFS#CRISDEV${C_NORM}"
+        else
+            echo -e "    ${C_WARN}No configurado - ejecuta 'Configurar Hysteria2' primero${C_NORM}"
+        fi
+    fi
+
+    # UDP-Custom
+    echo -e "\n  ${C_BOLD}5. UDP-Custom${C_NORM}"
+    echo -e "    Puerto: 7100/udp"
+    echo -e "    Clientes: HTTP Tunnel, UDPvpn, SlowDNS"
+
+    echo ""
+    ui_separator
 }
 
 # ========================= MENUS =========================
@@ -1220,14 +1422,14 @@ menu_main() {
         ui_section "PROTOCOLOS"
         echo "    ${C_BOLD}10)${C_NORM} SSH / SSH-SSL          ${C_BOLD}13)${C_NORM} Hysteria2"
         echo "    ${C_BOLD}11)${C_NORM} SlowDNS                ${C_BOLD}14)${C_NORM} udp-custom"
-        echo "    ${C_BOLD}12)${C_NORM} Xray (VLESS/VMess/Trojan)"
+        echo "    ${C_BOLD}12)${C_NORM} Xray (VLESS/VMess/Trojan)  ${C_BOLD}25)${C_NORM} Validar protocolos"
         echo ""
 
         # --- SERVIDOR ---
         ui_section "SERVIDOR"
-        echo "    ${C_BOLD}15)${C_NORM} Generar links de conexion"
-        echo "    ${C_BOLD}16)${C_NORM} Estado del servidor    ${C_BOLD}18)${C_NORM} Certificados TLS"
-        echo "    ${C_BOLD}17)${C_NORM} Firewall / puertos     ${C_BOLD}19)${C_NORM} Backups"
+        echo "    ${C_BOLD}15)${C_NORM} Generar links          ${C_BOLD}18)${C_NORM} Certificados TLS"
+        echo "    ${C_BOLD}16)${C_NORM} Estado del servidor    ${C_BOLD}19)${C_NORM} Backups"
+        echo "    ${C_BOLD}17)${C_NORM} Firewall / puertos     ${C_BOLD}26)${C_NORM} Info de conexion"
         echo ""
 
         # --- SISTEMA ---
@@ -1272,6 +1474,8 @@ menu_main() {
             21) menu_service_logs ;;
             23) tail -50 "$AUDIT_LOG" ;;
             24) update_crisdev ;;
+            25) validate_all_protocols ;;
+            26) show_connection_info ;;
             0)  echo -e "  ${C_OK}Hasta luego, CRISDEV.${C_NORM}"; exit 0 ;;
             *)  ui_error "Opcion invalida" ;;
         esac
