@@ -246,6 +246,470 @@ key = {key_file}
     _audit("STUNNEL_CONFIG", "Puerto 443 SSL")
 
 
+# ============================================================================
+# HELPERS - Activacion de Protocolos (Documentacion Oficial)
+# ============================================================================
+
+# --- STUNNEL SSL (SSH por 443) ---
+def _install_stunnel():
+    """Instala y configura Stunnel4 para SSH sobre SSL en puerto 443."""
+    info_msg("Instalando Stunnel4...")
+    _cmd("apt-get update -qq", sudo=True)
+    _cmd("apt-get install -y -qq stunnel4", sudo=True)
+
+    # Generar certificado autofirmado
+    os.makedirs(CERT_DIR, exist_ok=True)
+    cert_path = f"{CERT_DIR}/stunnel.pem"
+    _cmd(
+        f"openssl req -new -x509 -days 3650 -nodes "
+        f"-out {cert_path} -keyout {cert_path} "
+        f"-subj '/C=US/ST=VPN/O=CRISDEV/CN=stunnel' 2>/dev/null",
+        sudo=True,
+    )
+
+    # Configuracion: acepta en 443, conecta a SSH local
+    conf = (
+        f"cert = {cert_path}\n"
+        f"foreground = no\n"
+        f"[ssh]\n"
+        f"accept = 0.0.0.0:443\n"
+        f"connect = 127.0.0.1:22\n"
+    )
+    _cmd(f"bash -c 'cat > /etc/stunnel/stunnel.conf'", input_text=conf, sudo=True)
+
+    # Habilitar stunnel4
+    stunnel_default = _cmd("cat /etc/default/stunnel4 2>/dev/null", sudo=True)
+    if "ENABLED=1" not in stunnel_default:
+        _cmd(
+            "sed -i 's/ENABLED=0/ENABLED=1/' /etc/default/stunnel4 2>/dev/null || "
+            "echo 'ENABLED=1' >> /etc/default/stunnel4",
+            sudo=True,
+        )
+
+    _cmd("systemctl enable stunnel4", sudo=True)
+    _cmd("systemctl restart stunnel4", sudo=True)
+    ok_msg("Stunnel4 instalado y activo en puerto 443 (SSH-over-SSL)")
+    _audit("STUNNEL_INSTALL", "Puerto 443")
+
+
+def _stop_stunnel():
+    _cmd("systemctl stop stunnel4", sudo=True)
+    ok_msg("Stunnel4 detenido")
+
+
+def _start_stunnel():
+    _cmd("systemctl start stunnel4", sudo=True)
+    ok_msg("Stunnel4 iniciado")
+
+
+# --- DROPBEAR (SSH alternativo) ---
+def _install_dropbear():
+    """Instala Dropbear SSH en puerto 110."""
+    info_msg("Instalando Dropbear SSH...")
+    _cmd("apt-get update -qq", sudo=True)
+    _cmd("apt-get install -y -qq dropbear", sudo=True)
+
+    # Configurar puerto y habilitar
+    _cmd("sed -i 's/^NO_START=1/NO_START=0/' /etc/default/dropbear 2>/dev/null", sudo=True)
+    _cmd("sed -i 's/^DROPBEAR_PORT=.*/DROPBEAR_PORT=110/' /etc/default/dropbear 2>/dev/null", sudo=True)
+    # Crear archivo si no existe
+    default_content = _cmd("cat /etc/default/dropbear 2>/dev/null", sudo=True)
+    if "DROPBEAR_PORT" not in default_content:
+        _cmd(
+            "echo -e 'DROPBEAR_PORT=110\\nDROPBEAR_EXTRA_ARGS=\"\"\\nNO_START=0' "
+            "> /etc/default/dropbear",
+            sudo=True,
+        )
+
+    _cmd("systemctl enable dropbear", sudo=True)
+    _cmd("systemctl restart dropbear", sudo=True)
+    ok_msg("Dropbear instalado y activo en puerto 110")
+    _audit("DROPBEAR_INSTALL", "Puerto 110")
+
+
+def _stop_dropbear():
+    _cmd("systemctl stop dropbear", sudo=True)
+    ok_msg("Dropbear detenido")
+
+
+def _start_dropbear():
+    _cmd("systemctl start dropbear", sudo=True)
+    ok_msg("Dropbear iniciado")
+
+
+# --- PYTHON SOCKS (WebSocket proxy) ---
+SOCKS_DIR = "/opt/python-socks"
+SOCKS_SCRIPT = f"{SOCKS_DIR}/socks5_server.py"
+
+
+def _install_python_socks():
+    """Instala servidor SOCKS5 Python puro en puerto 1080."""
+    info_msg("Instalando Python SOCKS5 server...")
+    os.makedirs(SOCKS_DIR, exist_ok=True)
+
+    # Script SOCKS5 server puro (sin dependencias externas)
+    script = '''#!/usr/bin/env python3
+import socket, threading, struct, sys, os
+
+def handle_client(client):
+    try:
+        data = client.recv(256)
+        if not data or data[0] != 0x05:
+            client.close(); return
+        client.sendall(b'\\x05\\x00')
+        data = client.recv(256)
+        if not data or len(data) < 4:
+            client.close(); return
+        atyp = data[3]
+        if atyp == 0x01:
+            addr = socket.inet_ntoa(data[4:8]); port = struct.unpack('!H', data[8:10])[0]
+        elif atyp == 0x03:
+            dlen = data[4]; addr = data[5:5+dlen].decode(); port = struct.unpack('!H', data[5+dlen:7+dlen])[0]
+        elif atyp == 0x04:
+            addr = socket.inet_ntop(socket.AF_INET6, data[4:20]); port = struct.unpack('!H', data[20:22])[0]
+        else:
+            client.close(); return
+        try:
+            remote = socket.create_connection((addr, port), timeout=10)
+            client.sendall(b'\\x05\\x00\\x00\\x01\\x00\\x00\\x00\\x00\\x00\\x00')
+        except:
+            client.sendall(b'\\x05\\x05\\x00\\x01\\x00\\x00\\x00\\x00\\x00\\x00')
+            client.close(); return
+        def fwd(src, dst):
+            try:
+                while True:
+                    d = src.recv(4096)
+                    if not d: break
+                    dst.sendall(d)
+            except: pass
+            try: src.close()
+            except: pass
+            try: dst.close()
+            except: pass
+        threading.Thread(target=fwd, args=(client, remote), daemon=True).start()
+        threading.Thread(target=fwd, args=(remote, client), daemon=True).start()
+    except:
+        try: client.close()
+        except: pass
+
+def main():
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(('0.0.0.0', int(sys.argv[1]) if len(sys.argv) > 1 else 1080))
+    srv.listen(100)
+    print(f"SOCKS5 listening on {srv.getsockname()}")
+    while True:
+        c, a = srv.accept()
+        threading.Thread(target=handle_client, args=(c,), daemon=True).start()
+
+if __name__ == '__main__':
+    main()
+'''
+    with open(SOCKS_SCRIPT, "w") as f:
+        f.write(script)
+
+    # Crear servicio systemd
+    svc = (
+        "[Unit]\n"
+        "Description=Python SOCKS5 Proxy\n"
+        "After=network.target\n\n"
+        "[Service]\n"
+        f"ExecStart=/usr/bin/python3 {SOCKS_SCRIPT} 1080\n"
+        "Restart=always\n"
+        "RestartSec=5\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    _cmd("bash -c 'cat > /etc/systemd/system/python-socks.service'", input_text=svc, sudo=True)
+    _cmd("systemctl daemon-reload", sudo=True)
+    _cmd("systemctl enable python-socks", sudo=True)
+    _cmd("systemctl restart python-socks", sudo=True)
+    ok_msg("Python SOCKS5 server instalado en puerto 1080")
+    _audit("PYTHON_SOCKS_INSTALL", "Puerto 1080")
+
+
+def _stop_python_socks():
+    _cmd("systemctl stop python-socks", sudo=True)
+    ok_msg("Python SOCKS5 detenido")
+
+
+def _start_python_socks():
+    _cmd("systemctl start python-socks", sudo=True)
+    ok_msg("Python SOCKS5 iniciado")
+
+
+# --- UDP-HYSTERIA2 ---
+def _install_hysteria():
+    """Instala Hysteria2 (QUIC UDP)."""
+    info_msg("Instalando Hysteria2...")
+    _cmd("bash <(curl -fsSL https://get.hy2.sh/)", sudo=True, timeout=120)
+
+    # Generar password aleatorio
+    password = _cmd("openssl rand -hex 16", sudo=True).strip()
+    if not password:
+        password = "crisdev_hysteria_2024"
+
+    # Configuracion basica
+    cert_path = f"{CERT_DIR}/hysteria.pem"
+    conf = (
+        f"listen: ':443'\n"
+        f"tls:\n"
+        f"  cert: {CERT_DIR}/server.crt\n"
+        f"  key: {CERT_DIR}/server.key\n"
+        f"auth:\n"
+        f"  type: password\n"
+        f"  password: {password}\n"
+        f"  user: default\n"
+        f"masquerade:\n"
+        f"  type: proxy\n"
+        f"  proxy:\n"
+        f"    url: https://bing.com\n"
+        f"    rewriteHost: true\n"
+    )
+    _cmd("mkdir -p /etc/hysteria", sudo=True)
+    _cmd("bash -c 'cat > /etc/hysteria/config.yaml'", input_text=conf, sudo=True)
+
+    _cmd("systemctl enable hysteria-server", sudo=True)
+    _cmd("systemctl restart hysteria-server", sudo=True)
+    ok_msg(f"Hysteria2 instalado en puerto 443/UDP")
+    info_msg(f"Password de autenticacion: {password}")
+    _audit("HYSTERIA_INSTALL", f"Puerto 443/UDP, pass: {password}")
+
+
+def _stop_hysteria():
+    _cmd("systemctl stop hysteria-server", sudo=True)
+    ok_msg("Hysteria2 detenido")
+
+
+def _start_hysteria():
+    _cmd("systemctl start hysteria-server", sudo=True)
+    ok_msg("Hysteria2 iniciado")
+
+
+# --- XRAY / V2Ray ---
+XRAY_CONF_DIR = "/usr/local/etc/xray"
+
+
+def _install_xray():
+    """Instala Xray-core con VLESS+WS+TLS."""
+    info_msg("Instalando Xray-core...")
+    _cmd(
+        "bash -c \"$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)\" -- install",
+        sudo=True,
+        timeout=180,
+    )
+
+    # Generar UUID
+    uuid = _cmd("cat /proc/sys/kernel/random/uuid", sudo=True).strip()
+    if not uuid:
+        uuid = "a3b4c5d6-e7f8-9a0b-c1d2-e3f4a5b6c7d8"
+
+    # Configuracion VLESS + WebSocket
+    ws_path = "/ws"
+    conf = (
+        '{\n'
+        '  "log": {"loglevel": "warning"},\n'
+        '  "inbounds": [\n'
+        '    {\n'
+        '      "listen": "127.0.0.1",\n'
+        f'      "port": 10001,\n'
+        '      "protocol": "vless",\n'
+        '      "settings": {\n'
+        f'        "clients": [{{"id": "{uuid}", "flow": ""}}],\n'
+        '        "decryption": "none"\n'
+        '      },\n'
+        '      "streamSettings": {\n'
+        '        "network": "ws",\n'
+        '        "wsSettings": {\n'
+        f'          "path": "{ws_path}",\n'
+        '          "headers": {"Host": "test.crisdev.online"}\n'
+        '        }\n'
+        '      }\n'
+        '    }\n'
+        '  ],\n'
+        '  "outbounds": [\n'
+        '    {"protocol": "freedom", "tag": "direct"},\n'
+        '    {"protocol": "blackhole", "tag": "blocked"}\n'
+        '  ],\n'
+        '  "routing": {\n'
+        '    "rules": [\n'
+        '      {"type": "field", "ip": ["geoip:private"], "outboundTag": "blocked"},\n'
+        '      {"type": "field", "outboundTag": "blocked", "protocol": ["bittorrent"]}\n'
+        '    ]\n'
+        '  }\n'
+        '}\n'
+    )
+
+    os.makedirs(XRAY_CONF_DIR, exist_ok=True)
+    _cmd(f"bash -c 'cat > {XRAY_CONF_DIR}/config.json'", input_text=conf, sudo=True)
+
+    _cmd("systemctl enable xray", sudo=True)
+    _cmd("systemctl restart xray", sudo=True)
+
+    ok_msg("Xray-core instalado (VLESS+WS)")
+    info_msg(f"UUID: {uuid}")
+    info_msg(f"WebSocket path: {ws_path}")
+    _audit("XRAY_INSTALL", f"VLESS+WS, UUID: {uuid}")
+
+
+def _stop_xray():
+    _cmd("systemctl stop xray", sudo=True)
+    ok_msg("Xray detenido")
+
+
+def _start_xray():
+    _cmd("systemctl start xray", sudo=True)
+    ok_msg("Xray iniciado")
+
+
+# --- SQUID (Proxy HTTP) ---
+def _install_squid():
+    """Instala Squid proxy en puerto 3128."""
+    info_msg("Instalando Squid Proxy...")
+    _cmd("apt-get update -qq", sudo=True)
+    _cmd("apt-get install -y -qq squid", sudo=True)
+
+    # Configuracion basica
+    conf = (
+        "acl localnet src 0.0.0.0/0\n"
+        "http_access allow all\n"
+        "http_port 3128\n"
+        "dns_v4_first on\n"
+    )
+    _cmd("bash -c 'cat > /etc/squid/squid.conf'", input_text=conf, sudo=True)
+
+    _cmd("systemctl enable squid", sudo=True)
+    _cmd("systemctl restart squid", sudo=True)
+    ok_msg("Squid proxy instalado en puerto 3128")
+    _audit("SQUID_INSTALL", "Puerto 3128")
+
+
+def _stop_squid():
+    _cmd("systemctl stop squid", sudo=True)
+    ok_msg("Squid detenido")
+
+
+def _start_squid():
+    _cmd("systemctl start squid", sudo=True)
+    ok_msg("Squid iniciado")
+
+
+# --- OPENVPN ---
+def _install_openvpn():
+    """Instala OpenVPN basico en puerto 1194/UDP."""
+    info_msg("Instalando OpenVPN...")
+    _cmd("apt-get update -qq", sudo=True)
+    _cmd("apt-get install -y -qq openvpn", sudo=True)
+    ok_msg("OpenVPN instalado (requiere configuracion de certificados PKI)")
+    _audit("OPENVPN_INSTALL", "Puerto 1194/UDP")
+
+
+def _stop_openvpn():
+    _cmd("systemctl stop openvpn", sudo=True)
+    ok_msg("OpenVPN detenido")
+
+
+def _start_openvpn():
+    _cmd("systemctl start openvpn", sudo=True)
+    ok_msg("OpenVPN iniciado")
+
+
+# --- WIREGUARD ---
+def _install_wireguard():
+    """Instala WireGuard."""
+    info_msg("Instalando WireGuard...")
+    _cmd("apt-get update -qq", sudo=True)
+    _cmd("apt-get install -y -qq wireguard", sudo=True)
+    ok_msg("WireGuard instalado (requiere configuracion de interfaz wg0)")
+    _audit("WIREGUARD_INSTALL", "Puerto 51820/UDP")
+
+
+def _stop_wireguard():
+    _cmd("wg-quick down wg0 2>/dev/null", sudo=True)
+    ok_msg("WireGuard detenido")
+
+
+def _start_wireguard():
+    _cmd("wg-quick up wg0 2>/dev/null", sudo=True)
+    ok_msg("WireGuard iniciado")
+
+
+# --- BADVPN UDPGW ---
+def _install_badvpn():
+    """Instala BadVPN UDP Gateway para juegos/VoIP."""
+    info_msg("Instalando BadVPN...")
+    _cmd("apt-get update -qq", sudo=True)
+    _cmd("apt-get install -y -qq badvpn", sudo=True)
+
+    # Crear servicio
+    svc = (
+        "[Unit]\n"
+        "Description=BadVPN UDP Gateway\n"
+        "After=network.target\n\n"
+        "[Service]\n"
+        "ExecStart=/usr/bin/badvpn-udpgw --listen-addr 0.0.0.0:7300 --max-clients 500\n"
+        "Restart=always\n"
+        "RestartSec=3\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    _cmd("bash -c 'cat > /etc/systemd/system/badvpn.service'", input_text=svc, sudo=True)
+    _cmd("systemctl daemon-reload", sudo=True)
+    _cmd("systemctl enable badvpn", sudo=True)
+    _cmd("systemctl restart badvpn", sudo=True)
+    ok_msg("BadVPN instalado en puerto 7300")
+    _audit("BADVPN_INSTALL", "Puerto 7300")
+
+
+def _stop_badvpn():
+    _cmd("systemctl stop badvpn", sudo=True)
+    ok_msg("BadVPN detenido")
+
+
+def _start_badvpn():
+    _cmd("systemctl start badvpn", sudo=True)
+    ok_msg("BadVPN iniciado")
+
+
+# --- FILEBROWSER ---
+def _install_filebrowser():
+    """Instala FileBrowser para gestion de archivos via web."""
+    info_msg("Instalando FileBrowser...")
+    _cmd("curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash", sudo=True, timeout=60)
+
+    svc = (
+        "[Unit]\n"
+        "Description=FileBrowser\n"
+        "After=network.target\n\n"
+        "[Service]\n"
+        "ExecStart=/usr/local/bin/filebrowser -r / -p 8080 -a 0.0.0.0\n"
+        "Restart=always\n"
+        "RestartSec=3\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    _cmd("bash -c 'cat > /etc/systemd/system/filebrowser.service'", input_text=svc, sudo=True)
+    _cmd("systemctl daemon-reload", sudo=True)
+    _cmd("systemctl enable filebrowser", sudo=True)
+    _cmd("systemctl restart filebrowser", sudo=True)
+    ok_msg("FileBrowser instalado en puerto 8080")
+    _audit("FILEBROWSER_INSTALL", "Puerto 8080")
+
+
+def _stop_filebrowser():
+    _cmd("systemctl stop filebrowser", sudo=True)
+    ok_msg("FileBrowser detenido")
+
+
+def _start_filebrowser():
+    _cmd("systemctl start filebrowser", sudo=True)
+    ok_msg("FileBrowser iniciado")
+
+
+# ============================================================================
+# HELPERS - Puertos y Certificados
+# ============================================================================
+
 def _get_service_info():
     """Retorna informacion de todos los servicios con puertos reales."""
     services = []
@@ -926,49 +1390,57 @@ def _port_stunnel_menu():
     print(f"  Cert:    [{ok('SI') if cert_exists else error('NO')}]")
     print()
 
-    print(f"    {bold('1)')} Ver estado")
-    print(f"    {bold('2)')} Reiniciar Stunnel")
-    print(f"    {bold('3)')} Cambiar puerto (acepta 443, 8443, etc)")
-    print(f"    {bold('4)')} Ver configuracion")
-    print(f"    {bold('5)')} Generar certificado SSL")
-    print(f"    {bold('6)')} Configurar Stunnel automaticamente")
+    print(f"    {bold('1)')} Instalar/Reinstalar Stunnel")
+    print(f"    {bold('2)')} Ver estado")
+    print(f"    {bold('3)')} Iniciar Stunnel")
+    print(f"    {bold('4)')} Detener Stunnel")
+    print(f"    {bold('5)')} Reiniciar Stunnel")
+    print(f"    {bold('6)')} Cambiar puerto (acepta 443, 8443, etc)")
+    print(f"    {bold('7)')} Ver configuracion")
+    print(f"    {bold('8)')} Generar certificado SSL")
+    print(f"    {bold('9)')} Configurar Stunnel automaticamente")
 
     print()
     opt = prompt_input("Opcion")
 
     if opt == "1":
+        _install_stunnel()
+    elif opt == "2":
         st = check_service_status("stunnel4")
         if st == "active":
             print(f"\n  Stunnel: {ok('activo')} en puerto {port}")
             print(f"  SSL: {'Conectado' if cert_exists else 'Sin certificado'}")
         else:
             print(f"\n  Stunnel: {error(st)}")
-    elif opt == "2":
+    elif opt == "3":
+        _start_stunnel()
+    elif opt == "4":
+        _stop_stunnel()
+    elif opt == "5":
         _cmd("systemctl restart stunnel4")
         ok_msg("Stunnel reiniciado")
-    elif opt == "3":
+    elif opt == "6":
         new_port = prompt_input(f"Nuevo puerto (actual: {port})")
         if new_port and new_port.isdigit():
             _cmd(f"echo y | ufw allow {new_port}/tcp")
-            # Actualizar config
             conf = "/etc/stunnel/stunnel.conf"
             if os.path.exists(conf):
                 _cmd(f"sed -i 's/^accept = .*/accept = {new_port}/' {conf}")
             _cmd("systemctl restart stunnel4")
             ok_msg(f"Stunnel cambiado a puerto {new_port}")
             _audit("STUNNEL_PORT", f"Cambiado a {new_port}")
-    elif opt == "4":
+    elif opt == "7":
         conf = "/etc/stunnel/stunnel.conf"
         if os.path.exists(conf):
             output = _cmd(f"cat {conf}")
             print(f"\n  {dim(conf)}")
             print(output)
         else:
-            warn_msg("No hay config. Usa opcion 6 para configurar.")
-    elif opt == "5":
+            warn_msg("No hay config. Usa opcion 9 para configurar.")
+    elif opt == "8":
         domain = prompt_input("Dominio (vacio = IP directa)") or _server_ip()
         _generate_self_signed_cert(domain)
-    elif opt == "6":
+    elif opt == "9":
         _setup_stunnel_ssl()
 
 
@@ -985,42 +1457,38 @@ def _port_wsepro_menu():
     print(f"  Nota:    {dim('Puerto 80 compatible con Cloudflare')}")
     print()
 
-    print(f"    {bold('1)')} Ver estado")
-    print(f"    {bold('2)')} Iniciar WS-EPRO")
-    print(f"    {bold('3)')} Detener WS-EPRO")
-    print(f"    {bold('4)')} Configurar WS-EPRO")
+    print(f"    {bold('1)')} Instalar Python SOCKS5")
+    print(f"    {bold('2)')} Ver estado")
+    print(f"    {bold('3)')} Iniciar SOCKS5")
+    print(f"    {bold('4)')} Detener SOCKS5")
     print(f"    {bold('5)')} Ver logs")
+    print(f"    {bold('6)')} Ver configuracion")
 
     print()
     opt = prompt_input("Opcion")
 
     if opt == "1":
-        if is_active:
-            print(f"\n  WS-EPRO: {ok('activo')} en puerto 80")
-            conns = _cmd("ss -tn | grep ':80 ' | wc -l").strip()
+        _install_python_socks()
+    elif opt == "2":
+        st = check_service_status("python-socks")
+        if st == "active":
+            print(f"\n  Python SOCKS5: {ok('activo')} en puerto 1080")
+            conns = _cmd("ss -tn | grep ':1080 ' | wc -l").strip()
             print(f"  Conexiones: {bold(conns)}")
         else:
-            print(f"\n  WS-EPRO: {error('inactivo')}")
-    elif opt == "2":
-        # Buscar script de WS-EPRO
-        ws_script = _cmd("find / -name 'ws_epro.py' -o -name 'wsepro.py' 2>/dev/null | head -1")
-        if ws_script:
-            _cmd(f"nohup python3 {ws_script} > /var/log/ws-epro.log 2>&1 &")
-            ok_msg("WS-EPRO iniciado en puerto 80")
-        else:
-            warn_msg("No se encontro ws_epro.py. Instalalo primero.")
+            print(f"\n  Python SOCKS5: {error(st)}")
     elif opt == "3":
-        _cmd("pkill -f 'ws_epro\\|wsepro' 2>/dev/null")
-        ok_msg("WS-EPRO detenido")
+        _start_python_socks()
     elif opt == "4":
-        print(f"\n  {dim('Configuracion de WS-EPRO:')}")
-        print(f"  Puerto: 80 (fijo, compatible con Cloudflare)")
-        print(f"  Path: /ws")
-        print()
-        info_msg("Edita /etc/crisdev/ws-epro.json para configurar")
+        _stop_python_socks()
     elif opt == "5":
-        output = _cmd("tail -30 /var/log/ws-epro.log 2>/dev/null")
+        output = _cmd("journalctl -u python-socks --no-pager -n 30 2>/dev/null")
         print(f"\n{output}" if output else dim("  No hay logs"))
+    elif opt == "6":
+        print(f"\n  {dim('Configuracion:')}")
+        print(f"  Puerto: 1080 (SOCKS5)")
+        print(f"  Script: {SOCKS_SCRIPT}")
+        print(f"  Servicio: python-socks.service")
 
 
 def _port_xray_menu():
@@ -1037,47 +1505,55 @@ def _port_xray_menu():
     print(f"  Config:  {dim('/usr/local/etc/xray/config.json')}")
     print()
 
-    print(f"    {bold('1)')} Ver estado")
-    print(f"    {bold('2)')} Reiniciar Xray")
-    print(f"    {bold('3)')} Ver version")
-    print(f"    {bold('4)')} Ver config")
-    print(f"    {bold('5)')} Ver logs")
-    print(f"    {bold('6)')} Cambiar puerto")
+    print(f"    {bold('1)')} Instalar Xray (VLESS+WS)")
+    print(f"    {bold('2)')} Ver estado")
+    print(f"    {bold('3)')} Iniciar Xray")
+    print(f"    {bold('4)')} Detener Xray")
+    print(f"    {bold('5)')} Reiniciar Xray")
+    print(f"    {bold('6)')} Ver version")
+    print(f"    {bold('7)')} Ver config")
+    print(f"    {bold('8)')} Ver logs")
+    print(f"    {bold('9)')} Ver link de conexion")
 
     print()
     opt = prompt_input("Opcion")
 
     if opt == "1":
+        _install_xray()
+    elif opt == "2":
         if is_active:
             print(f"\n  Xray: {ok('activo')} en puerto {port}")
-            v = _cmd("/opt/xray/xray version 2>/dev/null | head -1")
+            v = _cmd("/usr/local/bin/xray version 2>/dev/null | head -1")
             if v:
                 print(f"  Version: {bold(v)}")
         else:
             print(f"\n  Xray: {error(st)}")
-    elif opt == "2":
+    elif opt == "3":
+        _start_xray()
+    elif opt == "4":
+        _stop_xray()
+    elif opt == "5":
         _cmd("systemctl restart xray")
         ok_msg("Xray reiniciado")
-    elif opt == "3":
-        v = _cmd("/opt/xray/xray version 2>/dev/null | head -1")
+    elif opt == "6":
+        v = _cmd("/usr/local/bin/xray version 2>/dev/null | head -1")
         print(f"\n  {bold(v)}" if v else warn_msg("No instalado"))
-    elif opt == "4":
-        output = _cmd("cat /usr/local/etc/xray/config.json 2>/dev/null | head -40")
+    elif opt == "7":
+        output = _cmd("cat /usr/local/etc/xray/config.json 2>/dev/null | head -50")
         print(f"\n  {dim('/usr/local/etc/xray/config.json')}")
         print(output)
-    elif opt == "5":
+    elif opt == "8":
         output = _cmd("journalctl -u xray --no-pager -n 30 2>/dev/null")
         print(f"\n{output}" if output else dim("  No hay logs"))
-    elif opt == "6":
-        new_port = prompt_input(f"Nuevo puerto (actual: {port})")
-        if new_port and new_port.isdigit():
-            _cmd(f"echo y | ufw allow {new_port}/tcp")
-            # Actualizar config xray
-            conf = "/usr/local/etc/xray/config.json"
-            if os.path.exists(conf):
-                _cmd(f"sed -i 's/\"port\":{port}/\"port\":{new_port}/' {conf}")
-            _cmd("systemctl restart xray")
-            ok_msg(f"Xray cambiado a puerto {new_port}")
+    elif opt == "9":
+        uuid = _cmd("cat /usr/local/etc/xray/config.json 2>/dev/null | grep -o '\"id\": \"[^\"]*\"' | head -1 | cut -d'\"' -f4")
+        if uuid:
+            domain = prompt_input("Dominio del servidor") or _server_ip()
+            link = f"vless://{uuid}@{domain}:443?encryption=none&security=tls&type=ws&host={domain}&path=%2Fws"
+            print(f"\n  {bold('Link de conexion VLESS:')}")
+            print(f"  {ok(link)}")
+        else:
+            warn_msg("No se encontro UUID. Instala Xray primero.")
 
 
 def _port_ssl_menu():
@@ -1212,7 +1688,7 @@ def _port_firewall_menu():
 
 
 def _port_svc_menu(svc_id, svc_name, default_port):
-    """Submenu generico para servicios."""
+    """Submenu generico para servicios con instalacion integrada."""
     st = check_service_status(svc_id)
     is_active = st == "active"
     port = _get_real_port(svc_id) or default_port
@@ -1224,48 +1700,71 @@ def _port_svc_menu(svc_id, svc_name, default_port):
     print(f"  Puerto:  {bold(port)}")
     print()
 
+    # Mapa de funciones de instalacion por servicio
+    installers = {
+        "dropbear": _install_dropbear,
+        "stunnel4": _install_stunnel,
+        "hysteria-server": _install_hysteria,
+        "xray": _install_xray,
+        "squid": _install_squid,
+        "openvpn": _install_openvpn,
+        "wireguard": _install_wireguard,
+        "badvpn-udpgw": _install_badvpn,
+        "filebrowser": _install_filebrowser,
+    }
+    has_installer = svc_id in installers
+
+    print(f"    {bold('1)')} {'Reinstalar' if is_active else 'Instalar'} {svc_name}")
     if is_active:
-        print(f"    {bold('1)')} Ver estado")
-        print(f"    {bold('2)')} Reiniciar servicio")
-        print(f"    {bold('3)')} Detener servicio")
-        print(f"    {bold('4)')} Ver logs")
-        print(f"    {bold('5)')} Ver configuracion")
-        print(f"    {bold('6)')} Cambiar puerto")
+        print(f"    {bold('2)')} Ver estado")
+        print(f"    {bold('3)')} Iniciar servicio")
+        print(f"    {bold('4)')} Detener servicio")
+        print(f"    {bold('5)')} Reiniciar servicio")
+        print(f"    {bold('6)')} Ver logs")
+        print(f"    {bold('7)')} Ver configuracion")
     else:
-        print(f"    {bold('1)')} Ver estado")
-        print(f"    {bold('2)')} Iniciar servicio")
-        print(f"    {bold('3)')} Verificar instalacion")
+        print(f"    {bold('2)')} Ver estado")
+        print(f"    {bold('3)')} Iniciar servicio")
 
     print()
     opt = prompt_input("Opcion")
 
-    if is_active:
-        if opt == "1":
+    if opt == "1" and has_installer:
+        installers[svc_id]()
+    elif is_active:
+        if opt == "2":
             st = check_service_status(svc_id)
             if st == "active":
                 print(f"\n  {svc_name}: {ok('activo')} en puerto {port}")
             else:
                 print(f"\n  {svc_name}: {error(st)}")
-        elif opt == "2":
+        elif opt == "3":
+            _cmd(f"systemctl start {svc_id}")
+            new_st = check_service_status(svc_id)
+            if new_st == "active":
+                ok_msg(f"{svc_name} iniciado")
+            else:
+                error_msg(f"No se pudo iniciar {svc_name}")
+        elif opt == "4":
+            if confirm_destructive(f"Detener {svc_name}?"):
+                _cmd(f"systemctl stop {svc_id}")
+                ok_msg(f"{svc_name} detenido")
+        elif opt == "5":
             _cmd(f"systemctl restart {svc_id}")
             new_st = check_service_status(svc_id)
             if new_st == "active":
                 ok_msg(f"{svc_name} reiniciado correctamente")
             else:
                 error_msg(f"{svc_name} fallo al reiniciar")
-        elif opt == "3":
-            if confirm_destructive(f"Detener {svc_name}?"):
-                _cmd(f"systemctl stop {svc_id}")
-                ok_msg(f"{svc_name} detenido")
-        elif opt == "4":
+        elif opt == "6":
             output = _cmd(f"journalctl -u {svc_id} --no-pager -n 30 2>/dev/null")
             print(f"\n{output}" if output else dim("  No hay logs"))
-        elif opt == "5":
+        elif opt == "7":
             configs = {
-                "dropbear": "/etc/dropbear/dropbear_config",
+                "dropbear": "/etc/default/dropbear",
                 "slowdns": "/etc/slowdns/config",
                 "udp-custom": "/etc/udp-custom/config.json",
-                "hysteria-server": "/etc/hysteria/config.json",
+                "hysteria-server": "/etc/hysteria/config.yaml",
                 "badvpn-udpgw": "/etc/default/badvpn-udpgw",
                 "squid": "/etc/squid/squid.conf",
                 "openvpn": "/etc/openvpn/server.conf",
@@ -1279,30 +1778,17 @@ def _port_svc_menu(svc_id, svc_name, default_port):
                 print(output)
             else:
                 warn_msg("No se encontro archivo de configuracion")
-        elif opt == "6":
-            new_port = prompt_input(f"Nuevo puerto (actual: {port})")
-            if new_port and new_port.isdigit():
-                _cmd(f"echo y | ufw allow {new_port}")
-                ok_msg(f"Puerto {new_port} abierto en firewall")
-                info_msg("Reinicia el servicio para aplicar el cambio de puerto")
     else:
-        if opt == "1":
+        if opt == "2":
             st = check_service_status(svc_id)
             print(f"\n  {svc_name}: {error(st)}")
-        elif opt == "2":
+        elif opt == "3":
             _cmd(f"systemctl start {svc_id}")
             new_st = check_service_status(svc_id)
             if new_st == "active":
                 ok_msg(f"{svc_name} iniciado")
             else:
                 error_msg(f"No se pudo iniciar {svc_name}")
-        elif opt == "3":
-            # Verificar si esta instalado
-            result = _cmd(f"which {svc_id} 2>/dev/null")
-            if result:
-                print(f"\n  {svc_name}: {ok('instalado')} en {result}")
-            else:
-                warn_msg(f"{svc_name} no encontrado. Instala con: crisdev.sh --install")
 
 
 # ============================================================================
