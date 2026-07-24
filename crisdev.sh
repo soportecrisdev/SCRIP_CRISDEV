@@ -245,6 +245,27 @@ install_complete() {
     read -p "  IP del servidor [$SERVER_IP]: " INPUT_IP
     SERVER_IP="${INPUT_IP:-$SERVER_IP}"
     read -p "  Dominio del servidor (vacio si no tienes): " SERVER_DOMAIN
+    # Validar dominio si se proporciono
+    if [[ -n "$SERVER_DOMAIN" ]]; then
+        if ! echo "$SERVER_DOMAIN" | grep -qP '^([a-z0-9]+(-[a-z0-9]+)*\.)+[a-z]{2,}$'; then
+            ui_error "Dominio invalido: $SERVER_DOMAIN"
+            ui_info "Ejemplo: test.crisdev.online"
+            read -p "  Dominio correcto: " SERVER_DOMAIN
+        fi
+        # Verificar que el DNS apunta a este servidor
+        local RESOLVED=""
+        if command -v dig &>/dev/null; then
+            RESOLVED=$(dig +short "$SERVER_DOMAIN" 2>/dev/null | head -1)
+        elif command -v host &>/dev/null; then
+            RESOLVED=$(host "$SERVER_DOMAIN" 2>/dev/null | awk '/has address/ {print $NF; exit}')
+        elif command -v nslookup &>/dev/null; then
+            RESOLVED=$(nslookup "$SERVER_DOMAIN" 2>/dev/null | awk '/Address:/ {print $2; exit}')
+        fi
+        if [[ -n "$RESOLVED" ]] && [[ "$RESOLVED" != "$SERVER_IP" ]]; then
+            ui_warn "DNS de $SERVER_DOMAIN apunta a $RESOLVED (no a $SERVER_IP)"
+            ui_info "El certificado TLS podria fallar. Verifica la configuracion DNS."
+        fi
+    fi
     read -p "  Email para certificados TLS (vacio si no tienes): " EMAIL_TLS
 
     jq -n --arg ip "$SERVER_IP" --arg domain "$SERVER_DOMAIN" --arg email "$EMAIL_TLS" \
@@ -256,7 +277,7 @@ install_complete() {
     ui_ok "Sistema actualizado"
 
     echo -e "\n  ${C_BOLD}Paso 3/10: Instalando dependencias...${C_NORM}"
-    apt-get install -y -qq curl wget jq openssl git unzip stunnel4 dropbear socat netcat-openbsd bc coreutils python3 python3-pip libssl-dev screen tmux nano vim 2>/dev/null || true
+    apt-get install -y -qq curl wget jq openssl git unzip stunnel4 dropbear socat netcat-openbsd bc coreutils python3 python3-pip libssl-dev screen tmux nano vim dnsutils 2>/dev/null || true
     ui_ok "Dependencias instaladas"
 
     echo -e "\n  ${C_BOLD}Paso 4/10: Configurando firewall...${C_NORM}"
@@ -271,9 +292,13 @@ install_complete() {
 
     echo -e "\n  ${C_BOLD}Paso 7/10: Instalando Xray-core...${C_NORM}"
     install_xray_core || ui_error "Error instalando Xray-core (puedes instalarlo despues)"
+    # Generar configuracion Xray con UUIDs y protocols
+    generate_xray_config || ui_error "Error generando config Xray"
 
     echo -e "\n  ${C_BOLD}Paso 8/10: Instalando Hysteria2...${C_NORM}"
     install_hysteria2 || ui_error "Error instalando Hysteria2 (puedes instalarlo despues)"
+    # Configurar Hysteria2 con password y obfs automaticos
+    configure_hysteria2 "$PORT_HYSTERIA" "auto" || ui_error "Error configurando Hysteria2"
 
     echo -e "\n  ${C_BOLD}Paso 9/10: Instalando udp-custom...${C_NORM}"
     install_udp_custom || ui_error "Error instalando udp-custom (puedes instalarlo despues)"
@@ -287,9 +312,17 @@ install_complete() {
         generate_self_signed_cert
     fi
 
+    # Reiniciar todos los servicios con los certificados correctos
+    ui_info "Reiniciando servicios..."
+    systemctl restart xray 2>/dev/null || true
+    systemctl restart hysteria-server 2>/dev/null || true
+    systemctl restart stunnel4 2>/dev/null || true
+    systemctl restart udp-custom 2>/dev/null || true
+
     echo ""
     install_crisdev_command
 
+    # Mostrar informacion de conexion
     echo ""
     echo -e "  ${C_BOLD}${C_OK}═══════════════════════════════════════════════════${C_NORM}"
     echo -e "  ${C_BOLD}${C_OK}  INSTALACION COMPLETADA EXITOSAMENTE${C_NORM}"
@@ -298,6 +331,19 @@ install_complete() {
     [[ -n "$SERVER_DOMAIN" ]] && echo -e "  Dominio: ${C_BOLD}$SERVER_DOMAIN${C_NORM}"
     echo -e "  SSH: ${C_BOLD}$PORT_SSH${C_NORM} | SSH-SSL: ${C_BOLD}$PORT_SSH_SSL${C_NORM} | Xray: ${C_BOLD}$PORT_XRAY_WS${C_NORM}"
     echo -e "  Hysteria2: ${C_BOLD}$PORT_HYSTERIA${C_NORM}/udp | udp-custom: ${C_BOLD}$PORT_UDP_CUSTOM${C_NORM}/udp"
+    echo ""
+    # Mostrar contrasenas generadas
+    if [[ -f /etc/hysteria/config.yaml ]]; then
+        local HY_AUTH; HY_AUTH=$(grep "password:" /etc/hysteria/config.yaml | head -1 | awk -F'"' '{print $2}')
+        local HY_OBFS; HY_OBFS=$(grep "password:" /etc/hysteria/config.yaml | tail -1 | awk -F'"' '{print $2}')
+        if [[ -n "$HY_AUTH" ]]; then
+            echo -e "  ${C_BOLD}Credenciales Hysteria2:${C_NORM}"
+            echo -e "  Auth password: ${C_BOLD}$HY_AUTH${C_NORM}"
+            echo -e "  Obfs password:  ${C_BOLD}$HY_OBFS${C_NORM}"
+            local HOST="${SERVER_DOMAIN:-$SERVER_IP}"
+            echo -e "  Link: ${C_INFO}hysteria2://${HY_AUTH}@${HOST}:${PORT_HYSTERIA}?obfs=salamander&obfs-password=${HY_OBFS}#CRISDEV${C_NORM}"
+        fi
+    fi
     echo ""
     echo -e "  Ejecuta ${C_BOLD}crisdev${C_NORM} para administrar"
     log_audit "INSTALL" "Instalacion completa en $SERVER_IP"
@@ -542,7 +588,14 @@ install_hysteria2() {
 configure_hysteria2() {
     local port="${1:-$PORT_HYSTERIA}"
     local SERVER_DOMAIN; SERVER_DOMAIN=$(get_server_domain)
-    read -p "  Obfs password [auto-generate]: " OBFS_PASS; OBFS_PASS="${OBFS_PASS:-$(generate_password)}"
+    local AUTO_MODE="${2:-}"
+    local OBFS_PASS
+    if [[ "$AUTO_MODE" == "auto" ]]; then
+        OBFS_PASS=$(generate_password)
+    else
+        read -p "  Obfs password [auto-generate]: " OBFS_PASS; OBFS_PASS="${OBFS_PASS:-$(generate_password)}"
+    fi
+    local AUTH_PASS; AUTH_PASS=$(generate_password)
     local CERT_PATH="$CERT_DIR/fullchain.pem" KEY_PATH="$CERT_DIR/privkey.pem"
     [[ ! -f "$CERT_PATH" ]] && CERT_PATH="$CERT_DIR/self-signed.pem" && KEY_PATH="$CERT_DIR/self-signed-key.pem"
     cat > /etc/hysteria/config.yaml <<HYEOF
@@ -552,7 +605,7 @@ tls:
   key: $KEY_PATH
 auth:
   type: password
-  password: "$(generate_password)"
+  password: "$AUTH_PASS"
 obfs:
   type: salamander
   salamander:
@@ -569,6 +622,10 @@ HYEOF
     systemctl enable hysteria-server >/dev/null 2>&1; systemctl restart hysteria-server 2>/dev/null || true
     open_port "$port" "udp" "Hysteria2"
     ui_ok "Hysteria2 configurado en puerto $port"
+    if [[ "$AUTO_MODE" == "auto" ]]; then
+        ui_info "Auth password: $AUTH_PASS"
+        ui_info "Obfs password: $OBFS_PASS"
+    fi
     log_audit "HYSTERIA2" "Configurado en $port"
 }
 
@@ -615,8 +672,13 @@ install_acme_sh() {
     if [[ ! -f ~/.acme.sh/acme.sh ]]; then
         curl -fsSL https://get.acme.sh | sh -s -- --install-online 2>/dev/null
         ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt 2>/dev/null
-        ui_ok "acme.sh instalado"
     fi
+    # Verificar que acme.sh se instalo correctamente
+    if [[ ! -f ~/.acme.sh/acme.sh ]]; then
+        ui_error "acme.sh no se pudo instalar"
+        return 1
+    fi
+    ui_ok "acme.sh instalado"
 }
 
 issue_certificate() {
@@ -625,8 +687,25 @@ issue_certificate() {
     ui_info "Emitiendo certificado para $domain..."
     local saved; saved=$(systemctl is-active xray 2>/dev/null || echo "inactive")
     systemctl stop xray 2>/dev/null || true
-    ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force 2>/dev/null
-    ~/.acme.sh/acme.sh --install-cert -d "$domain" --key-file "$CERT_DIR/privkey.pem" --fullchain-file "$CERT_DIR/fullchain.pem" --reloadcmd "systemctl restart xray; systemctl restart hysteria-server; systemctl restart stunnel4" 2>/dev/null
+    # Intentar emitir certificado
+    if ! ~/.acme.sh/acme.sh --issue -d "$domain" --standalone --force 2>/dev/null; then
+        ui_error "Error al emitir certificado para $domain"
+        ui_info "Verifica que el DNS del dominio apunte a este servidor"
+        [[ "$saved" == "active" ]] && systemctl start xray 2>/dev/null || true
+        return 1
+    fi
+    # Instalar certificado
+    if ! ~/.acme.sh/acme.sh --install-cert -d "$domain" --key-file "$CERT_DIR/privkey.pem" --fullchain-file "$CERT_DIR/fullchain.pem" --reloadcmd "systemctl restart xray; systemctl restart hysteria-server; systemctl restart stunnel4" 2>/dev/null; then
+        ui_error "Error al instalar certificado"
+        [[ "$saved" == "active" ]] && systemctl start xray 2>/dev/null || true
+        return 1
+    fi
+    # Verificar que los archivos existen
+    if [[ ! -f "$CERT_DIR/fullchain.pem" ]] || [[ ! -f "$CERT_DIR/privkey.pem" ]]; then
+        ui_error "Certificados no se generaron correctamente"
+        [[ "$saved" == "active" ]] && systemctl start xray 2>/dev/null || true
+        return 1
+    fi
     [[ "$saved" == "active" ]] && systemctl start xray 2>/dev/null || true
     ui_ok "Certificado emitido para $domain"
     log_audit "CERT" "Emitido para $domain"
