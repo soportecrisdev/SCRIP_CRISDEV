@@ -2472,10 +2472,17 @@ menu_protocolos() {
             3|03) inst_ssl ;;
             4|04) fun_drop ;;
             5|05)
-                clear
-                echo -e "\033[1;32mInstalador V2Ray/Xray Core\033[0m"
-                bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install 2>/dev/null || true
-                pause
+                if [[ -x /bin/v2raymanager || -x /usr/bin/v2raymanager ]]; then
+                    v2raymanager
+                elif [[ -f /opt/ssh-cris/Modulos/v2raymanager ]]; then
+                    bash /opt/ssh-cris/Modulos/v2raymanager
+                else
+                    clear
+                    echo -e "\033[1;32mDescargando e iniciando V2Ray Manager...\033[0m"
+                    curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/v2raymanager -o /bin/v2raymanager 2>/dev/null
+                    chmod +x /bin/v2raymanager 2>/dev/null || true
+                    v2raymanager
+                fi
                 ;;
             6|06) slow_setup ;;
             7|07) menu_udp_cris ;;
