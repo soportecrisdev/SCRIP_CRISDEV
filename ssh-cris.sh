@@ -1901,6 +1901,183 @@ hyst_install_binary() {
     [[ -s "$HYST_BIN" && -x "$HYST_BIN" ]]
 }
 
+hyst_write_service() {
+    sysctl -w net.core.rmem_max=67108864 >/dev/null 2>&1 || true
+    sysctl -w net.core.wmem_max=67108864 >/dev/null 2>&1 || true
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+
+    cat >"$HYST_SERVICE" <<EOF
+[Unit]
+Description=SSHPlus Hysteria v1.3.5 Server (UDP CRIS)
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=HYSTERIA_LOG_LEVEL=debug
+ExecStartPre=-${HYST_IPTABLES} apply
+ExecStart=/usr/local/bin/hysteria -c ${HYST_CONF} server
+ExecStopPost=-${HYST_IPTABLES} clear
+WorkingDirectory=${HYST_DIR}
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable hysteria-server >/dev/null 2>&1
+}
+
+hyst_write_config() {
+    local port="$1" rules="$2" obfs="$3" auth_block
+    auth_block="$(hyst_build_auth_list)"
+    mkdir -p "$HYST_DIR"
+    if [[ ! -f "$HYST_CERT" || ! -f "$HYST_KEY" ]]; then
+        openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
+            -keyout "$HYST_KEY" -out "$HYST_CERT" -subj "/CN=crisdev.online" >/dev/null 2>&1
+    fi
+    cat >"$HYST_CONF" <<EOF
+{
+  "listen": ":${port}",
+  "protocol": "udp",
+  "cert": "${HYST_CERT}",
+  "key": "${HYST_KEY}",
+  "obfs": "$obfs",
+  "auth": {
+    "mode": "passwords",
+    "config": [
+${auth_block}
+    ]
+  },
+  "alpn": "h3",
+  "recv_window_conn": 15728640,
+  "recv_window": 67108864,
+  "max_conn_client": 0,
+  "idle_timeout": 60,
+  "up_mbps": 100,
+  "down_mbps": 100,
+  "disable_mtu_discovery": false,
+  "resolver": "8.8.8.8:53"
+}
+EOF
+    cat >"$HYST_ENV" <<EOF
+HYST_PORT="$port"
+HYST_RULES="$rules"
+HYST_OBFS="$obfs"
+EOF
+}
+
+hyst_show_summary() {
+    hyst_load_env
+    local redirect
+    redirect="$(hyst_client_ranges "${HYST_RULES:-N/A}")"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${BLUE}                       UDP-HYSTERIA v1${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${WHITE}VERSION:${NC} ${YELLOW}HYSTERIA v1.3.5${NC}"
+    echo -e "${WHITE}PORT:${NC} ${GREEN}${HYST_PORT:-36712}${NC}"
+    echo -e "${WHITE}REDIRECT:${NC} ${YELLOW}${redirect} > ${HYST_PORT:-36712}${NC}"
+    echo -e "${WHITE}OBFS:${NC} ${CYAN}${HYST_OBFS:-crisdev}${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+}
+
+hyst_configure() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                ${BLUE}RECONFIGURAR UDP-HYSTERIA v1${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    local port rules obfs
+    echo -ne "${GREEN}Puerto principal Hysteria v1 [36712]: ${NC}"
+    read -r port
+    [[ -z "$port" ]] && port="36712"
+    echo -ne "${GREEN}Habilitar Port Hopping (Rangos UDP)? [s/N]: ${NC}"
+    read -r hop_resp
+    if [[ "$hop_resp" =~ ^[sS]$ ]]; then
+        echo -ne "${GREEN}Rangos iptables UDP [20000:50000]: ${NC}"
+        read -r rules
+        [[ -z "$rules" ]] && rules="20000:50000"
+    else
+        rules="none"
+    fi
+    echo -ne "${GREEN}OBFS Hysteria v1 [crisdev]: ${NC}"
+    read -r obfs
+    [[ -z "$obfs" ]] && obfs="crisdev"
+    exec_install_udp_cris "$port" "$rules" "$obfs" "crisdev" "crisdev"
+}
+
+hyst_change_obfs() {
+    hyst_load_env
+    echo -ne "${GREEN}Nuevo OBFS Hysteria v1: ${NC}"
+    read -r new_obfs
+    [[ -z "$new_obfs" ]] && return
+    exec_install_udp_cris "${HYST_PORT:-36712}" "${HYST_RULES:-20000:50000}" "$new_obfs" "crisdev" "crisdev"
+}
+
+hyst_change_range() {
+    hyst_load_env
+    echo -ne "${GREEN}Nuevos Rangos Port Hopping [20000:50000]: ${NC}"
+    read -r new_r
+    [[ -z "$new_r" ]] && new_r="20000:50000"
+    exec_install_udp_cris "${HYST_PORT:-36712}" "$new_r" "${HYST_OBFS:-crisdev}" "crisdev" "crisdev"
+}
+
+hyst_toggle_service() {
+    if systemctl is-active --quiet hysteria-server 2>/dev/null; then
+        systemctl disable --now hysteria-server >/dev/null 2>&1 || true
+        /etc/hysteria/iptables.sh clear 2>/dev/null || true
+        pkill -f hysteria 2>/dev/null || true
+        echo -e "${YELLOW}Hysteria v1 detenido.${NC}"
+    else
+        /etc/hysteria/iptables.sh apply 2>/dev/null || true
+        systemctl unmask hysteria-server 2>/dev/null || true
+        systemctl enable --now hysteria-server >/dev/null 2>&1 || true
+        echo -e "${GREEN}Hysteria v1 iniciado.${NC}"
+    fi
+    sleep 2
+}
+
+hyst_service_status() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                ${BLUE}ESTADO HYSTERIA v1${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    systemctl status hysteria-server --no-pager -l 2>/dev/null || echo "Inactivo"
+    pause
+}
+
+hyst_show_logs() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                 ${BLUE}LOGS HYSTERIA v1${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    journalctl -u hysteria-server -n 50 --no-pager 2>/dev/null || true
+    pause
+}
+
+hyst_follow_logs() {
+    clear
+    echo -e "${YELLOW}Presiona Ctrl+C para salir del log en tiempo real.${NC}"
+    journalctl -u hysteria-server -f --no-pager 2>/dev/null || true
+}
+
+hyst_reinstall() {
+    exec_install_udp_cris "36712" "20000:50000" "crisdev" "crisdev" "crisdev"
+}
+
+hyst_uninstall() {
+    systemctl disable --now hysteria-server.service 2>/dev/null || true
+    systemctl disable --now hysteria-server 2>/dev/null || true
+    /etc/hysteria/iptables.sh clear 2>/dev/null || true
+    pkill -f hysteria 2>/dev/null || true
+    rm -rf /etc/hysteria /usr/local/bin/hysteria1 /etc/systemd/system/hysteria-server.service
+    systemctl daemon-reload
+    echo -e "\n${GREEN}Hysteria v1 desinstalado por completo.${NC}"
+    sleep 2
+}
+
 menu_udp_cris() {
     while true; do
         clear

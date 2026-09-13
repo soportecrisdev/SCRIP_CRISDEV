@@ -290,6 +290,11 @@ echo -e "${YELLOW}[3/4]${NC} Creando accesos directos y enlaces globales..."
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/ssh-cris
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/cris
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/menu
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/ssh-cris 2>/dev/null || true
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/cris 2>/dev/null || true
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/menu 2>/dev/null || true
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/connection 2>/dev/null || true
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/conexao 2>/dev/null || true
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/menu 2>/dev/null || true
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/connection 2>/dev/null || true
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/conexao 2>/dev/null || true
