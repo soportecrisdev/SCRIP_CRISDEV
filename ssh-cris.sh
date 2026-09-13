@@ -194,6 +194,17 @@ scan_udpcustom_port() {
     echo "$udp_p"
 }
 
+scan_hysteria2_port() {
+    local hy2_p=""
+    if [[ -f /etc/hysteria2/config.yaml ]]; then
+        hy2_p=$(grep -E '^[[:space:]]*listen:' /etc/hysteria2/config.yaml 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")
+    fi
+    if [[ -z "$hy2_p" ]]; then
+        hy2_p=$(ss -ulnp 2>/dev/null | grep -E "hysteria2" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)
+    fi
+    echo "$hy2_p"
+}
+
 get_proc_ports() {
     local pattern="$1"
     local ports=()
@@ -3003,10 +3014,16 @@ menu_protocolos() {
             local _hyst_rules=""
             [[ -f /etc/hysteria/sshplus.env ]] && _hyst_rules="$(grep '^HYST_RULES=' /etc/hysteria/sshplus.env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
             if [[ -n "$_hyst_rules" && "$_hyst_rules" != "none" && "$_hyst_rules" != "0" ]]; then
-                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS \033[1;32mPUERTO: \033[1;37m$_hyst_pt \033[1;33mRANGOS: \033[1;37m$_hyst_rules\033[0m"
+                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS (v1) \033[1;32mPUERTO: \033[1;37m$_hyst_pt \033[1;33mRANGOS: \033[1;37m$_hyst_rules\033[0m"
             else
-                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS \033[1;32mPUERTO: \033[1;37m$_hyst_pt\033[0m"
+                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS (v1) \033[1;32mPUERTO: \033[1;37m$_hyst_pt\033[0m"
             fi
+        fi
+
+        # 6.1 HYSTERIA V2
+        local _hy2_pt; _hy2_pt=$(scan_hysteria2_port)
+        if systemctl is-active --quiet hysteria2 2>/dev/null || pgrep -x hysteria2 >/dev/null 2>&1 || [[ -n "$_hy2_pt" ]]; then
+            echo -e "\033[1;32mSERVICIO: \033[1;33mHYSTERIA V2 \033[1;32mPUERTO: \033[1;37m${_hy2_pt:-443}/udp\033[0m"
         fi
 
         # 7. BadVPN
@@ -3064,7 +3081,7 @@ menu_protocolos() {
 
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
 
-        local sts_ssh sts_socks sts_ssl sts_drop sts_v2ray sts_slow sts_hyst sts_trojan sts_badvpn sts_ovpn sts_ws sts_sslh sts_squid sts_chisel sts_bhttp sts_hcr sts_udpc
+        local sts_ssh sts_socks sts_ssl sts_drop sts_v2ray sts_slow sts_hyst sts_hy2 sts_trojan sts_badvpn sts_ovpn sts_ws sts_sslh sts_squid sts_chisel sts_bhttp sts_hcr sts_udpc
         sts_ssh="\033[1;32mo\033[0m"
         (pgrep -f 'proxy\.py|wsproxy\.py' >/dev/null 2>&1 || [[ -n "$sks_p" ]]) && sts_socks="\033[1;32mo\033[0m" || sts_socks="\033[1;31mx\033[0m"
         (systemctl is-active --quiet stunnel4 2>/dev/null || pgrep -f 'stunnel' >/dev/null 2>&1 || [[ -n "$ssl_p" ]]) && sts_ssl="\033[1;32mo\033[0m" || sts_ssl="\033[1;31mx\033[0m"
@@ -3079,6 +3096,7 @@ menu_protocolos() {
 
         (systemctl is-active --quiet slowdns 2>/dev/null || pgrep -x dnstt-server >/dev/null 2>&1 || pgrep -f 'dnstt-server' >/dev/null 2>&1) && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
         (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -x hysteria1 >/dev/null 2>&1 || pgrep -x hysteria >/dev/null 2>&1) && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet hysteria2 2>/dev/null || pgrep -x hysteria2 >/dev/null 2>&1 || [[ -n "$_hy2_pt" ]]) && sts_hy2="\033[1;32mo\033[0m" || sts_hy2="\033[1;31mx\033[0m"
         pgrep -f 'trojan' >/dev/null 2>&1 && sts_trojan="\033[1;32mo\033[0m" || sts_trojan="\033[1;31mx\033[0m"
         (systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -x badvpn-udpgw >/dev/null 2>&1 || pgrep -x udpvpn >/dev/null 2>&1) && sts_badvpn="\033[1;32mo\033[0m" || sts_badvpn="\033[1;31mx\033[0m"
         pgrep -f 'openvpn' >/dev/null 2>&1 && sts_ovpn="\033[1;32mo\033[0m" || sts_ovpn="\033[1;31mx\033[0m"
@@ -3097,7 +3115,7 @@ menu_protocolos() {
         printf "  %b[5]%b  > %-15s %b    %b[14]%b > SQUID PROXY         %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$v2_title" "$sts_v2ray" "$SSHPLUS_NUM" "$SCOLOR" "$sts_squid"
         printf "  %b[6]%b  > SLOWDNS         %b    %b[15]%b > CHISEL              %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_slow" "$SSHPLUS_NUM" "$SCOLOR" "$sts_chisel"
         printf "  %b[7]%b  > UDP CRIS        %b    %b[16]%b > BHTTP (BHP1/TLS)    %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
-        printf "  %b[8]%b  > UDP HYSTERIA v1 %b    %b[17]%b > HCR RELAY           %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hcr"
+        printf "  %b[8]%b  > UDP HYSTERIA v2 %b    %b[17]%b > HCR RELAY           %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hy2" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hcr"
         printf "  %b[9]%b  > UDP CUSTOM      %b    %b[18]%b > TROJAN-GO           %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_udpc" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan"
         printf "  %b[19]%b > EXPORTAR PARA GEN     %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
@@ -3124,7 +3142,19 @@ menu_protocolos() {
                 ;;
             6|06) slow_setup ;;
             7|07) menu_udp_cris ;;
-            8|08) menu_udp ;;
+            8|08)
+                if [[ -x /bin/hysteria2-manager || -x /usr/bin/hysteria2-manager ]]; then
+                    hysteria2-manager
+                elif [[ -f /opt/ssh-cris/Modulos/hysteria2-manager ]]; then
+                    bash /opt/ssh-cris/Modulos/hysteria2-manager
+                else
+                    clear
+                    echo -e "\033[1;32mDescargando e iniciando Hysteria v2 Manager...\033[0m"
+                    curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager -o /bin/hysteria2-manager 2>/dev/null
+                    chmod +x /bin/hysteria2-manager 2>/dev/null || true
+                    hysteria2-manager
+                fi
+                ;;
             9|09)
                 if [[ -x /bin/udp-custom-manager || -x /usr/bin/udp-custom-manager ]]; then
                     udp-custom-manager

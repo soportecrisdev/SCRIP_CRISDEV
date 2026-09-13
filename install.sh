@@ -424,6 +424,23 @@ ln -sfn /usr/local/bin/udp-custom /bin/udp-custom 2>/dev/null || true
 ln -sfn /usr/local/bin/udp-custom /opt/udp-custom/server 2>/dev/null || true
 chmod 755 /bin/udp-custom 2>/dev/null || true
 
+# Instalar Core Hysteria v2 (apernet/hysteria v2)
+echo -e "${YELLOW}[*]${NC} Descargando Core Hysteria v2..."
+mkdir -p /etc/hysteria2 /etc/hysteria2/certs
+if [[ ! -x /usr/local/bin/hysteria2 && ! -x /bin/hysteria2 ]]; then
+    if [[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]]; then
+        curl -fsSL "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64" -o /usr/local/bin/hysteria2 2>/dev/null || \
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hysteria2-amd64" -o /usr/local/bin/hysteria2 2>/dev/null || true
+    elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
+        curl -fsSL "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-arm64" -o /usr/local/bin/hysteria2 2>/dev/null || \
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hysteria2-arm64" -o /usr/local/bin/hysteria2 2>/dev/null || true
+    fi
+fi
+chmod 755 /usr/local/bin/hysteria2 2>/dev/null || true
+ln -sfn /usr/local/bin/hysteria2 /usr/bin/hysteria2 2>/dev/null || true
+ln -sfn /usr/local/bin/hysteria2 /bin/hysteria2 2>/dev/null || true
+chmod 755 /bin/hysteria2 2>/dev/null || true
+
 echo -e "${GREEN}[✔]${NC} Módulos y servicios instalados correctamente."
 
 echo -e "${YELLOW}[3/4]${NC} Creando accesos directos y enlaces globales..."
@@ -451,6 +468,11 @@ sshplus_compat_alias bbr bbr-manager
 sshplus_compat_alias tcptweaker tcptweaker.sh
 sshplus_compat_alias udpcustom udp-custom-manager
 sshplus_compat_alias udp-custom udp-custom-manager
+sshplus_compat_alias hy2 hysteria2-manager
+sshplus_compat_alias hysteria2 hysteria2-manager
+sshplus_compat_alias hysteria2-manager hysteria2-manager
+sshplus_compat_alias hcr hcr-manager
+sshplus_compat_alias hcr-manager hcr-manager
 sshplus_compat_alias criarusuario createuser
 sshplus_compat_alias criarteste createtest
 sshplus_compat_alias remover removeuser

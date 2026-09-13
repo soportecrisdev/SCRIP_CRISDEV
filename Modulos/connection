@@ -2717,10 +2717,23 @@ PY
 				[[ -f /etc/hysteria/sshplus.env ]] && _hyst_pt="$(grep '^HYST_PORT=' /etc/hysteria/sshplus.env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
 				[[ -z "${_hyst_pt// }" && -f /etc/hysteria/config.json ]] && _hyst_pt="$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/hysteria/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
 				[[ -z "${_hyst_pt// }" ]] && _hyst_pt="$(ss -ulnp 2>/dev/null | grep 'hysteria' | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)"
-				[[ -n "${_hyst_pt// }" ]] && echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS \033[1;32mPUERTO: \033[1;37m${_hyst_pt}"
+				[[ -n "${_hyst_pt// }" ]] && echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS (v1) \033[1;32mPUERTO: \033[1;37m${_hyst_pt}"
 				hysteriasts="\033[1;32mo "
 			else
 				hysteriasts="\033[1;31mx "
+			fi
+			local _hy2_pt=""
+			if [[ -f /etc/hysteria2/config.yaml ]]; then
+				_hy2_pt="$(grep -E '^[[:space:]]*listen:' /etc/hysteria2/config.yaml 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")"
+			fi
+			if [[ -z "$_hy2_pt" ]]; then
+				_hy2_pt="$(ss -ulnp 2>/dev/null | grep -E "hysteria2" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)"
+			fi
+			if systemctl is-active hysteria2 >/dev/null 2>&1 || pgrep -x hysteria2 >/dev/null 2>&1 || [[ -n "${_hy2_pt// }" ]]; then
+				echo -e "\033[1;32mSERVICIO: \033[1;33mHYSTERIA V2 \033[1;32mPUERTO: \033[1;37m${_hy2_pt:-443}/udp"
+				hy2sts="\033[1;32mo "
+			else
+				hy2sts="\033[1;31mx "
 			fi
 			pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1 && {
 				wssts="\033[1;32mo "
@@ -2768,15 +2781,15 @@ PY
 				udpcsts="\033[1;31mx "
 			fi
 			sshplus_line
-			sshplus_opt_pair "1" "OPENSSH" "$sts6" "10" "OPENVPN" "$sts5"
-			sshplus_opt_pair "2" "PROXY SOCKS" "$sts4" "11" "WEBSOCKET-CORRECTOR" "$wssts"
-			sshplus_opt_pair "3" "SSL TUNNEL" "$sts3" "12" "SSLH MULTIPLEX" "$sts7"
-			sshplus_opt_pair "4" "DROPBEAR" "$sts2" "13" "SQUID PROXY" "$sts1"
-			sshplus_opt_pair "5" "V2RAY" "$xv2ray" "14" "CHISEL" "$sts8"
-			sshplus_opt_pair "6" "SLOWDNS" "$sts9" "15" "PANEL WEB V2RAY" ""
-			sshplus_opt_pair "7" "HYSTERIA v1" "$hysteriasts" "16" "BHTTP (BHP1/TLS)" "$bhttpsts"
-			sshplus_opt_pair "8" "TROJAN-GO" "$trojansts" "17" "HCR RELAY" "$hcrsts"
-			sshplus_opt_pair "9" "BADVPN" "$badsts" "18" "UDP CUSTOM" "$udpcsts"
+			sshplus_opt_pair "1" "OPENSSH" "$sts6" "10" "BADVPN" "$badsts"
+			sshplus_opt_pair "2" "PROXY SOCKS" "$sts4" "11" "OPENVPN" "$sts5"
+			sshplus_opt_pair "3" "SSL TUNNEL" "$sts3" "12" "WEBSOCKET-CORRECT" "$wssts"
+			sshplus_opt_pair "4" "DROPBEAR" "$sts2" "13" "SSLH MULTIPLEX" "$sts7"
+			sshplus_opt_pair "5" "V2RAY" "$xv2ray" "14" "SQUID PROXY" "$sts1"
+			sshplus_opt_pair "6" "SLOWDNS" "$sts9" "15" "CHISEL" "$sts8"
+			sshplus_opt_pair "7" "UDP CRIS" "$hysteriasts" "16" "BHTTP (BHP1/TLS)" "$bhttpsts"
+			sshplus_opt_pair "8" "HYSTERIA v2" "$hy2sts" "17" "HCR RELAY" "$hcrsts"
+			sshplus_opt_pair "9" "UDP CUSTOM" "$udpcsts" "18" "TROJAN-GO" "$trojansts"
 			sshplus_opt "0" "VOLVER"
 			sshplus_line
 			tput civis
@@ -2799,38 +2812,62 @@ PY
 			;;
 			5 | 05)
 			v2raymanager
-			exit
 			;;
 			6 | 06) 
 			slowdnsmanager
 			;;
 			7 | 07)
-			hysteria-menu
+			if [[ -x /bin/ssh-cris ]]; then
+				ssh-cris --udp-cris
+			elif [[ -x /usr/local/bin/ssh-cris ]]; then
+				/usr/local/bin/ssh-cris --udp-cris
+			else
+				hysteria-menu
+			fi
 			;;
 			8 | 08)
-			trojan-go
+			if [[ -x /bin/hysteria2-manager || -x /usr/bin/hysteria2-manager ]]; then
+				hysteria2-manager
+			elif [[ -f /opt/ssh-cris/Modulos/hysteria2-manager ]]; then
+				bash /opt/ssh-cris/Modulos/hysteria2-manager
+			else
+				clear
+				echo -e "\033[1;32mDescargando e iniciando Hysteria v2 Manager...\033[0m"
+				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager -o /bin/hysteria2-manager 2>/dev/null
+				chmod +x /bin/hysteria2-manager 2>/dev/null || true
+				hysteria2-manager
+			fi
 			;;
 			9 | 09)
-			menub
+			if [[ -x /bin/udp-custom-manager || -x /usr/bin/udp-custom-manager ]]; then
+				udp-custom-manager
+			elif [[ -f /opt/ssh-cris/Modulos/udp-custom-manager ]]; then
+				bash /opt/ssh-cris/Modulos/udp-custom-manager
+			else
+				clear
+				echo -e "\033[1;32mDescargando e iniciando UDP Custom Manager...\033[0m"
+				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager -o /bin/udp-custom-manager 2>/dev/null
+				chmod +x /bin/udp-custom-manager 2>/dev/null || true
+				udp-custom-manager
+			fi
 			;;
 			10 | 10)
-			fun_openvpn
+			menub
 			;;
 			11 | 11)
-			websocket.sh
+			fun_openvpn
 			;;
 			12 | 12)
-			fun_sslh
+			websocket.sh
 			;;
 			13 | 13)
-			fun_squid
+			fun_sslh
 			;;
 			14 | 14)
-			fun_chisel
+			fun_squid
 			;;
 			15 | 15)
-			clear
-			v2raypanel
+			fun_chisel
 			;;
 			16 | 16)
 			if [[ -x /usr/local/bin/ssh-cris ]]; then
@@ -2853,17 +2890,7 @@ PY
 			fi
 			;;
 			18 | 18)
-			if [[ -x /bin/udp-custom-manager || -x /usr/bin/udp-custom-manager ]]; then
-				udp-custom-manager
-			elif [[ -f /opt/ssh-cris/Modulos/udp-custom-manager ]]; then
-				bash /opt/ssh-cris/Modulos/udp-custom-manager
-			else
-				clear
-				echo -e "\033[1;32mDescargando e iniciando UDP Custom Manager...\033[0m"
-				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager -o /bin/udp-custom-manager 2>/dev/null
-				chmod +x /bin/udp-custom-manager 2>/dev/null || true
-				udp-custom-manager
-			fi
+			trojan-go
 			;;
 			0 | 00)
 			printf '\033c\033[3J\033[H\033[2J'
