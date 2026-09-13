@@ -1426,49 +1426,175 @@ EOF
     done
 }
 
-# 7. SLOWDNS
+# 7. SLOWDNS (DNSTT SERVER)
 slow_setup() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       SLOWDNS (DNSTT SERVER PUERTO 53)                 ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e " ${GREEN}[1]${WHITE} > Configurar Dominio NameServer (NS) y Generar Claves"
-    echo -e " ${GREEN}[2]${WHITE} > Ver Clave Pública y NameServer"
-    echo -e " ${RED}[3]${WHITE} > Detener SlowDNS"
-    echo -e " ${RED}[0]${WHITE} > Volver"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Opcion: " sd_opt
-    case "$sd_opt" in
-        1)
-            read -r -p " Dominio NameServer (NS) (ej: ns1.tudominio.com): " ns_domain
-            [[ -z "$ns_domain" ]] && return
-            mkdir -p /etc/slowdns
-            wget -q -O /usr/local/bin/dnstt-server "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/dnstt-server" 2>/dev/null || true
-            chmod +x /usr/local/bin/dnstt-server 2>/dev/null || true
-            if [[ -x /usr/local/bin/dnstt-server ]]; then
-                /usr/local/bin/dnstt-server -gen-key -privkey-file /etc/slowdns/server.key -pubkey-file /etc/slowdns/server.pub 2>/dev/null || true
-            fi
-            echo "$ns_domain" > /etc/slowdns/ns.txt
-            echo -e "\n\033[1;32mSlowDNS configurado con NS: $ns_domain\033[0m"
-            [[ -f /etc/slowdns/server.pub ]] && echo -e "\033[1;33mClave Pública:\033[0m $(cat /etc/slowdns/server.pub)"
-            pause
-            ;;
-        2)
-            if [[ -f /etc/slowdns/server.pub ]]; then
-                echo -e "\n• NameServer:   \033[1;32m$(cat /etc/slowdns/ns.txt 2>/dev/null || echo 'No configurado')\033[0m"
-                echo -e "• Clave Pública: \033[1;32m$(cat /etc/slowdns/server.pub)\033[0m"
-            else
-                echo -e "\n\033[1;31mSlowDNS aún no está configurado."
-            fi
-            pause
-            ;;
-        3)
-            pkill -f dnstt-server 2>/dev/null || true
-            echo -e "\n\033[1;32mSlowDNS detenido!\033[0m"
-            sleep 2
-            ;;
-        0) return ;;
-    esac
+    if [[ -x /bin/slowdnsmanager || -x /usr/local/bin/slowdnsmanager ]]; then
+        slowdnsmanager
+        return
+    fi
+    while true; do
+        clear
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "${BLUE}                 SLOWDNS (DNSTT SERVER PUERTO 53)${NC}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        local _sd_sts="${RED}APAGADO${NC}"
+        if systemctl is-active --quiet slowdns 2>/dev/null || pgrep -f dnstt-server >/dev/null 2>&1; then
+            _sd_sts="${GREEN}ACTIVO (Puerto 53 / 5300)${NC}"
+        fi
+        echo -e " ${WHITE}Estado: $_sd_sts"
+        if [[ -f /etc/slowdns/ns.txt ]]; then
+            echo -e " ${WHITE}NameServer (NS): ${YELLOW}$(cat /etc/slowdns/ns.txt 2>/dev/null)${NC}"
+        fi
+        if [[ -f /etc/slowdns/server.pub ]]; then
+            echo -e " ${WHITE}Clave Pública:   ${GREEN}$(cat /etc/slowdns/server.pub 2>/dev/null)${NC}"
+        fi
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e " ${SSHPLUS_NUM}[1]${NC} ${WHITE}> Instalar / Iniciar SlowDNS (Configurar NS y Claves)${NC}"
+        echo -e " ${SSHPLUS_NUM}[2]${NC} ${WHITE}> Ver Claves y Datos de Conexión${NC}"
+        echo -e " ${SSHPLUS_NUM}[3]${NC} ${WHITE}> Reiniciar Servicio SlowDNS${NC}"
+        echo -e " ${RED}[4]${NC} ${WHITE}> Detener Servicio SlowDNS${NC}"
+        echo -e " ${RED}[0]${NC} ${WHITE}> Volver${NC}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${NC} "
+        read -r sd_opt
+        case "$sd_opt" in
+            1)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "${BLUE}               CONFIGURAR SLOWDNS (DNSTT)${NC}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -ne "${GREEN}Ingresa tu Dominio NameServer (NS) (ej: ns1.tudominio.com): ${NC}"
+                read -r ns_domain
+                [[ -z "$ns_domain" ]] && { echo -e "${RED}Dominio NS requerido.${NC}"; sleep 1; continue; }
+                
+                echo -ne "${GREEN}Puerto destino SSH/Dropbear [22]: ${NC}"
+                read -r target_p
+                [[ -z "$target_p" || ! "$target_p" =~ ^[0-9]+$ ]] && target_p=22
+                
+                mkdir -p /etc/slowdns /usr/local/bin
+                echo -e "\n${YELLOW}Descargando dnstt-server oficial...${NC}"
+                local arch; arch=$(uname -m)
+                local s_arch="amd64"
+                [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && s_arch="arm64"
+                [[ "$arch" =~ armv7 ]] && s_arch="arm"
+                
+                curl -fsSL --retry 3 "https://dnstt.network/dnstt-server-linux-${s_arch}" -o /usr/local/bin/dnstt-server 2>/dev/null || \
+                wget -qO /usr/local/bin/dnstt-server "https://dnstt.network/dnstt-server-linux-${s_arch}" 2>/dev/null || \
+                wget -qO /usr/local/bin/dnstt-server "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/dnstt-server-${s_arch}" 2>/dev/null || true
+                
+                chmod +x /usr/local/bin/dnstt-server 2>/dev/null || true
+                [[ ! -x /usr/local/bin/dnstt-server && -x /bin/dnstt-server ]] && cp /bin/dnstt-server /usr/local/bin/dnstt-server
+                
+                # Generar claves si no existen
+                if [[ ! -f /etc/slowdns/server.key || ! -f /etc/slowdns/server.pub ]]; then
+                    /usr/local/bin/dnstt-server -gen-key -privkey-file /etc/slowdns/server.key -pubkey-file /etc/slowdns/server.pub 2>/dev/null || true
+                    chmod 600 /etc/slowdns/server.key 2>/dev/null || true
+                    chmod 644 /etc/slowdns/server.pub 2>/dev/null || true
+                fi
+                echo "$ns_domain" > /etc/slowdns/ns.txt
+                
+                # Liberar puerto 53 de systemd-resolved si está en uso
+                if grep -q "DNSStubListener" /etc/systemd/resolved.conf 2>/dev/null; then
+                    sed -i 's/^#\?DNSStubListener=.*/DNSStubListener=no/' /etc/systemd/resolved.conf
+                    systemctl restart systemd-resolved 2>/dev/null || true
+                fi
+                
+                # Configurar IPTables para redirigir 53 a 5300
+                cat > /etc/slowdns/iptables.sh << 'EOF'
+#!/bin/bash
+ACTION="$1"
+clear_rules() {
+    iptables -D INPUT -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+    iptables -D INPUT -p udp --dport 5300 -j ACCEPT 2>/dev/null || true
+    while iptables -t nat -C PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null; do
+        iptables -t nat -D PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || break
+    done
+}
+apply_rules() {
+    clear_rules
+    iptables -I INPUT 1 -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+    iptables -I INPUT 1 -p udp --dport 5300 -j ACCEPT 2>/dev/null || true
+    iptables -t nat -I PREROUTING 1 -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || true
+}
+case "$ACTION" in
+    apply) apply_rules ;;
+    clear) clear_rules ;;
+esac
+exit 0
+EOF
+                chmod +x /etc/slowdns/iptables.sh
+                /etc/slowdns/iptables.sh apply
+                
+                cat > /etc/slowdns/slowdns.conf << EOF
+SLOW_PORT="5300"
+SLOW_TRAFFIC="$target_p"
+SLOW_DOMAIN="$ns_domain"
+SLOW_REDIRECT="53"
+EOF
+                cat > /etc/systemd/system/slowdns.service << EOF
+[Unit]
+Description=CRISDEV SlowDNS DNSTT Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=-/etc/slowdns/iptables.sh apply
+ExecStart=/usr/local/bin/dnstt-server -udp :5300 -privkey-file /etc/slowdns/server.key $ns_domain 127.0.0.1:$target_p
+ExecStopPost=-/etc/slowdns/iptables.sh clear
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                systemctl daemon-reload
+                systemctl unmask slowdns.service 2>/dev/null || true
+                systemctl enable --now slowdns.service 2>/dev/null || true
+                systemctl restart slowdns.service 2>/dev/null || true
+                
+                echo -e "\n${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "${GREEN}⚡ ¡SLOWDNS CONFIGURADO Y ACTIVADO CON ÉXITO! ⚡${NC}"
+                echo "────────────────────────────────────────────────────────────"
+                echo -e " ${WHITE}• NameServer (NS): ${YELLOW}$ns_domain${NC}"
+                echo -e " ${WHITE}• Puerto DNSTT:    ${GREEN}53 (Redirigido a 5300 UDP)${NC}"
+                echo -e " ${WHITE}• Destino SSH:     ${CYAN}127.0.0.1:$target_p${NC}"
+                [[ -f /etc/slowdns/server.pub ]] && echo -e " ${WHITE}• Clave Pública:   ${GREEN}$(cat /etc/slowdns/server.pub)${NC}"
+                echo "────────────────────────────────────────────────────────────"
+                pause
+                ;;
+            2)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "${BLUE}                 DATOS SLOWDNS ACTUALES${NC}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                if [[ -f /etc/slowdns/server.pub ]]; then
+                    echo -e " ${WHITE}• NameServer (NS):   ${YELLOW}$(cat /etc/slowdns/ns.txt 2>/dev/null || echo 'No configurado')${NC}"
+                    echo -e " ${WHITE}• Clave Pública:     ${GREEN}$(cat /etc/slowdns/server.pub)${NC}"
+                    echo -e " ${WHITE}• Ruta Clave Priv:   ${CYAN}/etc/slowdns/server.key${NC}"
+                    echo -e " ${WHITE}• Puerto UDP:        ${GREEN}53 / 5300${NC}"
+                else
+                    echo -e " ${RED}SlowDNS aún no está configurado.${NC}"
+                fi
+                pause
+                ;;
+            3)
+                systemctl restart slowdns 2>/dev/null || true
+                /etc/slowdns/iptables.sh apply 2>/dev/null || true
+                echo -e "\n\033[1;32mSlowDNS reiniciado con éxito!\033[0m"
+                sleep 1
+                ;;
+            4)
+                systemctl disable --now slowdns 2>/dev/null || true
+                /etc/slowdns/iptables.sh clear 2>/dev/null || true
+                pkill -f dnstt-server 2>/dev/null || true
+                echo -e "\n\033[1;32mSlowDNS detenido!\033[0m"
+                sleep 1
+                ;;
+            0) return ;;
+        esac
+    done
 }
 
 # 8. BHTTP MULTI-PUERTO (WAKKO ENGINE)
@@ -2099,7 +2225,14 @@ instalar_udp_cris() {
     echo -e "\n${YELLOW}Instalando y activando UDP CRIS (Core Hysteria v1)...${NC}"
     fun_bar "hyst_install_binary"
 
-    mkdir -p /etc/hysteria
+    mkdir -p /etc/hysteria /etc/SSHPlus/senha /root
+    
+    # Registrar credencial si no existe
+    echo "$u_pass" > "/etc/SSHPlus/senha/$u_user" 2>/dev/null || true
+    if ! grep -qw "$u_user" /root/usuarios.db 2>/dev/null; then
+        echo "$u_user 999" >> /root/usuarios.db
+    fi
+
     if [[ ! -f "$HYST_CERT" || ! -f "$HYST_KEY" ]]; then
         openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
             -keyout "$HYST_KEY" -out "$HYST_CERT" -subj "/CN=crisdev.online" >/dev/null 2>&1 || true
@@ -2144,8 +2277,54 @@ HYST_OBFS="$u_obfs"
 HYST_USER="$u_user"
 HYST_PASS="$u_pass"
 EOF
+    cat >"$HYST_IPTABLES" <<'EOF'
+#!/bin/bash
+ACTION="$1"
+ENV_FILE="/etc/hysteria/sshplus.env"
+CHAIN="SSHPLUS_HYSTERIA"
+[[ -f "$ENV_FILE" ]] && . "$ENV_FILE"
+clear_rules() {
+    while iptables -t nat -C PREROUTING -p udp -j "$CHAIN" >/dev/null 2>&1; do
+        iptables -t nat -D PREROUTING -p udp -j "$CHAIN" >/dev/null 2>&1 || break
+    done
+    iptables -t nat -F "$CHAIN" >/dev/null 2>&1 || true
+    iptables -t nat -X "$CHAIN" >/dev/null 2>&1 || true
+}
+apply_rules() {
+    clear_rules
+    iptables -I INPUT 1 -p udp --dport "${HYST_PORT:-36712}" -j ACCEPT >/dev/null 2>&1 || true
+    [[ -z "$HYST_RULES" || "$HYST_RULES" = "none" || "$HYST_RULES" = "0" ]] && return 0
+    iptables -t nat -N "$CHAIN" >/dev/null 2>&1 || true
+    iptables -t nat -I PREROUTING 1 -p udp -j "$CHAIN" >/dev/null 2>&1 || true
+    local clean="${HYST_RULES// /}" item
+    IFS=',' read -ra items <<<"$clean"
+    for item in "${items[@]}"; do
+        [[ -z "$item" || "$item" = "53" || "$item" = "5300" ]] && continue
+        iptables -t nat -A "$CHAIN" -p udp --dport "$item" -j REDIRECT --to-ports "${HYST_PORT:-36712}" >/dev/null 2>&1 || true
+    done
+}
+case "$ACTION" in
+    apply) apply_rules ;;
+    clear) clear_rules ;;
+esac
+exit 0
+EOF
+    chmod +x "$HYST_IPTABLES" 2>/dev/null || true
+    "$HYST_IPTABLES" apply 2>/dev/null || true
+    ufw allow 36712/udp >/dev/null 2>&1 || true
+    iptables -I INPUT 1 -p udp --dport 36712 -j ACCEPT 2>/dev/null || true
+
     hyst_write_service
-    systemctl restart hysteria-server.service >/dev/null 2>&1 || systemctl restart hysteria-server >/dev/null 2>&1 || nohup /usr/local/bin/hysteria -c /etc/hysteria/config.json server >/dev/null 2>&1 &
+    systemctl unmask hysteria-server.service 2>/dev/null || true
+    systemctl unmask hysteria-server 2>/dev/null || true
+    systemctl daemon-reload
+    systemctl enable hysteria-server.service 2>/dev/null || true
+    systemctl restart hysteria-server.service 2>/dev/null || systemctl restart hysteria-server 2>/dev/null || true
+    
+    sleep 1
+    if ! systemctl is-active --quiet hysteria-server 2>/dev/null; then
+        nohup /usr/local/bin/hysteria -c /etc/hysteria/config.json server >/dev/null 2>&1 &
+    fi
     
     local ip; ip=$(get_public_ip)
     echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
@@ -2251,7 +2430,7 @@ menu_protocolos() {
         fi
 
         # 6. UDP CRIS / HYSTERIA
-        if systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -q 'hysteria'; then
+        if systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -qE 'hysteria|:36712 '; then
             local _hyst_pt=""
             [[ -f /etc/hysteria/sshplus.env ]] && _hyst_pt="$(grep '^HYST_PORT=' /etc/hysteria/sshplus.env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
             [[ -z "${_hyst_pt// }" && -f /etc/hysteria/config.json ]] && _hyst_pt="$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/hysteria/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
@@ -2284,8 +2463,11 @@ menu_protocolos() {
         fi
 
         # 9. SlowDNS
-        if pgrep -f dnstt-server >/dev/null 2>&1; then
-            echo -e "\033[1;32mSERVICIO: \033[1;33mSLOWDNS \033[1;32mPUERTO: \033[1;37m53\033[0m"
+        if systemctl is-active --quiet slowdns 2>/dev/null || pgrep -f 'dnstt-server' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -qE 'dnstt-server|:5300 '; then
+            local _slow_pt="53"
+            [[ -f /etc/slowdns/slowdns.conf ]] && _slow_pt="$(grep '^SLOW_PORT=' /etc/slowdns/slowdns.conf 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
+            [[ -z "$_slow_pt" ]] && _slow_pt="53"
+            echo -e "\033[1;32mSERVICIO: \033[1;33mSLOWDNS \033[1;32mPUERTO: \033[1;37m$_slow_pt\033[0m"
         fi
 
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
@@ -2296,8 +2478,8 @@ menu_protocolos() {
         (pgrep -f 'stunnel' >/dev/null 2>&1 || [[ -n "$ssl_p" ]]) && sts_ssl="\033[1;32mo\033[0m" || sts_ssl="\033[1;31mx\033[0m"
         (pgrep -f 'dropbear' >/dev/null 2>&1 || [[ -n "$drp_p" ]]) && sts_drop="\033[1;32mo\033[0m" || sts_drop="\033[1;31mx\033[0m"
         pgrep -f 'xray|v2ray' >/dev/null 2>&1 && sts_v2ray="\033[1;32mo\033[0m" || sts_v2ray="\033[1;31mx\033[0m"
-        pgrep -f 'dnstt-server' >/dev/null 2>&1 && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -q 'hysteria') && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet slowdns 2>/dev/null || pgrep -f 'dnstt-server' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -qE 'dnstt-server|:5300 ') && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -qE 'hysteria|:36712 ') && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
         pgrep -f 'trojan' >/dev/null 2>&1 && sts_trojan="\033[1;32mo\033[0m" || sts_trojan="\033[1;31mx\033[0m"
         (systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -f 'badvpn-udpgw|udpvpn' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -q 'badvpn') && sts_badvpn="\033[1;32mo\033[0m" || sts_badvpn="\033[1;31mx\033[0m"
         pgrep -f 'openvpn' >/dev/null 2>&1 && sts_ovpn="\033[1;32mo\033[0m" || sts_ovpn="\033[1;31mx\033[0m"

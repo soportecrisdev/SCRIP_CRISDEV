@@ -246,8 +246,13 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload >/dev/null 2>&1 || true
-systemctl enable --now hysteria-server.service >/dev/null 2>&1 || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl unmask hysteria-server.service >/dev/null 2>&1 || true
+    systemctl unmask hysteria-server >/dev/null 2>&1 || true
+    systemctl enable --now hysteria-server.service >/dev/null 2>&1 || true
+    /etc/hysteria/iptables.sh apply >/dev/null 2>&1 || true
+    ufw allow 36712/udp >/dev/null 2>&1 || true
+    iptables -I INPUT 1 -p udp --dport 36712 -j ACCEPT 2>/dev/null || true
 
 # Instalar Servidor BHTTP Multi-Puerto
 if [[ -f "./wakkodev_bhttp_server.py" ]]; then
