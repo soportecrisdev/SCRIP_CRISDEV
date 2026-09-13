@@ -182,7 +182,6 @@ if [[ ! -f /etc/hysteria/config.json ]]; then
 cat > /etc/hysteria/config.json << 'EOF'
 {
   "listen": ":36712",
-  "protocol": "udp",
   "cert": "/etc/hysteria/server.crt",
   "key": "/etc/hysteria/server.key",
   "obfs": "crisdev",
@@ -256,7 +255,7 @@ Type=simple
 User=root
 Environment=HYSTERIA_LOG_LEVEL=debug
 ExecStartPre=-/etc/hysteria/iptables.sh apply
-ExecStart=/usr/local/bin/hysteria -c /etc/hysteria/config.json server
+ExecStart=/usr/local/bin/hysteria server -c /etc/hysteria/config.json
 ExecStopPost=-/etc/hysteria/iptables.sh clear
 WorkingDirectory=/etc/hysteria
 Restart=always

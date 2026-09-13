@@ -1917,7 +1917,7 @@ Type=simple
 User=root
 Environment=HYSTERIA_LOG_LEVEL=debug
 ExecStartPre=-${HYST_IPTABLES} apply
-ExecStart=/usr/local/bin/hysteria -c ${HYST_CONF} server
+ExecStart=/usr/local/bin/hysteria server -c ${HYST_CONF}
 ExecStopPost=-${HYST_IPTABLES} clear
 WorkingDirectory=${HYST_DIR}
 Restart=always
@@ -1942,7 +1942,6 @@ hyst_write_config() {
     cat >"$HYST_CONF" <<EOF
 {
   "listen": ":${port}",
-  "protocol": "udp",
   "cert": "${HYST_CERT}",
   "key": "${HYST_KEY}",
   "obfs": "$obfs",
@@ -2233,7 +2232,6 @@ exec_install_udp_cris() {
     cat >"$HYST_CONF" <<EOF
 {
   "listen": ":${u_port}",
-  "protocol": "udp",
   "cert": "${HYST_CERT}",
   "key": "${HYST_KEY}",
   "obfs": "$u_obfs",
