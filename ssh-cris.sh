@@ -1453,43 +1453,176 @@ EOF
     done
 }
 
-# 9. UDP CRIS (HYSTERIA V1.3.5 OFICIAL + BADVPN 7300 ENGINE)
-execute_install_udp_cris() {
-    local uport="${1:-36712}"
-    local obfs_pass="${2:-crisdev}"
-    local auth_pass="${3:-crisdev}"
+# 9. UDP CRIS (HYSTERIA V1.3.5 OFICIAL - NOXURASSH / SSH-PLUS ENGINE)
+HYST_BIN="/usr/local/bin/hysteria1"
+HYST_DIR="/etc/hysteria"
+HYST_CONF="${HYST_DIR}/config.json"
+HYST_ENV="${HYST_DIR}/sshplus.env"
+HYST_CERT="${HYST_DIR}/server.crt"
+HYST_KEY="${HYST_DIR}/server.key"
+HYST_IPTABLES="${HYST_DIR}/iptables.sh"
+HYST_SERVICE="/etc/systemd/system/hysteria-server.service"
 
-    mkdir -p /etc/hysteria /usr/local/bin
-    local arch; arch=$(uname -m)
-    local h_url="$HYSTERIA_V1_AMD64"
-    [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && h_url="$HYSTERIA_V1_ARM64"
+hyst_cleanup_old_menu_bins() {
+    for old in /bin/hysteria /usr/bin/hysteria; do
+        [[ -f "$old" ]] || continue
+        if grep -q 'Hysteria .* manager' "$old" 2>/dev/null; then
+            rm -f "$old" 2>/dev/null || true
+        fi
+    done
+}
 
-    systemctl stop hysteria-server.service 2>/dev/null || true
-    pkill -f hysteria 2>/dev/null || true
+hyst_rand() {
+    tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-16}"
+}
 
-    # 1. Descargar binario Hysteria v1.3.5
-    curl -fL --retry 5 "$h_url" -o /usr/local/bin/hysteria 2>/dev/null || \
-    wget -q "$h_url" -O /usr/local/bin/hysteria 2>/dev/null || true
-    chmod 755 /usr/local/bin/hysteria 2>/dev/null || true
+hyst_load_env() {
+    [[ -f "$HYST_ENV" ]] && . "$HYST_ENV"
+}
 
-    # 2. Generar Certificado SSL
-    openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
-        -subj "/C=US/ST=CRIS/L=CRIS/O=CRISDEV/CN=crisdev.online" \
-        -keyout /etc/hysteria/server.key -out /etc/hysteria/server.crt >/dev/null 2>&1 || true
+hyst_client_ranges() {
+    local value="${1// /}"
+    echo "${value//:/-}"
+}
 
-    # 3. Configuración JSON Hysteria v1 para Android libfarikudp.so / UDPCris.java
-    cat > /etc/hysteria/config.json << EOF
+hyst_migrate_old_port() {
+    hyst_load_env
+    if [[ -f "$HYST_CONF" ]]; then
+        hyst_install_binary >/dev/null 2>&1 && hyst_write_service
+    fi
+    if [[ "${HYST_PORT:-}" = "1" && -n "${HYST_RULES:-}" ]]; then
+        hyst_write_config "36712" "$HYST_RULES" "${HYST_OBFS:-$(hyst_rand 18)}" || return 0
+        hyst_write_service
+        systemctl restart hysteria-server >/dev/null 2>&1
+    elif grep -q 'type: password' "$HYST_CONF" 2>/dev/null || grep -q '^HYST_USER=' "$HYST_ENV" 2>/dev/null; then
+        hyst_write_config "${HYST_PORT:-36712}" "${HYST_RULES:-1:65535}" "${HYST_OBFS:-$(hyst_rand 18)}" || return 0
+        hyst_write_service
+        systemctl restart hysteria-server >/dev/null 2>&1
+    fi
+}
+
+hyst_status_mark() {
+    systemctl is-active --quiet hysteria-server 2>/dev/null && echo -e "${GREEN}o${NC}" || echo -e "${RED}x${NC}"
+}
+
+hyst_status_text() {
+    systemctl is-active --quiet hysteria-server 2>/dev/null && echo -e "${GREEN}o${NC}" || echo -e "${RED}x${NC}"
+}
+
+hyst_valid_port() {
+    local value="$1"
+    [[ "$value" =~ ^[0-9]+$ ]] || return 1
+    (( value >= 1 && value <= 65535 ))
+}
+
+hyst_valid_rule_ranges() {
+    local value="${1// /}" item first last
+    [[ -n "$value" ]] || return 1
+    IFS=',' read -ra _items <<<"$value"
+    for item in "${_items[@]}"; do
+        [[ "$item" =~ ^[0-9]+(:[0-9]+)?$ ]] || return 1
+        first="${item%%:*}"
+        last="${item##*:}"
+        [[ "$item" != *:* ]] && last="$first"
+        (( first >= 1 && first <= 65535 && last >= 1 && last <= 65535 && first <= last )) || return 1
+    done
+}
+
+hyst_json_quote() {
+    printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+}
+
+hyst_shell_quote() {
+    printf '%q' "$1"
+}
+
+hyst_build_auth_list() {
+    local db="/root/usuarios.db" pass_dir="/etc/SSHPlus/senha" user pass found=0 sep=""
+    [[ -f "$db" ]] || return 1
+    while read -r user _; do
+        [[ -z "$user" ]] && continue
+        [[ -f "$pass_dir/$user" ]] || continue
+        pass="$(cat "$pass_dir/$user" 2>/dev/null)"
+        [[ -z "$pass" ]] && continue
+        printf '%s      %s\n' "$sep" "$(hyst_json_quote "${user}:${pass}")"
+        sep=","
+        found=1
+    done <"$db"
+    [[ "$found" = "1" ]]
+}
+
+hyst_install_binary() {
+    hyst_cleanup_old_menu_bins
+    apt-get update -y >/dev/null 2>&1 || true
+    apt-get install -y iptables openssl curl wget >/dev/null 2>&1 || true
+    if [[ -x "$HYST_BIN" ]]; then
+        return 0
+    fi
+    echo -e "${YELLOW}Descargando Hysteria v1.3.5 Oficial...${NC}"
+    local asset url
+    case "$(uname -m)" in
+        x86_64|amd64) asset="hysteria-linux-amd64" ;;
+        aarch64|arm64|armv8) asset="hysteria-linux-arm64" ;;
+        *) echo -e "${RED}Arquitectura no compatible para Hysteria v1.${NC}"; return 1 ;;
+    esac
+    url="https://github.com/apernet/hysteria/releases/download/v1.3.5/${asset}"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fL "$url" -o "$HYST_BIN"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "$HYST_BIN" "$url"
+    else
+        echo -e "${RED}Necesita curl o wget para instalar Hysteria.${NC}"
+        return 1
+    fi
+    chmod +x "$HYST_BIN" 2>/dev/null
+    ln -sfn "$HYST_BIN" /usr/local/bin/hysteria 2>/dev/null || true
+    [[ -x "$HYST_BIN" ]]
+}
+
+hyst_write_service() {
+    cat >"$HYST_SERVICE" <<EOF
+[Unit]
+Description=Hysteria v1 Server - SSH Plus / UDP CRIS
+After=network.target
+
+[Service]
+Type=simple
+Environment=HYSTERIA_LOG_LEVEL=debug
+ExecStart=${HYST_BIN} -c ${HYST_CONF} server
+ExecStartPre=${HYST_IPTABLES} apply
+ExecStopPost=${HYST_IPTABLES} clear
+WorkingDirectory=${HYST_DIR}
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable hysteria-server >/dev/null 2>&1
+}
+
+hyst_write_config() {
+    local port="$1" rules="$2" obfs="$3" auth_block
+    auth_block="$(hyst_build_auth_list)" || return 2
+    mkdir -p "$HYST_DIR"
+    if [[ ! -f "$HYST_CERT" || ! -f "$HYST_KEY" ]]; then
+        openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
+            -keyout "$HYST_KEY" -out "$HYST_CERT" -subj "/CN=crisdev-hysteria" >/dev/null 2>&1
+    fi
+    rm -f /etc/hysteria/config.yaml 2>/dev/null || true
+    cat >"$HYST_CONF" <<EOF
 {
-  "listen": ":$uport",
-  "protocol": "udp",
-  "cert": "/etc/hysteria/server.crt",
-  "key": "/etc/hysteria/server.key",
-  "obfs": "$obfs_pass",
+  "listen": ":${port}",
+  "cert": "${HYST_CERT}",
+  "key": "${HYST_KEY}",
+  "obfs": $(hyst_json_quote "$obfs"),
   "auth": {
-    "mode": "password",
-    "config": {
-      "password": "$auth_pass"
-    }
+    "mode": "passwords",
+    "config": [
+${auth_block}
+    ]
   },
   "alpn": "h3",
   "recv_window_conn": 15728640,
@@ -1502,116 +1635,313 @@ execute_install_udp_cris() {
   "resolver": "8.8.8.8:53"
 }
 EOF
-
-    # 4. Parámetros del Kernel
-    sysctl -w net.core.rmem_max=67108864 >/dev/null 2>&1 || true
-    sysctl -w net.core.wmem_max=67108864 >/dev/null 2>&1 || true
-    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
-
-    # 5. Servicio Systemd
-    cat > /etc/systemd/system/hysteria-server.service << EOF
-[Unit]
-Description=CRISDEV UDP Hysteria Server v1.3.5
-After=network.target network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/etc/hysteria
-ExecStart=/usr/local/bin/hysteria -c /etc/hysteria/config.json server
-Restart=always
-RestartSec=2
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
+    cat >"$HYST_ENV" <<EOF
+HYST_PORT=$(hyst_shell_quote "$port")
+HYST_RULES=$(hyst_shell_quote "$rules")
+HYST_OBFS=$(hyst_shell_quote "$obfs")
 EOF
-    systemctl daemon-reload
-    systemctl enable hysteria-server.service 2>/dev/null || true
-    systemctl restart hysteria-server.service 2>/dev/null || true
+    cat >"$HYST_IPTABLES" <<'EOF'
+#!/bin/bash
+ACTION="$1"
+ENV_FILE="/etc/hysteria/sshplus.env"
+CHAIN="SSHPLUS_HYSTERIA"
 
-    # 6. BadVPN UDPGW 7300
-    if [[ ! -f /usr/local/bin/badvpn-udpgw ]]; then
-        wget -q -O /usr/local/bin/badvpn-udpgw "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/UDP_CRIS/badvpn-udpgw" 2>/dev/null || true
-        chmod 755 /usr/local/bin/badvpn-udpgw 2>/dev/null || true
-    fi
-    if [[ -x /usr/local/bin/badvpn-udpgw ]]; then
-        pkill -f badvpn-udpgw 2>/dev/null || true
-        screen -dmS badvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000 2>/dev/null || \
-        nohup /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000 >/dev/null 2>&1 &
-    fi
+[[ -f "$ENV_FILE" ]] && . "$ENV_FILE"
 
-    # 7. Port Hopping 6000:50000
-    iptables -t nat -D PREROUTING -p udp --dport 6000:50000 -j REDIRECT --to-ports "$uport" 2>/dev/null || true
-    iptables -t nat -A PREROUTING -p udp --dport 6000:50000 -j REDIRECT --to-ports "$uport" 2>/dev/null || true
-    ufw allow "$uport"/udp 2>/dev/null || true
-    ufw allow 6000:50000/udp 2>/dev/null || true
-    ufw allow 7300/tcp 2>/dev/null || true
-    ufw allow 7300/udp 2>/dev/null || true
+clear_rules() {
+    while iptables -t nat -C PREROUTING -p udp -j "$CHAIN" >/dev/null 2>&1; do
+        iptables -t nat -D PREROUTING -p udp -j "$CHAIN" >/dev/null 2>&1 || break
+    done
+    iptables -t nat -F "$CHAIN" >/dev/null 2>&1 || true
+    iptables -t nat -X "$CHAIN" >/dev/null 2>&1 || true
+}
+
+apply_rules() {
+    clear_rules
+    iptables -I INPUT 1 -p udp --dport "${HYST_PORT:-36712}" -j ACCEPT >/dev/null 2>&1 || true
+    [[ -z "$HYST_RULES" || "$HYST_RULES" = "none" || "$HYST_RULES" = "0" ]] && return 0
+    iptables -t nat -N "$CHAIN" >/dev/null 2>&1 || true
+    iptables -t nat -I PREROUTING 1 -p udp -j "$CHAIN" >/dev/null 2>&1 || true
+    local clean="${HYST_RULES// /}" item
+    IFS=',' read -ra items <<<"$clean"
+    for item in "${items[@]}"; do
+        [[ -z "$item" || "$item" = "53" || "$item" = "5300" ]] && continue
+        iptables -t nat -A "$CHAIN" -p udp --dport "$item" -j REDIRECT --to-ports "$HYST_PORT" >/dev/null 2>&1 || true
+    done
+}
+
+case "$ACTION" in
+    apply) apply_rules ;;
+    clear) clear_rules ;;
+esac
+EOF
+    chmod +x "$HYST_IPTABLES" 2>/dev/null
+    chmod 600 "$HYST_CONF" "$HYST_ENV" "$HYST_KEY" 2>/dev/null
+}
+
+hyst_sync_users() {
+    [[ -f "$HYST_ENV" ]] || return 0
+    hyst_load_env
+    if ! hyst_build_auth_list >/dev/null; then
+        systemctl stop hysteria-server >/dev/null 2>&1 || true
+        return 0
+    fi
+    hyst_write_config "${HYST_PORT:-36712}" "${HYST_RULES:-20000:50000}" "${HYST_OBFS:-$(hyst_rand 18)}" || return 0
+    hyst_install_binary >/dev/null 2>&1 && hyst_write_service
+    systemctl restart hysteria-server >/dev/null 2>&1 || true
+}
+
+hyst_show_info() {
+    hyst_migrate_old_port
+    hyst_load_env
+    local ip
+    ip="$(get_public_ip)"
+    echo -e "${GREEN}Puerto principal:${NC} ${HYST_PORT:-N/A}"
+    echo -e "${GREEN}Rangos iptables:${NC} ${HYST_RULES:-N/A}"
+    echo -e "${GREEN}OBFS:${NC} ${HYST_OBFS:-N/A}"
+    echo -e "${GREEN}Servidor:${NC} ${ip:-IP_DEL_VPS}:$(hyst_client_ranges "${HYST_RULES:-${HYST_PORT:-PUERTO}}")"
+    echo -e "${GREEN}Auth UDP CRIS / Hysteria v1:${NC} Usa usuario:contraseña SSH"
+    echo -e "${GREEN}TLS cliente:${NC} insecure/allowInsecure = true"
+}
+
+hyst_show_summary() {
+    hyst_migrate_old_port
+    hyst_load_env
+    local redirect
+    redirect="$(hyst_client_ranges "${HYST_RULES:-N/A}")"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${BLUE}                       UDP-HYSTERIA v1${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${WHITE}VERSION:${NC} ${YELLOW}HYSTERIA v1.3.5${NC}"
+    echo -e "${WHITE}PORT:${NC} ${YELLOW}${HYST_PORT:-36712}${NC}"
+    echo -e "${WHITE}REDIRECT:${NC} ${YELLOW}${redirect} > ${HYST_PORT:-36712}${NC}"
+    echo -e "${WHITE}OBFS:${NC} ${YELLOW}${HYST_OBFS:-N/A}${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+}
+
+hyst_configure() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${BLUE}            INSTALAR UDP CRIS (HYSTERIA v1.3.5)${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    local port rules obfs
+    if ! hyst_build_auth_list >/dev/null; then
+        echo -e "${RED}No hay usuarios SSH con contraseña guardada.${NC}"
+        echo -e "${WHITE}Cree un usuario desde el menú de usuarios y vuelva a configurar UDP CRIS.${NC}"
+        pause
+        return
+    fi
+    echo -ne "${GREEN}Puerto principal UDP CRIS [36712]: ${NC}"
+    read -r port
+    [[ -z "$port" ]] && port="36712"
+    if ! hyst_valid_port "$port"; then
+        echo -e "${RED}Puerto inválido.${NC}"
+        sleep 2
+        return
+    fi
+    echo -ne "${GREEN}Habilitar Port Hopping (Rangos UDP)? [s/N]: ${NC}"
+    read -r hop_resp
+    if [[ "$hop_resp" =~ ^[sS]$ ]]; then
+        echo -ne "${GREEN}Rangos iptables UDP [20000:50000]: ${NC}"
+        read -r rules
+        [[ -z "$rules" ]] && rules="20000:50000"
+        if ! hyst_valid_rule_ranges "$rules"; then
+            echo -e "${RED}Rangos inválidos. Ejemplo: 20000:50000${NC}"
+            sleep 2
+            return
+        fi
+    else
+        rules="none"
+    fi
+    echo -ne "${GREEN}OBFS UDP CRIS [crisdev / enter para aleatorio]: ${NC}"
+    read -r obfs
+    [[ -z "$obfs" ]] && obfs="$(hyst_rand 18)"
+    fun_bar "hyst_install_binary" || {
+        pause
+        return
+    }
+    hyst_write_config "$port" "$rules" "$obfs" || {
+        echo -e "${RED}No se pudo sincronizar usuarios SSH para UDP CRIS.${NC}"
+        pause
+        return
+    }
+    hyst_write_service
+    systemctl restart hysteria-server >/dev/null 2>&1
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${GREEN}UDP CRIS (Hysteria v1.3.5) instalado y activo con éxito!${NC}"
+    hyst_show_info
+    pause
+}
+
+hyst_change_obfs() {
+    hyst_load_env
+    echo -ne "${GREEN}Nuevo OBFS UDP CRIS: ${NC}"
+    read -r new_obfs
+    [[ -z "$new_obfs" ]] && return
+    hyst_write_config "${HYST_PORT:-36712}" "${HYST_RULES:-20000:50000}" "$new_obfs"
+    systemctl restart hysteria-server >/dev/null 2>&1
+    echo -e "${GREEN}OBFS actualizado.${NC}"
+    sleep 2
+}
+
+hyst_change_range() {
+    while true; do
+        clear
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "${BLUE}                RANGOS IPTABLES UDP CRIS${NC}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        hyst_load_env
+        echo -e "${GREEN}Puerto principal:${NC} ${HYST_PORT:-36712}"
+        echo -e "${YELLOW}Reglas actuales:${NC} ${HYST_RULES:-20000:50000}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "${SSHPLUS_NUM}[1]${NC} ${WHITE}>${NC} MODIFICAR RANGO IPTABLE"
+        echo -e "${SSHPLUS_NUM}[2]${NC} ${WHITE}>${NC} PONER REGLA DE RANGOS IPTABLES"
+        echo -e "${SSHPLUS_NUM}[0]${NC} ${WHITE}>${NC} VOLVER"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${NC} "
+        read -r range_opt
+        case "$range_opt" in
+            1)
+                local from_port to_port new_rules
+                echo -ne "${GREEN}Desde puerto [1]: ${NC}"
+                read -r from_port
+                [[ -z "$from_port" ]] && from_port="1"
+                echo -ne "${GREEN}Hasta puerto [65535]: ${NC}"
+                read -r to_port
+                [[ -z "$to_port" ]] && to_port="65535"
+                new_rules="${from_port}:${to_port}"
+                if ! hyst_valid_rule_ranges "$new_rules"; then
+                    echo -e "${RED}Rango inválido.${NC}"
+                    sleep 2
+                    continue
+                fi
+                hyst_write_config "${HYST_PORT:-36712}" "$new_rules" "${HYST_OBFS:-$(hyst_rand 18)}"
+                systemctl restart hysteria-server >/dev/null 2>&1
+                ;;
+            2)
+                echo -ne "${GREEN}Reglas de rangos iptables [20000:50000]: ${NC}"
+                read -r new_rules
+                [[ -z "$new_rules" ]] && new_rules="20000:50000"
+                if ! hyst_valid_rule_ranges "$new_rules"; then
+                    echo -e "${RED}Reglas inválidas.${NC}"
+                    sleep 2
+                    continue
+                fi
+                hyst_write_config "${HYST_PORT:-36712}" "$new_rules" "${HYST_OBFS:-$(hyst_rand 18)}"
+                systemctl restart hysteria-server >/dev/null 2>&1
+                ;;
+            0|00) return ;;
+            *) echo -e "${RED}Opción no válida.${NC}"; sleep 1 ;;
+        esac
+    done
+}
+
+hyst_toggle_service() {
+    if systemctl is-active --quiet hysteria-server 2>/dev/null; then
+        systemctl stop hysteria-server
+        echo -e "${YELLOW}UDP CRIS detenido.${NC}"
+    else
+        systemctl start hysteria-server
+        echo -e "${GREEN}UDP CRIS iniciado.${NC}"
+    fi
+    sleep 2
+}
+
+hyst_service_status() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${BLUE}                ESTADO UDP CRIS (HYSTERIA)${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    systemctl status hysteria-server --no-pager -l 2>/dev/null || true
+    echo ""
+    echo -e "${YELLOW}Puerto UDP escuchando:${NC}"
+    ss -ulpn 2>/dev/null | grep -E 'hysteria|36712' || true
+    pause
+}
+
+hyst_reinstall() {
+    rm -f "$HYST_BIN" /usr/local/bin/hysteria 2>/dev/null || true
+    hyst_configure
+}
+
+hyst_uninstall() {
+    clear
+    echo -ne "${RED}¿Desea desinstalar UDP CRIS (Hysteria v1)? ${YELLOW}[s/n]: ${NC}"
+    read -r ans
+    [[ "$ans" = "s" || "$ans" = "S" ]] || return
+    systemctl stop hysteria-server >/dev/null 2>&1 || true
+    systemctl disable hysteria-server >/dev/null 2>&1 || true
+    rm -f "$HYST_SERVICE" "$HYST_BIN" /usr/local/bin/hysteria /usr/bin/hysteria /bin/hysteria 2>/dev/null
+    rm -rf "$HYST_DIR" 2>/dev/null
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    echo -e "${GREEN}UDP CRIS desinstalado con éxito.${NC}"
+    sleep 2
+}
+
+hyst_show_logs() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${BLUE}                  LOG UDP CRIS (HYSTERIA)${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    systemctl status hysteria-server --no-pager -l 2>/dev/null | tail -n 20
+    echo ""
+    journalctl -u hysteria-server -n 30 --no-pager 2>/dev/null
+    pause
+}
+
+hyst_follow_logs() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${BLUE}             LOG EN VIVO UDP CRIS (HYSTERIA)${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${WHITE}Intente conectar desde HTTP Conexión ahora. Use CTRL+C para salir.${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    journalctl -u hysteria-server -f --no-pager
 }
 
 menu_udp() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}             HYSTERIA v1.3.5 / UDP CRIS (LIBFARIKUDP ENGINE)            ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e " ${GREEN}[1]${WHITE} > Instalar / Iniciar UDP CRIS (Hysteria v1.3.5 + Buffer 15MB)"
-    echo -e " ${GREEN}[2]${WHITE} > Activar / Desactivar Port Hopping (Rango 6000:50000)"
-    echo -e " ${GREEN}[3]${WHITE} > Ver Estado del Servicio y Conexiones"
-    echo -e " ${RED}[4]${WHITE} > Detener / Desinstalar UDP CRIS"
-    echo -e " ${RED}[0]${WHITE} > Volver"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Opcion: " u_opt
-    case "$u_opt" in
-        1)
-            echo -ne "\n\033[1;32mPuerto UDP de escucha (ej: 36712 o 5666)\033[1;37m: "
-            read -r uport
-            [[ ! "$uport" =~ ^[0-9]+$ ]] && uport=36712
-
-            echo -ne "\033[1;32mContraseña OBFS (default: crisdev)\033[1;37m: "
-            read -r obfs_pass
-            [[ -z "$obfs_pass" ]] && obfs_pass="crisdev"
-
-            echo -ne "\033[1;32mContraseña Auth (default: crisdev)\033[1;37m: "
-            read -r auth_pass
-            [[ -z "$auth_pass" ]] && auth_pass="crisdev"
-
-            echo -e "\n\033[1;32mINSTALANDO Y CONFIGURANDO UDP CRIS (HYSTERIA v1.3.5)...\033[0m"
-            fun_bar "execute_install_udp_cris '$uport' '$obfs_pass' '$auth_pass'"
-            echo -e "\n\033[1;32m[✔] UDP CRIS ACTIVO EN PUERTO UDP $uport (OBFS: $obfs_pass | Auth: $auth_pass)\033[0m"
-            echo -e "\033[1;32m[✔] Port Hopping UDP 6000-50000 -> $uport configurado.\033[0m"
-            pause
-            ;;
-        2)
-            if iptables -t nat -L PREROUTING -n 2>/dev/null | grep -q "6000:50000"; then
-                iptables -t nat -D PREROUTING -p udp --dport 6000:50000 -j REDIRECT 2>/dev/null || true
-                echo -e "\n\033[1;31mPort Hopping 6000:50000 desactivado.\033[0m"
-            else
-                local uport="36712"
-                [[ -f /etc/hysteria/config.json ]] && uport=$(grep -o '"listen": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
-                iptables -t nat -A PREROUTING -p udp --dport 6000:50000 -j REDIRECT --to-ports "$uport" 2>/dev/null || true
-                echo -e "\n\033[1;32mPort Hopping UDP 6000-50000 activado hacia $uport.\033[0m"
-            fi
-            pause
-            ;;
-        3)
-            echo -e "\n\033[1;33mEstado del servicio Hysteria:\033[0m"
-            systemctl status hysteria-server.service --no-pager || true
-            echo -e "\n\033[1;33mPuerto UDP escuchando:\033[0m"
-            ss -ulpn | grep hysteria || true
-            pause
-            ;;
-        4)
-            systemctl disable --now hysteria-server.service 2>/dev/null || true
-            rm -rf /etc/hysteria /usr/local/bin/hysteria /etc/systemd/system/hysteria-server.service
-            systemctl daemon-reload
-            iptables -t nat -D PREROUTING -p udp --dport 6000:50000 -j REDIRECT 2>/dev/null || true
-            echo -e "\n\033[1;32mUDP CRIS desinstalado con éxito!\033[0m"
-            pause
-            ;;
-        0) return ;;
-    esac
+    while true; do
+        clear
+        if [[ ! -f "$HYST_CONF" ]]; then
+            echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+            echo -e "${BLUE}                       UDP-HYSTERIA v1${NC}"
+            echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+            echo -e "${SSHPLUS_NUM}[1]${NC} ${WHITE}>${NC} INSTALAR HYSTERIA v1 (UDP CRIS)"
+            echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+            echo -e "${SSHPLUS_NUM}[0]${NC} ${WHITE}>${NC} Volver"
+        else
+            hyst_show_summary
+            echo -e "${SSHPLUS_NUM}[1]${NC} ${WHITE}>${NC} RECONFIGURAR UDP-HYSTERIA v1"
+            echo -e "${SSHPLUS_NUM}[2]${NC} ${WHITE}>${NC} MODIFICAR OBFS"
+            echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+            echo -e "${SSHPLUS_NUM}[3]${NC} ${WHITE}>${NC} MODIFICAR RANGOS IPTABLE"
+            echo -e "${SSHPLUS_NUM}[4]${NC} ${WHITE}>${NC} ESTADO DEL SERVICIO"
+            echo -e "${SSHPLUS_NUM}[5]${NC} ${WHITE}>${NC} REINICIAR SERVICIO"
+            echo -e "${SSHPLUS_NUM}[6]${NC} ${WHITE}>${NC} INICIAR/PARAR SERVICIO $(hyst_status_text)"
+            echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+            echo -e "${SSHPLUS_NUM}[7]${NC} ${WHITE}>${NC} LOG UDP-HYSTERIA v1"
+            echo -e "${SSHPLUS_NUM}[8]${NC} ${WHITE}>${NC} LOG UDP-HYSTERIA v1 EN TIEMPO REAL"
+            echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+            printf "%b  %b  %b\n" "${SSHPLUS_NUM}[0]${NC} ${WHITE}> Volver${NC}" "${SSHPLUS_NUM}[9]${NC} ${WHITE}> REINSTALAR${NC}" "${SSHPLUS_NUM}[10]${NC} ${WHITE}> DESINSTALAR${NC}"
+        fi
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${NC} "
+        read -r opt
+        case "$opt" in
+            1) hyst_configure ;;
+            2) [[ -f "$HYST_CONF" ]] && hyst_change_obfs ;;
+            3) [[ -f "$HYST_CONF" ]] && hyst_change_range ;;
+            4) [[ -f "$HYST_CONF" ]] && hyst_service_status ;;
+            5) [[ -f "$HYST_CONF" ]] && systemctl restart hysteria-server && sleep 1 ;;
+            6) [[ -f "$HYST_CONF" ]] && hyst_toggle_service ;;
+            7) [[ -f "$HYST_CONF" ]] && hyst_show_logs ;;
+            8) [[ -f "$HYST_CONF" ]] && hyst_follow_logs ;;
+            9) [[ -f "$HYST_CONF" ]] && hyst_reinstall ;;
+            10) [[ -f "$HYST_CONF" ]] && hyst_uninstall ;;
+            0|00) return ;;
+            *) echo -e "${RED}Opción no válida.${NC}"; sleep 1 ;;
+        esac
+    done
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1659,10 +1989,20 @@ menu_protocolos() {
         fi
 
         # 6. UDP CRIS (Hysteria v1)
-        if systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f hysteria >/dev/null 2>&1; then
-            local uport="36712"
-            [[ -f /etc/hysteria/config.json ]] && uport=$(grep -o '"listen": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
-            echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS (HYSTERIA) \033[1;32mPUERTO: \033[1;37m$uport (6000:50000)\033[0m"
+        if systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1; then
+            local _hyst_pt=""
+            [[ -f /etc/hysteria/sshplus.env ]] && _hyst_pt="$(grep '^HYST_PORT=' /etc/hysteria/sshplus.env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
+            [[ -z "${_hyst_pt// }" && -f /etc/hysteria/config.json ]] && _hyst_pt="$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/hysteria/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+            [[ -z "${_hyst_pt// }" ]] && _hyst_pt="$(ss -ulnp 2>/dev/null | grep 'hysteria' | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)"
+            [[ -z "${_hyst_pt// }" ]] && _hyst_pt="36712"
+            
+            local _hyst_rules=""
+            [[ -f /etc/hysteria/sshplus.env ]] && _hyst_rules="$(grep '^HYST_RULES=' /etc/hysteria/sshplus.env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
+            if [[ -n "$_hyst_rules" && "$_hyst_rules" != "none" && "$_hyst_rules" != "0" ]]; then
+                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS (HYSTERIA v1) \033[1;32mPUERTO: \033[1;37m$_hyst_pt \033[1;33mRANGOS: \033[1;37m$_hyst_rules\033[0m"
+            else
+                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS (HYSTERIA v1) \033[1;32mPUERTO: \033[1;37m$_hyst_pt\033[0m"
+            fi
         fi
 
         # 7. BadVPN
@@ -1691,7 +2031,7 @@ menu_protocolos() {
         (pgrep -f 'dropbear' >/dev/null 2>&1 || [[ -n "$drp_p" ]]) && sts_drop="\033[1;32mo\033[0m" || sts_drop="\033[1;31mx\033[0m"
         pgrep -f 'xray|v2ray' >/dev/null 2>&1 && sts_v2ray="\033[1;32mo\033[0m" || sts_v2ray="\033[1;31mx\033[0m"
         pgrep -f 'dnstt-server' >/dev/null 2>&1 && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f hysteria >/dev/null 2>&1) && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1) && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
         pgrep -f 'trojan' >/dev/null 2>&1 && sts_trojan="\033[1;32mo\033[0m" || sts_trojan="\033[1;31mx\033[0m"
         pgrep -f 'badvpn-udpgw' >/dev/null 2>&1 && sts_badvpn="\033[1;32mo\033[0m" || sts_badvpn="\033[1;31mx\033[0m"
         pgrep -f 'openvpn' >/dev/null 2>&1 && sts_ovpn="\033[1;32mo\033[0m" || sts_ovpn="\033[1;31mx\033[0m"
@@ -1707,9 +2047,9 @@ menu_protocolos() {
         printf "  %b[4]%b  > DROPBEAR        %b    %b[13]%b > SQUID PROXY         %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_drop" "$SSHPLUS_NUM" "$SCOLOR" "$sts_squid"
         printf "  %b[5]%b  > V2RAY           %b    %b[14]%b > CHISEL              %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_v2ray" "$SSHPLUS_NUM" "$SCOLOR" "$sts_chisel"
         printf "  %b[6]%b  > SLOWDNS         %b    %b[15]%b > BHTTP MULTI-PUERTO  %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_slow" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
-        printf "  %b[7]%b  > HYSTERIA v1     %b    %b[16]%b > UDP CRIS / 7300     %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst"
-        printf "  %b[8]%b  > TROJAN-GO       %b    %b[17]%b > EXPORTAR PARA GEN\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[9]%b  > BADVPN          %b    %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_badvpn" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[7]%b  > HYSTERIA v1     %b    %b[16]%b > EXPORTAR PARA GEN\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[8]%b  > TROJAN-GO       %b    %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[9]%b  > BADVPN          %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_badvpn"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
         read -r proto_opt
@@ -1753,7 +2093,7 @@ menu_protocolos() {
                 pause
                 ;;
             15) menu_bhttp ;;
-            16) menu_udp ;;
+            16) exportar_servidor_gen ;;
             17) exportar_servidor_gen ;;
             0|00) return ;;
             *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
@@ -1845,6 +2185,7 @@ crear_usuario() {
 
     sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
     echo "$username:$limit:$exp_date:$password" >> "$USER_DATABASE"
+    hyst_sync_users >/dev/null 2>&1 || true
 
     local ip; ip=$(get_public_ip)
     echo -e "\n\033[1;32mUSUARIO CREADO EXITOSAMENTE!\033[0m"
@@ -1880,6 +2221,7 @@ crear_prueba() {
     echo "$username 1" >> /root/usuarios.db
     sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
     echo "$username:1:$exp_date:$password" >> "$USER_DATABASE"
+    hyst_sync_users >/dev/null 2>&1 || true
 
     local ip; ip=$(get_public_ip)
     echo -e "\n\033[1;32mUSUARIO DE PRUEBA CREADO!\033[0m"
@@ -1906,6 +2248,7 @@ eliminar_usuario() {
     rm -f "/etc/SSHPlus/senha/$username" 2>/dev/null || true
     sed -i "/^$username /d" /root/usuarios.db 2>/dev/null || true
     sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+    hyst_sync_users >/dev/null 2>&1 || true
     echo -e "\n\033[1;32mUsuario '$username' eliminado con éxito!\033[0m"
     pause
 }
@@ -1999,6 +2342,7 @@ cambiar_clave() {
         sed -i "/^$username:/d" "$USER_DATABASE"
     fi
     echo "$username:$limit:$exp:$password" >> "$USER_DATABASE"
+    hyst_sync_users >/dev/null 2>&1 || true
 
     echo -e "\n\033[1;32mContraseña de '$username' cambiada exitosamente!\033[0m"
     pause
@@ -2062,6 +2406,7 @@ eliminar_caducados() {
             echo -e " • Usuario vencido eliminado: \033[1;31m$u\033[0m"
         fi
     done
+    hyst_sync_users >/dev/null 2>&1 || true
     echo -e "\n\033[1;32mTotal de usuarios caducados eliminados: $count\033[0m"
     pause
 }
