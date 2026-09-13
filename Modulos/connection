@@ -2732,6 +2732,21 @@ PY
 			else
 				badsts="\033[1;31mx "
 			fi
+			local _b_pts=""
+			local _bx_pt=""
+			if [[ -f /etc/bhttp/config ]]; then
+				_b_pts="$(grep '^BHTTP_PORT=' /etc/bhttp/config 2>/dev/null | cut -d= -f2)"
+			fi
+			[[ -f /etc/bhttp/tls_port ]] && _bx_pt="$(cat /etc/bhttp/tls_port 2>/dev/null)"
+			if systemctl is-active bhttp >/dev/null 2>&1 || systemctl is-active bhttp-tls >/dev/null 2>&1 || pgrep -f 'bhttp-server|xhttp-server' >/dev/null 2>&1 || [[ -n "${_b_pts// }" || -n "${_bx_pt// }" ]]; then
+				local _b_dsp=""
+				[[ -n "$_b_pts" ]] && _b_dsp="PLANO: ${_b_pts}"
+				[[ -n "$_bx_pt" ]] && _b_dsp="${_b_dsp:+${_b_dsp} | }TLS: ${_bx_pt}"
+				echo -e "\033[1;32mSERVICIO: \033[1;33mBHTTP \033[1;32mPUERTO: \033[1;37m${_b_dsp:-N/A}"
+				bhttpsts="\033[1;32mo "
+			else
+				bhttpsts="\033[1;31mx "
+			fi
 			local _hcr_pts=""
 			if [[ -f /etc/hcr-server/ports.conf ]]; then
 				_hcr_pts="$(awk -F'|' '{print $1}' /etc/hcr-server/ports.conf 2>/dev/null | xargs)"
@@ -2759,8 +2774,8 @@ PY
 			sshplus_opt_pair "4" "DROPBEAR" "$sts2" "13" "SQUID PROXY" "$sts1"
 			sshplus_opt_pair "5" "V2RAY" "$xv2ray" "14" "CHISEL" "$sts8"
 			sshplus_opt_pair "6" "SLOWDNS" "$sts9" "15" "PANEL WEB V2RAY" ""
-			sshplus_opt_pair "7" "HYSTERIA v1" "$hysteriasts" "16" "LIMPIAR V2RAY" ""
-			sshplus_opt_pair "8" "TROJAN-GO" "$trojansts" "17" "GESTOR HCR" "$hcrsts"
+			sshplus_opt_pair "7" "HYSTERIA v1" "$hysteriasts" "16" "BHTTP (BHP1/TLS)" "$bhttpsts"
+			sshplus_opt_pair "8" "TROJAN-GO" "$trojansts" "17" "HCR RELAY" "$hcrsts"
 			sshplus_opt_pair "9" "BADVPN" "$badsts" "18" "UDP CUSTOM" "$udpcsts"
 			sshplus_opt "0" "VOLVER"
 			sshplus_line
@@ -2818,11 +2833,11 @@ PY
 			v2raypanel
 			;;
 			16 | 16)
-			echo -e "\E[44;1;37m             LIMPIAR V2RAY              \E[0m"
-			echo -e "\033[1;31mEsta opcion libera memoria en disco similar a la RAM.\033[0m"
-			echo -e "\033[1;31mSi tenia estadisticas de consumo, se pondran a cero; no se pierden usuarios ni la configuracion.\033[0m"
-			v2ray clean
-			echo -ne "\n\033[1;31mENTER \033[1;33mpara volver al \033[1;32mMENU\033[0m"; read
+			if [[ -x /usr/local/bin/ssh-cris ]]; then
+				/usr/local/bin/ssh-cris
+			elif [[ -x /bin/menu ]]; then
+				/bin/menu
+			fi
 			;;
 			17 | 17)
 			if [[ -x /bin/hcr-manager || -x /usr/bin/hcr-manager ]]; then

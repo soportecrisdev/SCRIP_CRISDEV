@@ -1746,26 +1746,12 @@ menu_bhttp() {
         printf "  %b[2]%b > ACTIVAR / AJUSTAR TLS %b[7]%b > DATOS DE CONEXION\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
         printf "  %b[3]%b > ABRIR PUERTO EXTRA    %b[8]%b > TEST DE CONEXION\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
         printf "  %b[4]%b > LISTAR PUERTOS        %b[9]%b > DETENER BHTTP\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[5]%b > ELIMINAR PUERTO       %b[10]%b > GESTOR HCR RELAY\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[0]%b > VOLVER A PROTOCOLOS\n" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[5]%b > ELIMINAR PUERTO       %b[0]%b > VOLVER A PROTOCOLOS\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
         read -r b_opt
 
         case "$b_opt" in
-            10)
-                if [[ -x /bin/hcr-manager || -x /usr/bin/hcr-manager ]]; then
-                    hcr-manager
-                elif [[ -f /opt/ssh-cris/Modulos/hcr-manager ]]; then
-                    bash /opt/ssh-cris/Modulos/hcr-manager
-                else
-                    clear
-                    echo -e "\033[1;32mDescargando e iniciando HCR Manager...\033[0m"
-                    curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager -o /bin/hcr-manager 2>/dev/null
-                    chmod +x /bin/hcr-manager 2>/dev/null || true
-                    hcr-manager
-                fi
-                ;;
             1|01)
                 clear
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
@@ -3054,19 +3040,23 @@ menu_protocolos() {
             echo -e "\033[1;32mSERVICIO: \033[1;33mCHISEL \033[1;32mPUERTO: \033[1;37m$_ch_pt\033[0m"
         fi
 
-        # 11. BHTTP / HCR RELAY
+        # 11. BHTTP
         local _b_pts; _b_pts=$(scan_bhttp_ports)
         local _bx_pt; _bx_pt=$(scan_xhttp_port)
-        local _hcr_pts; _hcr_pts=$(scan_hcr_ports)
-        if [[ -n "$_b_pts" || -n "$_bx_pt" || -n "$_hcr_pts" ]]; then
+        if [[ -n "$_b_pts" || -n "$_bx_pt" ]]; then
             local _b_dsp=""
             [[ -n "$_b_pts" ]] && _b_dsp="BHTTP: ${_b_pts}"
             [[ -n "$_bx_pt" ]] && _b_dsp="${_b_dsp:+${_b_dsp} | }TLS: ${_bx_pt}"
-            [[ -n "$_hcr_pts" ]] && _b_dsp="${_b_dsp:+${_b_dsp} | }HCR: ${_hcr_pts}"
-            echo -e "\033[1;32mSERVICIO: \033[1;33mBHTTP / HCR \033[1;32mPUERTOS: \033[1;37m$_b_dsp\033[0m"
+            echo -e "\033[1;32mSERVICIO: \033[1;33mBHTTP \033[1;32mPUERTOS: \033[1;37m$_b_dsp\033[0m"
         fi
 
-        # 12. UDP CUSTOM
+        # 12. HCR RELAY (HTTP CUSTOM RELAY)
+        local _hcr_pts; _hcr_pts=$(scan_hcr_ports)
+        if [[ -n "$_hcr_pts" ]]; then
+            echo -e "\033[1;32mSERVICIO: \033[1;33mHCR RELAY \033[1;32mPUERTOS: \033[1;37m$_hcr_pts\033[0m"
+        fi
+
+        # 13. UDP CUSTOM
         local _udpc_pt; _udpc_pt=$(scan_udpcustom_port)
         if systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1 || [[ -n "$_udpc_pt" ]]; then
             echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CUSTOM \033[1;32mPUERTO: \033[1;37m${_udpc_pt:-7100}/udp\033[0m"
@@ -3074,7 +3064,7 @@ menu_protocolos() {
 
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
 
-        local sts_ssh sts_socks sts_ssl sts_drop sts_v2ray sts_slow sts_hyst sts_trojan sts_badvpn sts_ovpn sts_ws sts_sslh sts_squid sts_chisel sts_bhttp sts_udpc
+        local sts_ssh sts_socks sts_ssl sts_drop sts_v2ray sts_slow sts_hyst sts_trojan sts_badvpn sts_ovpn sts_ws sts_sslh sts_squid sts_chisel sts_bhttp sts_hcr sts_udpc
         sts_ssh="\033[1;32mo\033[0m"
         (pgrep -f 'proxy\.py|wsproxy\.py' >/dev/null 2>&1 || [[ -n "$sks_p" ]]) && sts_socks="\033[1;32mo\033[0m" || sts_socks="\033[1;31mx\033[0m"
         (systemctl is-active --quiet stunnel4 2>/dev/null || pgrep -f 'stunnel' >/dev/null 2>&1 || [[ -n "$ssl_p" ]]) && sts_ssl="\033[1;32mo\033[0m" || sts_ssl="\033[1;31mx\033[0m"
@@ -3096,7 +3086,8 @@ menu_protocolos() {
         pgrep -f 'sslh' >/dev/null 2>&1 && sts_sslh="\033[1;32mo\033[0m" || sts_sslh="\033[1;31mx\033[0m"
         (pgrep -f 'squid' >/dev/null 2>&1 || [[ -n "$sqd_p" ]]) && sts_squid="\033[1;32mo\033[0m" || sts_squid="\033[1;31mx\033[0m"
         (systemctl is-active --quiet chisel 2>/dev/null || pgrep -f 'chisel' >/dev/null 2>&1) && sts_chisel="\033[1;32mo\033[0m" || sts_chisel="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet bhttp 2>/dev/null || systemctl is-active --quiet bhttp-tls 2>/dev/null || pgrep -f 'bhttp-server|xhttp-server|bilola|hcr-server' >/dev/null 2>&1 || [[ -n "$_b_pts" || -n "$_bx_pt" || -n "$_hcr_pts" ]]) && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet bhttp 2>/dev/null || systemctl is-active --quiet bhttp-tls 2>/dev/null || pgrep -f 'bhttp-server|xhttp-server|bilola' >/dev/null 2>&1 || [[ -n "$_b_pts" || -n "$_bx_pt" ]]) && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
+        (pgrep -f 'hcr-server' >/dev/null 2>&1 || [[ -n "$_hcr_pts" ]]) && sts_hcr="\033[1;32mo\033[0m" || sts_hcr="\033[1;31mx\033[0m"
         (systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1 || [[ -n "$_udpc_pt" ]]) && sts_udpc="\033[1;32mo\033[0m" || sts_udpc="\033[1;31mx\033[0m"
 
         printf "  %b[1]%b  > OPENSSH         %b    %b[10]%b > BADVPN             %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssh" "$SSHPLUS_NUM" "$SCOLOR" "$sts_badvpn"
@@ -3105,10 +3096,10 @@ menu_protocolos() {
         printf "  %b[4]%b  > DROPBEAR        %b    %b[13]%b > SSLH MULTIPLEX      %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_drop" "$SSHPLUS_NUM" "$SCOLOR" "$sts_sslh"
         printf "  %b[5]%b  > %-15s %b    %b[14]%b > SQUID PROXY         %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$v2_title" "$sts_v2ray" "$SSHPLUS_NUM" "$SCOLOR" "$sts_squid"
         printf "  %b[6]%b  > SLOWDNS         %b    %b[15]%b > CHISEL              %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_slow" "$SSHPLUS_NUM" "$SCOLOR" "$sts_chisel"
-        printf "  %b[7]%b  > UDP CRIS        %b    %b[16]%b > BHTTP / HCR         %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
-        printf "  %b[8]%b  > UDP HYSTERIA v1 %b    %b[17]%b > UDP CUSTOM          %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_udpc"
-        printf "  %b[9]%b  > TROJAN-GO       %b    %b[18]%b > EXPORTAR PARA GEN\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[7]%b  > UDP CRIS        %b    %b[16]%b > BHTTP (BHP1/TLS)    %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
+        printf "  %b[8]%b  > UDP HYSTERIA v1 %b    %b[17]%b > HCR RELAY           %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hcr"
+        printf "  %b[9]%b  > UDP CUSTOM      %b    %b[18]%b > TROJAN-GO           %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_udpc" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan"
+        printf "  %b[19]%b > EXPORTAR PARA GEN     %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
         read -r proto_opt
@@ -3135,9 +3126,17 @@ menu_protocolos() {
             7|07) menu_udp_cris ;;
             8|08) menu_udp ;;
             9|09)
-                clear
-                echo -e "\033[1;33mTrojan-Go integrado via motor Xray (Puerto 443 / 8443).\033[0m"
-                pause
+                if [[ -x /bin/udp-custom-manager || -x /usr/bin/udp-custom-manager ]]; then
+                    udp-custom-manager
+                elif [[ -f /opt/ssh-cris/Modulos/udp-custom-manager ]]; then
+                    bash /opt/ssh-cris/Modulos/udp-custom-manager
+                else
+                    clear
+                    echo -e "\033[1;32mDescargando e iniciando UDP Custom Manager...\033[0m"
+                    curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager -o /bin/udp-custom-manager 2>/dev/null
+                    chmod +x /bin/udp-custom-manager 2>/dev/null || true
+                    udp-custom-manager
+                fi
                 ;;
             10) menub ;;
             11)
@@ -3157,19 +3156,24 @@ menu_protocolos() {
             15) fun_chisel ;;
             16) menu_bhttp ;;
             17)
-                if [[ -x /bin/udp-custom-manager || -x /usr/bin/udp-custom-manager ]]; then
-                    udp-custom-manager
-                elif [[ -f /opt/ssh-cris/Modulos/udp-custom-manager ]]; then
-                    bash /opt/ssh-cris/Modulos/udp-custom-manager
+                if [[ -x /bin/hcr-manager || -x /usr/bin/hcr-manager ]]; then
+                    hcr-manager
+                elif [[ -f /opt/ssh-cris/Modulos/hcr-manager ]]; then
+                    bash /opt/ssh-cris/Modulos/hcr-manager
                 else
                     clear
-                    echo -e "\033[1;32mDescargando e iniciando UDP Custom Manager...\033[0m"
-                    curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager -o /bin/udp-custom-manager 2>/dev/null
-                    chmod +x /bin/udp-custom-manager 2>/dev/null || true
-                    udp-custom-manager
+                    echo -e "\033[1;32mDescargando e iniciando HCR Manager...\033[0m"
+                    curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager -o /bin/hcr-manager 2>/dev/null
+                    chmod +x /bin/hcr-manager 2>/dev/null || true
+                    hcr-manager
                 fi
                 ;;
-            18) exportar_servidor_gen ;;
+            18)
+                clear
+                echo -e "\033[1;33mTrojan-Go integrado via motor Xray (Puerto 443 / 8443).\033[0m"
+                pause
+                ;;
+            19) exportar_servidor_gen ;;
             0|00) return ;;
             *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
         esac
