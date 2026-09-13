@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# ==============================================================================
+#  SSH-CRIS / HTTP CONEXIÓN — TELEMETRY JSON GENERATOR (GEN & APP INTERFACE)
+# ==============================================================================
+export LC_ALL=C
+
+UP=$(uptime -p 2>/dev/null || uptime 2>/dev/null | awk -F, '{print $1}')
+OS=$(lsb_release -sd 2>/dev/null || cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '"' || echo Linux)
+
+# RAM
+MEM_TOT=$(grep -i MemTotal /proc/meminfo 2>/dev/null | awk '{print int($2/1024)}' || echo 0)
+MEM_AVAIL=$(grep -i MemAvailable /proc/meminfo 2>/dev/null | awk '{print int($2/1024)}' || echo 0)
+MEM_USED=$(( MEM_TOT - MEM_AVAIL ))
+[[ $MEM_USED -lt 0 ]] && MEM_USED=0
+MEM_PCT=0
+[[ $MEM_TOT -gt 0 ]] && MEM_PCT=$(( MEM_USED * 100 / MEM_TOT ))
+
+# CPU
+CPU_PCT=$(top -bn1 2>/dev/null | grep -i "cpu(s)" | head -1 | awk -F, '{for(i=1;i<=NF;i++) if($i ~ /id/) {gsub(/[^0-9.]/,"",$i); print int(100 - $i)}}')
+[[ -z "$CPU_PCT" ]] && CPU_PCT=0
+
+# USERS
+U_TOT=$(grep -c ":x:[1-9][0-9][0-9][0-9]:" /etc/passwd 2>/dev/null || echo 0)
+U_ON=$(ps -u $(awk -F: '$3>=1000{print $1}' /etc/passwd | tr '\n' ',') 2>/dev/null | grep -c sshd || echo 0)
+U_EXP=0
+[[ -f /etc/SSHPlus/Exp ]] && U_EXP=$(wc -l < /etc/SSHPlus/Exp 2>/dev/null || echo 0)
+
+# PORTS
+BHTTP_P=$(ss -tlpn 2>/dev/null | grep -E "bhttp-server|bilola" | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | tr '\n' ' ' || true)
+BHTTP_TLS=$(ss -tlpn 2>/dev/null | grep -E "xhttp-server" | awk '{print $4}' | awk -F: '{print $NF}' | head -1 || true)
+HYST_P=$(ss -ulnp 2>/dev/null | grep hysteria | awk '{print $5}' | grep -oE "[0-9]+$" | head -1 || true)
+V2_P=$(ss -tlpn 2>/dev/null | grep -E "v2ray|xray" | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | tr '\n' ' ' || true)
+SLOW_P=$(pgrep -af dnstt-server 2>/dev/null | grep -oE -- "-udp :[0-9]+" | head -1 | grep -oE "[0-9]+" || true)
+DROP_P=$(ss -tlpn 2>/dev/null | grep dropbear | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | tr '\n' ' ' || true)
+SSH_P=$(grep '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | tr '\n' ' ' || echo "22")
+SOCKS_P=$(ss -tlpn 2>/dev/null | grep -E "proxy\.py|wsproxy\.py" | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | tr '\n' ' ' || true)
+
+cat <<EOF
+{
+  "hostname": "$(hostname 2>/dev/null || echo vps)",
+  "os": "$OS",
+  "uptime": "$UP",
+  "cpu_pct": $CPU_PCT,
+  "ram_total_mb": $MEM_TOT,
+  "ram_used_mb": $MEM_USED,
+  "ram_pct": $MEM_PCT,
+  "users_total": $U_TOT,
+  "users_online": $U_ON,
+  "users_expired": $U_EXP,
+  "openssh_ports": "${SSH_P%% }",
+  "socks_ports": "${SOCKS_P%% }",
+  "bhttp_ports": "${BHTTP_P%% }",
+  "bhttp_tls": "${BHTTP_TLS%% }",
+  "hysteria_port": "${HYST_P%% }",
+  "v2ray_ports": "${V2_P%% }",
+  "slowdns_port": "${SLOW_P%% }",
+  "dropbear_ports": "${DROP_P%% }"
+}
+EOF

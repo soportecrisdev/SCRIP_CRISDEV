@@ -166,7 +166,7 @@ _mdls=(
     "rootpass" "rps_cpu" "slowdnsmanager" "speedtest" "sshmonitor" "sshplus_lang" "swapmemory"
     "tcptweaker.sh" "testbot" "testbot.sh" "totaltraffic" "trojan-go" "tuning" "tweaker"
     "uexpired" "uncompress" "userbackup" "utili" "v2raymanager" "v2raypanel" "version"
-    "vnc_inst" "webmin.sh" "websocket.sh" "wsproxy.py"
+    "vnc_inst" "webmin.sh" "websocket.sh" "wsproxy.py" "sshplus_stats"
 )
 
 # Copiar o descargar modulos a /bin
