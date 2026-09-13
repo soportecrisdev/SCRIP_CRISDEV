@@ -1,0 +1,9 @@
+#!/bin/bash
+clear
+[[ -e /home/version ]] && rm /home/version
+wget -qO /home/version "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/version" > /dev/null 2>&1
+[[ -f "/home/version" ]] && {
+	vrs1=$({ sed -n '1 p' /bin/version 2>/dev/null || sed -n '1 p' /bin/versao 2>/dev/null; } | sed -e 's/[^0-9]//ig')
+    vrs2=$(sed -n '1 p' /home/version | sed -e 's/[^0-9]//ig')
+	[[ "$vrs1" != "$vrs2" ]] && mv /home/version /tmp/att
+}

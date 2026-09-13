@@ -1,0 +1,116 @@
+#!/bin/bash
+# lang=es infousers
+
+NC='\033[0m'
+WHITE='\033[1;37m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[1;38;2;76;228;255m'
+NEON='\033[1;38;2;0;255;127m'
+DARK_GREEN='\033[0;32m'
+
+info_line() {
+	echo -e "${CYAN}============================================================${NC}"
+}
+
+info_dash() {
+	echo -e "${WHITE}------------------------------------------------------------${NC}"
+}
+
+info_title() {
+	info_line
+	echo -e "${CYAN}                   INFORME DE USUARIOS${NC}"
+	info_line
+}
+
+info_back() {
+	info_line
+	echo -e "${NEON}[0]${NC} ${WHITE}>${NC} ${WHITE}VOLVER${NC}"
+	info_line
+	echo -ne "${CYAN}Opcion:${NC} "
+	read -r _
+	menu
+}
+
+info_is_script_user() {
+	local user="$1"
+	[[ "$user" =~ ^(nobody|systemd-|polkitd|messagebus|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|gnats|_apt)$ ]] && return 1
+	[[ -e "/etc/SSHPlus/senha/$user" ]] && return 0
+	[[ -f "$HOME/usuarios.db" ]] && grep -qw "$user" "$HOME/usuarios.db" && return 0
+	[[ -f /etc/SSHPlus/Exp ]] && grep -qw "$user" /etc/SSHPlus/Exp && return 0
+	return 1
+}
+
+info_user_limit() {
+	local user="$1"
+	if [[ -f "$HOME/usuarios.db" ]] && grep -qw "$user" "$HOME/usuarios.db"; then
+		grep -w "$user" "$HOME/usuarios.db" | head -1 | awk '{print $2}'
+	else
+		echo "1"
+	fi
+}
+
+info_user_pass() {
+	local user="$1"
+	if [[ -e "/etc/SSHPlus/senha/$user" ]]; then
+		cat "/etc/SSHPlus/senha/$user"
+	else
+		echo "Null"
+	fi
+}
+
+info_user_days() {
+	local user="$1" raw exp today days
+	raw="$(chage -l "$user" 2>/dev/null | awk -F: '/Account expires|La cuenta caduca|Cuenta expira|conta expira/ {gsub(/^ +/,"",$2); print $2; exit}')"
+	[[ -z "$raw" ]] && raw="$(chage -l "$user" 2>/dev/null | grep -iE 'expires|caduca|expira' | head -1 | awk -F: '{gsub(/^ +/,"",$2); print $2}')"
+	if [[ -z "$raw" || "$raw" =~ ^(never|nunca)$ ]]; then
+		echo "Nunca"
+		return
+	fi
+	exp="$(date -d "$raw" +%s 2>/dev/null)"
+	today="$(date -d today +%s 2>/dev/null)"
+	if [[ -z "$exp" || -z "$today" ]]; then
+		echo "S/R"
+	elif [[ "$today" -ge "$exp" ]]; then
+		echo "Vencido"
+	else
+		days=$(( (exp - today) / 86400 ))
+		echo "$days dias"
+	fi
+}
+
+clear
+info_title
+
+mapfile -t users < <(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd | sort)
+filtered=()
+for user in "${users[@]}"; do
+	info_is_script_user "$user" || continue
+	filtered+=("$user")
+done
+
+_total="${#filtered[@]}"
+_ons="$(ps -x | grep sshd | grep -v root | grep priv | wc -l)"
+[[ -e /etc/openvpn/openvpn-status.log ]] && _onop="$(grep -c "10.8.0" /etc/openvpn/openvpn-status.log)" || _onop="0"
+[[ -e /etc/default/dropbear ]] && _drp="$(ps aux | grep dropbear | grep -v grep | wc -l)" && _ondrp=$((_drp > 0 ? _drp - 1 : 0)) || _ondrp="0"
+_online=$((_ons + _onop + _ondrp))
+_expired=0
+for user in "${filtered[@]}"; do
+	[[ "$(info_user_days "$user")" = "Vencido" ]] && _expired=$((_expired + 1))
+done
+
+echo -e "${WHITE}           TOTAL: ${GREEN}${_total}${WHITE} - EN LINEA: ${GREEN}${_online}${WHITE} - VENCIDOS: ${GREEN}${_expired}${NC}"
+info_line
+printf "${WHITE}%-22s %-12s %-10s %s${NC}\n" "USUARIO" "CONTRASENA" "LIMITE" "VENCIMIENTO"
+info_dash
+
+i=1
+for user in "${filtered[@]}"; do
+	pass="$(info_user_pass "$user")"
+	limit="$(info_user_limit "$user")"
+	days="$(info_user_days "$user")"
+	printf "${NEON}[%s]${NC} ${WHITE}>${NC} ${WHITE}%-18s${NC} ${WHITE}%-12s %-10s ${GREEN}%s${NC}\n" "$i" "$user" "$pass" "$limit" "$days"
+	i=$((i + 1))
+done
+
+info_back

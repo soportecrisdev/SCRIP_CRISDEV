@@ -1,0 +1,129 @@
+#!/bin/bash
+#====================================================
+#	Dev. J DAVID AG
+#====================================================
+# Repo GitHub (usuario/repo y rama). Por defecto: soportecrisdev/SCRIP_CRISDEV
+#   export SSHPLUS_GH_USER_REPO="usuario/repo"
+#   export SSHPLUS_GH_BRANCH="main"
+SSHPLUS_GH_USER_REPO="${SSHPLUS_GH_USER_REPO:-soportecrisdev/SCRIP_CRISDEV}"
+case "${SSHPLUS_GH_USER_REPO}" in
+usuario/tu-repo|tu_usuario/tu_repo) SSHPLUS_GH_USER_REPO="soportecrisdev/SCRIP_CRISDEV" ;;
+esac
+SSHPLUS_GH_BRANCH="${SSHPLUS_GH_BRANCH:-main}"
+SSHPLUS_RAW="https://raw.githubusercontent.com/${SSHPLUS_GH_USER_REPO}/${SSHPLUS_GH_BRANCH}"
+_lvk=$(wget -qO- "${SSHPLUS_RAW}/Modulos/version")
+IP=$(wget -qO- ipv4.icanhazip.com)
+IP2=$(wget -qO- http://whatismyip.akamai.com/)
+[[ "$IP" != "$IP2" ]] && ipdovps="$IP2" || ipdovps="$IP"
+echo -e "$ipdovps" >/etc/IP
+lst=$1 && lst1=$2 && lst2=$3 && key1=$4 && key2=crz
+echo -e "America/Sao_Paulo" >/etc/timezone
+ln -fs /usr/share/zoneinfo/America/Sao_Paulo /etc/localtime >/dev/null 2>&1
+dpkg-reconfigure --frontend noninteractive tzdata >/dev/null 2>&1
+[[ -z $lst1 ]] && {
+	rm -rf $_Ink/list >/dev/null 2>&1 && cat /dev/null >~/.bash_history && history -c && exit 0
+}
+[[ ! -d /etc/SSHPlus ]] && mkdir /etc/SSHPlus
+[[ ! -d /etc/SSHPlus/v2ray ]] && mkdir /etc/SSHPlus/v2ray
+[[ ! -d /etc/SSHPlus/senha ]] && mkdir /etc/SSHPlus/senha
+[[ ! -e /etc/SSHPlus/Exp ]] && touch /etc/SSHPlus/Exp
+[[ ! -d /etc/SSHPlus/userteste ]] && mkdir /etc/SSHPlus/userteste
+[[ ! -d /etc/SSHPlus/.tmp ]] && mkdir /etc/SSHPlus/.tmp
+[[ ! -d /etc/bot ]] && mkdir /etc/bot
+[[ ! -d /etc/bot/info-users ]] && mkdir /etc/bot/info-users
+[[ ! -d /etc/bot/arquivos ]] && mkdir /etc/bot/arquivos
+[[ ! -d /etc/bot/revenda ]] && mkdir /etc/bot/revenda
+[[ ! -d /etc/bot/suspensos ]] && mkdir /etc/bot/suspensos
+[[ ! -d /etc/rec ]] && mkdir /etc/rec
+[[ ! -e /etc/bot/lista_ativos ]] && touch /etc/bot/lista_ativos
+[[ ! -e /etc/bot/lista_suspensos ]] && touch /etc/bot/lista_suspensos
+echo -e 'By J DAVID AG' >/usr/lib/sshplus && cat /usr/lib/sshplus >$lst2/licence && cat /usr/lib/sshplus > /etc/SSHPlus/.tmp/crazy
+cp -f /usr/lib/sshplus /usr/lib/licence 2>/dev/null || true
+netstat -nplt | grep -w 'apache2' | grep -w '80' && sed -i "s/Listen 80/Listen 81/g" /etc/apache2/ports.conf && service apache2 restart
+[[ "$(grep -o '#Port 22' /etc/ssh/sshd_config)" == "#Port 22" ]] && sed -i "s;#Port 22;Port 22;" /etc/ssh/sshd_config && service ssh restart
+grep -v "^PasswordAuthentication" /etc/ssh/sshd_config >/tmp/passlogin && mv /tmp/passlogin /etc/ssh/sshd_config
+echo "PasswordAuthentication yes" >>/etc/ssh/sshd_config
+_dir1='/bin'
+_dir2='/etc/SSHPlus'
+rm $_dir2/ShellBot.sh $_dir2/cabecalho $_dir2/open.py $_dir2/proxy.py $_dir2/wsproxy.py >/dev/null 2>&1
+_mdls=("addhost" "help" "sshplus_lang" "changelimit" "changepass" "tcptweaker.sh" "gltunnel" "utili" "multi" "apache2menu" "check" "chuser" "limit" "rps_cpu" "attscript" "badvpn" "badpro" "badpro1" "badvpn2" "badvpn3" "banner" "bashtop" "ddos" "blocksite" "blockt" "blockuser" "bot" "botssh" "connection" "createtest" "createuser" "delhost" "delscript" "details" "droplimiter" "expcleaner" "fr" "hysteria-menu" "infousers" "install-testbot" "initcheck" "instsqd" "limiter" "menu" "menub" "changedate" "mtuning" "open.py" "optimize" "v2raypanel" "proxy.py" "restartservices" "restartsystem" "removeuser" "rootpass" "ShellBot.sh" "slowdnsmanager" "speedtest" "sshmonitor" "swapmemory" "totaltraffic" "trojan-go" "uexpired" "userbackup" "checkupdate" "checkbot" "v2raymanager" "webmin.sh" "websocket.sh" "wsproxy.py" "pkill.sh")
+for _arq in ${_mdls[@]}; do
+	[[ -e $_dir1/$_arq ]] && rm $_dir1/$_arq >/dev/null 2>&1
+	wget -c -P $_dir1 "${SSHPLUS_RAW}/Modulos/$_arq"
+	chmod +x $_dir1/$_arq
+done
+for _f in cabecalho bot open.py proxy.py wsproxy.py; do
+	[[ -e $_dir1/$_f ]] && mv $_dir1/$_f $_dir2
+done
+sshplus_compat_alias() {
+	local old="$1" new="$2"
+	[[ -e "$_dir1/$new" ]] || return 0
+	rm -f "$_dir1/$old" 2>/dev/null || true
+	ln -s "$_dir1/$new" "$_dir1/$old" 2>/dev/null || cp -f "$_dir1/$new" "$_dir1/$old"
+	chmod +x "$_dir1/$old" 2>/dev/null || true
+}
+sshplus_compat_alias conexao connection
+sshplus_compat_alias criarusuario createuser
+sshplus_compat_alias criarteste createtest
+sshplus_compat_alias remover removeuser
+sshplus_compat_alias mudardata changedate
+sshplus_compat_alias alterarsenha changepass
+sshplus_compat_alias alterarlimite changelimit
+sshplus_compat_alias ajuda help
+sshplus_compat_alias detalhes details
+sshplus_compat_alias otimizar optimize
+sshplus_compat_alias painelv2ray v2raypanel
+sshplus_compat_alias reiniciarservicos restartservices
+sshplus_compat_alias reiniciarsistema restartsystem
+sshplus_compat_alias senharoot rootpass
+sshplus_compat_alias trafegototal totaltraffic
+sshplus_compat_alias versao version
+sshplus_compat_alias verifatt checkupdate
+sshplus_compat_alias verifbot checkbot
+sshplus_compat_alias botteste testbot
+sshplus_compat_alias botteste.sh testbot.sh
+sshplus_compat_alias inst-botteste install-testbot
+_arq_host="/etc/hosts"
+_host[0]="d1n212ccp6ldpw.cloudfront.net"
+_host[1]="dns.whatsapp.net"
+_host[2]="portalrecarga.vivo.com.br/recarga"
+_host[3]="navegue.vivo.com.br/controle/"
+_host[4]="navegue.vivo.com.br/pre/"
+_host[5]="www.whatsapp.net"
+_host[6]="/SSHPLUS?"
+for host in ${_host[@]}; do
+	if [[ "$(grep -w "$host" $_arq_host | wc -l)" = "0" ]]; then
+		sed -i "3i\127.0.0.1 $host" $_arq_host
+	fi
+done
+[[ ! -e /etc/autostart ]] && {
+	echo '#!/bin/bash
+clear
+#INICIO AUTOMATICO' >/etc/autostart
+	chmod +x /etc/autostart
+} || {
+	[[ $(ps x | grep "bot_plus" | grep -v grep | wc -l) != '0' ]] && wget -qO- "${SSHPLUS_RAW}/Modulos/ShellBot.sh"
+	for proc in $(ps x | grep 'dmS' | grep -v 'grep' | awk {'print $1'}); do
+		screen -r -S "$proc" -X quit	
+done
+	screen -wipe >/dev/null
+	echo '#!/bin/bash
+clear
+#INICIO AUTOMATICO' >/etc/autostart
+	chmod +x /etc/autostart
+}
+crontab -r >/dev/null 2>&1
+(
+	crontab -l 2>/dev/null
+	echo "@daily /bin/checkupdate"
+	echo "@reboot /etc/autostart"
+	echo "* * * * * /etc/autostart"
+	echo "0 */6 * * * /bin/uexpired"
+) | crontab -
+echo "$_lvk" | sed -n '1 p' | cut -d' ' -f2 >/bin/version && cp -f /bin/version /bin/versao && cat /bin/version >/home/sshplus
+wget "${SSHPLUS_RAW}/Install/jq-linux64" >/dev/null 2>&1
+chmod +x jq-linux64 && mv jq-linux64 $(which jq)
+service cron restart >/dev/null 2>&1
+service ssh restart >/dev/null 2>&1
+[[ -d /var/www/html/openvpn ]] && service apache2 restart >/dev/null 2>&1
+rm -rf $lst1/list >/dev/null 2>&1

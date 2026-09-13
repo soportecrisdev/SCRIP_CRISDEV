@@ -1,0 +1,144 @@
+#!/bin/bash
+# lang=es removeuser v3-2026
+
+NC='\033[0m'
+WHITE='\033[1;37m'
+GREEN='\033[1;32m'
+RED='\033[1;31m'
+CYAN='\033[1;38;2;76;228;255m'
+NEON='\033[1;38;2;0;255;127m'
+DARK_GREEN='\033[0;32m'
+
+database="/root/usuarios.db"
+
+rm_line() {
+	echo -e "${CYAN}============================================================${NC}"
+}
+
+rm_title() {
+	rm_line
+	echo -e "${CYAN}$1${NC}"
+	rm_line
+}
+
+rm_opt() {
+	echo -e "${NEON}[$1]${NC} ${WHITE}>${NC} ${WHITE}$2${NC}"
+}
+
+rm_prompt() {
+	echo -ne "${CYAN}Opcion:${NC} "
+}
+
+remove_ovp() {
+	local user="$1" GROUPNAME
+	[[ -e /etc/debian_version ]] && GROUPNAME=nogroup
+	cd /etc/openvpn/easy-rsa/ || return
+	./easyrsa --batch revoke "$user"
+	./easyrsa gen-crl
+	rm -rf "pki/reqs/$user.req" "pki/private/$user.key" "pki/issued/$user.crt"
+	rm -rf /etc/openvpn/crl.pem
+	cp /etc/openvpn/easy-rsa/pki/crl.pem /etc/openvpn/crl.pem
+	chown nobody:$GROUPNAME /etc/openvpn/crl.pem
+	[[ -e "$HOME/$user.ovpn" ]] && rm "$HOME/$user.ovpn" >/dev/null 2>&1
+	[[ -e "/var/www/html/openvpn/$user.zip" ]] && rm "/var/www/html/openvpn/$user.zip" >/dev/null 2>&1
+} >/dev/null 2>&1
+
+rm_is_script_user() {
+	local user="$1"
+	[[ "$user" =~ ^(nobody|systemd-|polkitd|messagebus|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|gnats|_apt)$ ]] && return 1
+	[[ -e "/etc/SSHPlus/senha/$user" ]] && return 0
+	[[ -f "$database" ]] && grep -qw "$user" "$database" && return 0
+	return 1
+}
+
+rm_load_users() {
+	mapfile -t RM_USERS < <(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd | sort)
+	RM_FILTERED=()
+	for user in "${RM_USERS[@]}"; do
+		rm_is_script_user "$user" || continue
+		RM_FILTERED+=("$user")
+	done
+}
+
+rm_delete_user() {
+	local user="$1" uid
+	[[ -z "$user" ]] && return 1
+	uid="$(id -u "$user" 2>/dev/null)"
+	[[ -n "$uid" ]] && pkill -u "$uid" >/dev/null 2>&1 || true
+	deluser --force "$user" >/dev/null 2>&1 || userdel --force "$user" >/dev/null 2>&1 || true
+	if [[ -f "$database" ]]; then
+		grep -v "^$user[[:space:]]" "$database" > /tmp/sshplus_users.$$ && cat /tmp/sshplus_users.$$ > "$database"
+		rm -f /tmp/sshplus_users.$$
+	fi
+	rm -f "/etc/SSHPlus/senha/$user" >/dev/null 2>&1
+	[[ -x /bin/hysteria-menu ]] && /bin/hysteria-menu --sync >/dev/null 2>&1 || true
+	[[ -e /etc/openvpn/server.conf ]] && remove_ovp "$user"
+}
+
+rm_one_menu() {
+	local opt user
+	while true; do
+		clear
+		rm_title "                   ELIMINAR USUARIOS"
+		echo -e "${WHITE}                   LISTA DE USUARIOS${NC}"
+		rm_line
+		rm_load_users
+		for i in "${!RM_FILTERED[@]}"; do
+			rm_opt "$((i + 1))" "${RM_FILTERED[$i]}"
+		done
+		rm_line
+		rm_opt "0" "VOLVER"
+		rm_line
+		rm_prompt
+		read -r opt
+		[[ "$opt" = "0" ]] && return
+		if [[ "$opt" =~ ^[0-9]+$ ]] && [[ "$opt" -ge 1 ]] && [[ "$opt" -le "${#RM_FILTERED[@]}" ]]; then
+			user="${RM_FILTERED[$((opt - 1))]}"
+			echo -ne "${DARK_GREEN}¿Eliminar al usuario ${NC}\033[1;37m$user${NC}${DARK_GREEN}? [s/n]:${NC} "
+			read -r confirm
+			[[ ! "$confirm" =~ ^[sS]$ ]] && { echo -e "\033[1;33mOperación cancelada.\033[0m"; sleep 1; rm_one_menu; return; }
+			rm_delete_user "$user"
+			echo -e "\n${GREEN}Usuario $user eliminado correctamente.${NC}"
+			sleep 2
+			return
+		else
+			echo -e "\033[1;31mOpción no valida!\033[0m"
+			sleep 1
+		fi
+	done
+}
+
+rm_all_menu() {
+	local opc user
+	clear
+	rm_title "             ELIMINAR TODOS LOS USUARIOS?"
+	echo -ne "${DARK_GREEN}DESEA ELIMINAR TODOS LOS USUARIOS [s/n]:${NC} "
+	read -r opc
+	[[ "$opc" =~ ^[sS]$ ]] || { echo -e "\033[1;33mOperación cancelada.\033[0m"; sleep 1; return; }
+	rm_load_users
+	for user in "${RM_FILTERED[@]}"; do
+		rm_delete_user "$user"
+	done
+	: > "$database"
+	rm -f /var/www/html/openvpn/*.zip >/dev/null 2>&1
+	echo -e "\n${GREEN}Usuarios eliminados correctamente.${NC}"
+	sleep 2
+}
+
+while true; do
+	clear
+	rm_title "              REMOVER USUARIO SSH Y HYSTERIA"
+	rm_opt "1" "ELIMINAR USUARIO"
+	rm_opt "2" "ELIMINAR TODOS LOS USUARIOS"
+	rm_opt "0" "VOLVER"
+	rm_line
+	rm_prompt
+	read -r resp
+	case "$resp" in
+		1) rm_one_menu ;;
+		2) rm_all_menu ;;
+		0 | 00 | 3) exit ;;
+		*) echo -e "\033[1;31mOpción no valida!\033[0m"; sleep 1 ;;
+	esac
+done
+

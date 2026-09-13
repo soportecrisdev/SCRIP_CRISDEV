@@ -1,0 +1,65 @@
+#!/bin/bash
+# lang=es menub
+[[ -f /bin/sshplus_lang ]] && . /bin/sshplus_lang
+
+NC='\033[0m'
+RED='\033[1;31m'
+YELLOW='\033[1;33m'
+WHITE='\033[1;37m'
+CYAN='\033[1;38;2;76;228;255m'
+NEON='\033[1;38;2;0;255;127m'
+DARK_GREEN='\033[0;32m'
+
+_menub_status_mark() {
+	pgrep -f "$1" >/dev/null 2>&1 && printf '\033[1;32mo\033[0m' || printf '\033[1;31mx\033[0m'
+}
+
+_menub_line() {
+	echo -e "${CYAN}============================================================${NC}"
+}
+
+_menub_opt() {
+	echo -e "${NEON}[$1]${NC} ${WHITE}>${NC} ${WHITE}$2${NC} $3"
+}
+
+while true; do
+	stsu="$(_menub_status_mark udpvpn)"
+	clear
+	_menub_line
+	echo -e "${CYAN}                       MENU BADVPN${NC}"
+	_menub_line
+	_menub_opt "1" "BADVPN PRO" "$stsu"
+	_menub_opt "2" "BADVPN 2" ""
+	_menub_opt "3" "BADVPN 3" ""
+	_menub_opt "4" "BADVPN 4 ACKHTTP" ""
+	_menub_opt "0" "VOLVER" ""
+	_menub_line
+	tput civis
+	echo -ne "${CYAN}Opcion:${NC} "
+	read x
+	tput cnorm
+	clear
+	case $x in
+	1 | 01)
+		badvpn
+		;;
+	2 | 02)
+		badvpn2
+		;;
+	3 | 03)
+		badpro1
+		;;
+	4 | 04)
+		badvpn3
+		;;
+	0 | 00)
+		clear
+		menu
+		break
+		;;
+	*)
+		echo -e "${RED}${L_OPC_INVALIDA:-Opcion no valida!}${NC}"
+		sleep 2
+		;;
+	esac
+done

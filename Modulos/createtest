@@ -1,0 +1,102 @@
+#!/bin/bash
+# lang=es createtest
+
+NC='\033[0m'
+WHITE='\033[1;37m'
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[1;38;2;76;228;255m'
+
+IP=$(cat /etc/IP 2>/dev/null)
+mkdir -p /etc/SSHPlus/userteste /etc/SSHPlus/senha
+
+line() {
+	echo -e "${CYAN}============================================================${NC}"
+}
+
+title() {
+	local t="$1" pad
+	clear
+	line
+	pad=$(( (60 - ${#t}) / 2 ))
+	[[ "$pad" -lt 0 ]] && pad=0
+	printf '%*s%b%s%b\n' "$pad" "" "$CYAN" "$t" "$NC"
+	line
+}
+
+prompt_value() {
+	echo -ne "${CYAN}>${NC} ${GREEN}$1:${NC} ${WHITE}"
+}
+
+show_error() {
+	echo ""
+	line
+	echo -e "${RED}$1${NC}"
+	line
+	echo -ne "${YELLOW}* ${WHITE}Enter para volver al menu${NC}"
+	read -r _
+	exit 1
+}
+
+title "CREAR USUARIO DE PRUEBA"
+
+if [ "$(ls -A /etc/SSHPlus/userteste 2>/dev/null)" ]; then
+	echo -e "${GREEN}ESTADO:${NC} ${WHITE}PRUEBA ACTIVA${NC}"
+else
+	echo -e "${GREEN}ESTADO:${NC} ${WHITE}SIN PRUEBA ACTIVA${NC}"
+fi
+line
+
+if [ "$(ls -A /etc/SSHPlus/userteste 2>/dev/null)" ]; then
+	echo -e "${GREEN}USUARIOS ACTIVOS:${NC}"
+	for testeson in $(ls /etc/SSHPlus/userteste | sort | sed 's/.sh//g'); do
+		echo -e "${CYAN}>${NC} ${WHITE}$testeson${NC}"
+	done
+	line
+fi
+
+prompt_value "NOMBRE DE USUARIO"; read -r nome
+[[ -z "$nome" ]] && show_error "Nombre vacio o no valido."
+
+awk -F : '{ print $1 }' /etc/passwd > /tmp/users
+grep -Fxq "$nome" /tmp/users && show_error "Este usuario ya existe."
+
+prompt_value "CONTRASENA"; read -r pass
+[[ -z "$pass" ]] && show_error "Contrasena vacia o no valida."
+
+prompt_value "LIMITE"; read -r limit
+[[ -z "$limit" ]] && show_error "Limite vacio o no valido."
+
+prompt_value "MINUTOS"; read -r u_temp
+[[ -z "$u_temp" ]] && show_error "Minutos vacios o no validos."
+
+useradd -M -s /bin/false "$nome"
+(echo "$pass"; echo "$pass") | passwd "$nome" >/dev/null 2>&1
+echo "$pass" > "/etc/SSHPlus/senha/$nome"
+echo "$nome $limit" >> /root/usuarios.db
+
+cat > "/etc/SSHPlus/userteste/$nome.sh" <<EOF
+#!/bin/bash
+pkill -f "$nome"
+userdel --force "$nome"
+grep -v "^$nome[[:space:]]" /root/usuarios.db > /tmp/ph
+cat /tmp/ph > /root/usuarios.db
+rm "/etc/SSHPlus/senha/$nome" >/dev/null 2>&1
+rm -rf "/etc/SSHPlus/userteste/$nome.sh"
+exit
+EOF
+
+chmod +x "/etc/SSHPlus/userteste/$nome.sh"
+at -f "/etc/SSHPlus/userteste/$nome.sh" now + "$u_temp" min >/dev/null 2>&1
+
+title "USUARIO DE PRUEBA CREADO"
+echo -e "${GREEN}IP:${NC} ${WHITE}$IP${NC}"
+echo -e "${GREEN}USUARIO:${NC} ${WHITE}$nome${NC}"
+echo -e "${GREEN}CONTRASENA:${NC} ${WHITE}$pass${NC}"
+echo -e "${GREEN}LIMITE:${NC} ${WHITE}$limit${NC}"
+echo -e "${GREEN}VALIDACION:${NC} ${WHITE}$u_temp minutos${NC}"
+line
+echo -e "${WHITE}Tras el tiempo definido, el usuario ${GREEN}$nome${WHITE} sera desconectado y eliminado.${NC}"
+line
+exit

@@ -1,0 +1,523 @@
+#!/bin/bash
+# Hysteria v1 manager for NoxuraSSH
+
+NC='\033[0m'
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+DARK_GREEN='\033[0;32m'
+NEON='\033[1;38;2;0;255;127m'
+YELLOW='\033[1;33m'
+WHITE='\033[1;37m'
+BLUE='\033[1;34m'
+CYAN='\033[1;38;2;76;228;255m'
+PALE_GOLD='\033[1;38;2;240;230;140m'
+
+HYST_BIN="/usr/local/bin/hysteria1"
+HYST_DIR="/etc/hysteria"
+HYST_CONF="${HYST_DIR}/config.json"
+HYST_ENV="${HYST_DIR}/sshplus.env"
+HYST_CERT="${HYST_DIR}/server.crt"
+HYST_KEY="${HYST_DIR}/server.key"
+HYST_IPTABLES="${HYST_DIR}/iptables.sh"
+HYST_SERVICE="/etc/systemd/system/hysteria-server.service"
+
+hyst_cleanup_old_menu_bins() {
+	for old in /bin/hysteria /usr/bin/hysteria; do
+		[[ -f "$old" ]] || continue
+		if grep -q 'Hysteria .* manager for NoxuraSSH' "$old" 2>/dev/null; then
+			rm -f "$old" 2>/dev/null || true
+		fi
+	done
+}
+
+hyst_clear() {
+	printf '\033c\033[3J\033[H\033[2J'
+}
+
+hyst_line() {
+	echo -e "${CYAN}============================================================${NC}"
+}
+
+hyst_red_line() {
+	echo -e "${CYAN}============================================================${NC}"
+}
+
+hyst_opt() {
+	echo -e "${NEON}[$1]${NC} ${WHITE}>${NC} $2"
+}
+
+hyst_pause() {
+	echo -ne "\n${RED}ENTER ${YELLOW}para volver${NC}"
+	read -r _
+}
+
+hyst_rand() {
+	tr -dc 'A-Za-z0-9' </dev/urandom | head -c "${1:-16}"
+}
+
+hyst_public_ip() {
+	curl -4fsS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}'
+}
+
+hyst_load_env() {
+	[[ -f "$HYST_ENV" ]] && . "$HYST_ENV"
+}
+
+hyst_client_ranges() {
+	local value="${1// /}"
+	echo "${value//:/-}"
+}
+
+hyst_migrate_old_port() {
+	hyst_load_env
+	if [[ -f "$HYST_CONF" ]]; then
+		hyst_install_binary >/dev/null 2>&1 && hyst_write_service
+	fi
+	if [[ "${HYST_PORT:-}" = "1" && -n "${HYST_RULES:-}" ]]; then
+		hyst_write_config "36712" "$HYST_RULES" "${HYST_OBFS:-$(hyst_rand 18)}" || return 0
+		hyst_write_service
+		systemctl restart hysteria-server >/dev/null 2>&1
+	elif grep -q 'type: password' "$HYST_CONF" 2>/dev/null || grep -q '^HYST_USER=' "$HYST_ENV" 2>/dev/null; then
+		hyst_write_config "${HYST_PORT:-36712}" "${HYST_RULES:-1:65535}" "${HYST_OBFS:-$(hyst_rand 18)}" || return 0
+		hyst_write_service
+		systemctl restart hysteria-server >/dev/null 2>&1
+	fi
+}
+
+hyst_status_mark() {
+	systemctl is-active --quiet hysteria-server 2>/dev/null && echo -e "${GREEN}o${NC}" || echo -e "${RED}x${NC}"
+}
+
+hyst_status_text() {
+	systemctl is-active --quiet hysteria-server 2>/dev/null && echo -e "${GREEN}o${NC}" || echo -e "${RED}x${NC}"
+}
+
+hyst_valid_port() {
+	local value="$1"
+	[[ "$value" =~ ^[0-9]+$ ]] || return 1
+	(( value >= 1 && value <= 65535 ))
+}
+
+hyst_valid_range() {
+	local value="$1" first last
+	[[ "$value" =~ ^[0-9]+(-[0-9]+)?$ ]] || return 1
+	first="${value%-*}"
+	last="${value#*-}"
+	[[ "$value" != *-* ]] && last="$first"
+	(( first >= 1 && first <= 65535 && last >= 1 && last <= 65535 && first <= last ))
+}
+
+hyst_valid_rule_ranges() {
+	local value="${1// /}" item first last
+	[[ -n "$value" ]] || return 1
+	IFS=',' read -ra _items <<<"$value"
+	for item in "${_items[@]}"; do
+		[[ "$item" =~ ^[0-9]+(:[0-9]+)?$ ]] || return 1
+		first="${item%%:*}"
+		last="${item##*:}"
+		[[ "$item" != *:* ]] && last="$first"
+		(( first >= 1 && first <= 65535 && last >= 1 && last <= 65535 && first <= last )) || return 1
+	done
+}
+
+hyst_json_quote() {
+	printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+}
+
+hyst_shell_quote() {
+	printf '%q' "$1"
+}
+
+hyst_build_auth_list() {
+	local db="/root/usuarios.db" pass_dir="/etc/SSHPlus/senha" user pass found=0 sep=""
+	[[ -f "$db" ]] || return 1
+	while read -r user _; do
+		[[ -z "$user" ]] && continue
+		[[ -f "$pass_dir/$user" ]] || continue
+		pass="$(cat "$pass_dir/$user" 2>/dev/null)"
+		[[ -z "$pass" ]] && continue
+		printf '%s      %s\n' "$sep" "$(hyst_json_quote "${user}:${pass}")"
+		sep=","
+		found=1
+	done <"$db"
+	[[ "$found" = "1" ]]
+}
+
+hyst_install_binary() {
+	hyst_cleanup_old_menu_bins
+	apt-get update -y >/dev/null 2>&1 || true
+	apt-get install -y iptables openssl curl wget >/dev/null 2>&1 || true
+	if [[ -x "$HYST_BIN" ]]; then
+		return 0
+	fi
+	echo -e "${YELLOW}Descargando Hysteria v1...${NC}"
+	local asset url
+	case "$(uname -m)" in
+		x86_64|amd64) asset="hysteria-linux-amd64" ;;
+		aarch64|arm64|armv8) asset="hysteria-linux-arm64" ;;
+		*) echo -e "${RED}Arquitectura no compatible para Hysteria v1.${NC}"; return 1 ;;
+	esac
+	url="https://github.com/apernet/hysteria/releases/download/v1.3.5/${asset}"
+	if command -v curl >/dev/null 2>&1; then
+		curl -fL "$url" -o "$HYST_BIN"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -qO "$HYST_BIN" "$url"
+	else
+		echo -e "${RED}Necesita curl o wget para instalar Hysteria.${NC}"
+		return 1
+	fi
+	chmod +x "$HYST_BIN" 2>/dev/null
+	[[ -x "$HYST_BIN" ]]
+}
+
+hyst_write_service() {
+	cat >"$HYST_SERVICE" <<EOF
+[Unit]
+Description=Hysteria v1 Server - SSH Plus
+After=network.target
+
+[Service]
+Type=simple
+Environment=HYSTERIA_LOG_LEVEL=debug
+ExecStart=${HYST_BIN} -c ${HYST_CONF} server
+ExecStartPre=${HYST_IPTABLES} apply
+ExecStopPost=${HYST_IPTABLES} clear
+WorkingDirectory=${HYST_DIR}
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
+EOF
+	systemctl daemon-reload >/dev/null 2>&1
+	systemctl enable hysteria-server >/dev/null 2>&1
+}
+
+hyst_write_config() {
+	local port="$1" rules="$2" obfs="$3" auth_block
+	auth_block="$(hyst_build_auth_list)" || return 2
+	mkdir -p "$HYST_DIR"
+	if [[ ! -f "$HYST_CERT" || ! -f "$HYST_KEY" ]]; then
+		openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
+			-keyout "$HYST_KEY" -out "$HYST_CERT" -subj "/CN=sshplus-hysteria" >/dev/null 2>&1
+	fi
+	rm -f /etc/hysteria/config.yaml 2>/dev/null || true
+	cat >"$HYST_CONF" <<EOF
+{
+  "listen": ":${port}",
+  "cert": "${HYST_CERT}",
+  "key": "${HYST_KEY}",
+  "obfs": $(hyst_json_quote "$obfs"),
+  "auth": {
+    "mode": "passwords",
+    "config": [
+${auth_block}
+    ]
+  }
+}
+EOF
+	cat >"$HYST_ENV" <<EOF
+HYST_PORT=$(hyst_shell_quote "$port")
+HYST_RULES=$(hyst_shell_quote "$rules")
+HYST_OBFS=$(hyst_shell_quote "$obfs")
+EOF
+	cat >"$HYST_IPTABLES" <<'EOF'
+#!/bin/bash
+ACTION="$1"
+ENV_FILE="/etc/hysteria/sshplus.env"
+CHAIN="SSHPLUS_HYSTERIA"
+
+[[ -f "$ENV_FILE" ]] && . "$ENV_FILE"
+
+clear_rules() {
+	while iptables -t nat -C PREROUTING -p udp -j "$CHAIN" >/dev/null 2>&1; do
+		iptables -t nat -D PREROUTING -p udp -j "$CHAIN" >/dev/null 2>&1 || break
+	done
+	iptables -t nat -F "$CHAIN" >/dev/null 2>&1 || true
+	iptables -t nat -X "$CHAIN" >/dev/null 2>&1 || true
+}
+
+apply_rules() {
+	clear_rules
+	iptables -I INPUT 1 -p udp --dport "${HYST_PORT:-36712}" -j ACCEPT >/dev/null 2>&1 || true
+	[[ -z "$HYST_RULES" || "$HYST_RULES" = "none" || "$HYST_RULES" = "0" ]] && return 0
+	iptables -t nat -N "$CHAIN" >/dev/null 2>&1 || true
+	iptables -t nat -I PREROUTING 1 -p udp -j "$CHAIN" >/dev/null 2>&1 || true
+	local clean="${HYST_RULES// /}" item
+	IFS=',' read -ra items <<<"$clean"
+	for item in "${items[@]}"; do
+		[[ -z "$item" || "$item" = "53" || "$item" = "5300" ]] && continue
+		iptables -t nat -A "$CHAIN" -p udp --dport "$item" -j REDIRECT --to-ports "$HYST_PORT" >/dev/null 2>&1 || true
+	done
+}
+
+case "$ACTION" in
+	apply) apply_rules ;;
+	clear) clear_rules ;;
+esac
+EOF
+	chmod +x "$HYST_IPTABLES" 2>/dev/null
+	chmod 600 "$HYST_CONF" "$HYST_ENV" "$HYST_KEY" 2>/dev/null
+}
+
+hyst_sync_users() {
+	[[ -f "$HYST_ENV" ]] || return 0
+	hyst_load_env
+	if ! hyst_build_auth_list >/dev/null; then
+		systemctl stop hysteria-server >/dev/null 2>&1 || true
+		return 0
+	fi
+	hyst_write_config "${HYST_PORT:-36712}" "${HYST_RULES:-1:65535}" "${HYST_OBFS:-$(hyst_rand 18)}" || return 0
+	hyst_install_binary >/dev/null 2>&1 && hyst_write_service
+	systemctl restart hysteria-server >/dev/null 2>&1 || true
+}
+
+hyst_show_info() {
+	hyst_migrate_old_port
+	hyst_load_env
+	local ip
+	ip="$(hyst_public_ip)"
+	echo -e "${GREEN}Puerto principal:${NC} ${HYST_PORT:-N/A}"
+	echo -e "${GREEN}Rangos iptables:${NC} ${HYST_RULES:-N/A}"
+	echo -e "${GREEN}OBFS:${NC} ${HYST_OBFS:-N/A}"
+	echo -e "${GREEN}Servidor:${NC} ${ip:-IP_DEL_VPS}:$(hyst_client_ranges "${HYST_RULES:-${HYST_PORT:-PUERTO}}")"
+	echo -e "${GREEN}Auth Hysteria v1:${NC} use usuario:contrasena SSH"
+	echo -e "${GREEN}TLS cliente:${NC} insecure/allowInsecure = true"
+	echo -e "${YELLOW}TLS usa certificado propio; en el cliente active insecure/allowInsecure.${NC}"
+}
+
+hyst_show_summary() {
+	hyst_migrate_old_port
+	hyst_load_env
+	local redirect
+	redirect="$(hyst_client_ranges "${HYST_RULES:-N/A}")"
+	hyst_red_line
+	echo -e "${CYAN}                       UDP-HYSTERIA v1${NC}"
+	hyst_red_line
+	echo -e "${WHITE}VERSION:${NC} ${PALE_GOLD}HYSTERIA v1${NC}"
+	echo -e "${WHITE}PORT:${NC} ${PALE_GOLD}${HYST_PORT:-36712}${NC}"
+	echo -e "${WHITE}REDIRECT:${NC} ${PALE_GOLD}${redirect} > ${HYST_PORT:-36712}${NC}"
+	echo -e "${WHITE}OBFS:${NC} ${PALE_GOLD}${HYST_OBFS:-N/A}${NC}"
+	hyst_red_line
+}
+
+hyst_configure() {
+	hyst_clear
+	echo -e "${CYAN}                INSTALAR HYSTERIA v1 UDP${NC}"
+	hyst_line
+	local port rules obfs
+	if ! hyst_build_auth_list >/dev/null; then
+		echo -e "${RED}No hay usuarios SSH con contrasena guardada.${NC}"
+		echo -e "${WHITE}Cree usuarios desde el menu principal y vuelva a instalar Hysteria v1.${NC}"
+		hyst_pause
+		return
+	fi
+	echo -ne "${GREEN}Puerto principal Hysteria v1 [36712]: ${NC}"
+	read -r port
+	[[ -z "$port" ]] && port="36712"
+	if ! hyst_valid_port "$port"; then
+		echo -e "${RED}Puerto invalido.${NC}"
+		sleep 2
+		return
+	fi
+	echo -ne "${GREEN}Habilitar Port Hopping (Rangos UDP)? [s/N]: ${NC}"
+	read -r hop_resp
+	if [[ "$hop_resp" =~ ^[sS]$ ]]; then
+		echo -ne "${GREEN}Rangos iptables UDP [20000:50000]: ${NC}"
+		read -r rules
+		[[ -z "$rules" ]] && rules="20000:50000"
+		if ! hyst_valid_rule_ranges "$rules"; then
+			echo -e "${RED}Rangos invalidos. Ejemplo: 20000:50000${NC}"
+			sleep 2
+			return
+		fi
+	else
+		rules="none"
+	fi
+	echo -ne "${GREEN}OBFS Hysteria v1 [aleatorio]: ${NC}"
+	read -r obfs
+	[[ -z "$obfs" ]] && obfs="$(hyst_rand 18)"
+	hyst_install_binary || {
+		hyst_pause
+		return
+	}
+	hyst_write_config "$port" "$rules" "$obfs" || {
+		echo -e "${RED}No se pudo sincronizar usuarios SSH para Hysteria v1.${NC}"
+		hyst_pause
+		return
+	}
+	hyst_write_service
+	systemctl restart hysteria-server >/dev/null 2>&1
+	hyst_line
+	echo -e "${GREEN}Hysteria v1 instalado/configurado.${NC}"
+	hyst_show_info
+	hyst_pause
+}
+
+hyst_change_obfs() {
+	hyst_load_env
+	echo -ne "${GREEN}Nuevo OBFS Hysteria v1: ${NC}"
+	read -r new_obfs
+	[[ -z "$new_obfs" ]] && return
+	hyst_write_config "${HYST_PORT:-36712}" "${HYST_RULES:-1:65535}" "$new_obfs"
+	systemctl restart hysteria-server >/dev/null 2>&1
+}
+
+hyst_change_range() {
+	while true; do
+		hyst_clear
+		echo -e "${CYAN}                RANGOS IPTABLES HYSTERIA v1${NC}"
+		hyst_line
+		hyst_load_env
+		echo -e "${GREEN}Puerto principal:${NC} ${HYST_PORT:-36712}"
+		echo -e "${DARK_GREEN}Reglas actuales:${NC} ${HYST_RULES:-1:65535}"
+		hyst_line
+		hyst_opt "1" "${WHITE}MODIFICAR RANGO IPTABLE${NC}"
+		hyst_opt "2" "${WHITE}PONER REGLA DE RANGOS IPTABLES${NC}"
+		hyst_opt "0" "${WHITE}VOLVER${NC}"
+		hyst_line
+		echo -ne "${CYAN}Opcion:${NC} "
+		read -r range_opt
+		case "$range_opt" in
+			1)
+				local from_port to_port new_rules
+				echo -ne "${GREEN}Desde puerto [1]: ${NC}"
+				read -r from_port
+				[[ -z "$from_port" ]] && from_port="1"
+				echo -ne "${GREEN}Hasta puerto [65535]: ${NC}"
+				read -r to_port
+				[[ -z "$to_port" ]] && to_port="65535"
+				new_rules="${from_port}:${to_port}"
+				if ! hyst_valid_rule_ranges "$new_rules"; then
+					echo -e "${RED}Rango invalido.${NC}"
+					sleep 2
+					continue
+				fi
+				hyst_write_config "${HYST_PORT:-36712}" "$new_rules" "${HYST_OBFS:-$(hyst_rand 18)}"
+				systemctl restart hysteria-server >/dev/null 2>&1
+				;;
+			2)
+				echo -ne "${GREEN}Reglas de rangos iptables [1:52,54:5299,5301:65535]: ${NC}"
+				read -r new_rules
+				[[ -z "$new_rules" ]] && new_rules="1:52,54:5299,5301:65535"
+				if ! hyst_valid_rule_ranges "$new_rules"; then
+					echo -e "${RED}Reglas invalidas.${NC}"
+					sleep 2
+					continue
+				fi
+				hyst_write_config "${HYST_PORT:-36712}" "$new_rules" "${HYST_OBFS:-$(hyst_rand 18)}"
+				systemctl restart hysteria-server >/dev/null 2>&1
+				;;
+			0|00) return ;;
+			*) echo -e "${RED}Opcion no valida.${NC}"; sleep 1 ;;
+		esac
+	done
+}
+
+hyst_toggle_service() {
+	if systemctl is-active --quiet hysteria-server 2>/dev/null; then
+		systemctl stop hysteria-server
+		echo -e "${YELLOW}Hysteria v1 detenido.${NC}"
+	else
+		systemctl start hysteria-server
+		echo -e "${GREEN}Hysteria v1 iniciado.${NC}"
+	fi
+	sleep 2
+}
+
+hyst_service_status() {
+	hyst_clear
+	echo -e "${CYAN}                ESTADO HYSTERIA v1${NC}"
+	hyst_line
+	systemctl status hysteria-server --no-pager -l 2>/dev/null
+	hyst_pause
+}
+
+hyst_reinstall() {
+	rm -f "$HYST_BIN" 2>/dev/null || true
+	hyst_configure
+}
+
+hyst_uninstall() {
+	hyst_clear
+	echo -ne "${RED}Desea desinstalar Hysteria v1? ${YELLOW}[s/n]: ${NC}"
+	read -r ans
+	[[ "$ans" = "s" || "$ans" = "S" ]] || return
+	systemctl stop hysteria-server >/dev/null 2>&1 || true
+	systemctl disable hysteria-server >/dev/null 2>&1 || true
+	rm -f "$HYST_SERVICE" "$HYST_BIN" /usr/local/bin/hysteria /usr/bin/hysteria /bin/hysteria 2>/dev/null
+	rm -rf "$HYST_DIR" 2>/dev/null
+	systemctl daemon-reload >/dev/null 2>&1 || true
+	echo -e "${GREEN}Hysteria v1 desinstalado.${NC}"
+	sleep 2
+}
+
+hyst_show_logs() {
+	hyst_clear
+	echo -e "${CYAN}                  LOG HYSTERIA v1${NC}"
+	hyst_line
+	systemctl status hysteria-server --no-pager -l 2>/dev/null | tail -n 20
+	echo ""
+	journalctl -u hysteria-server -n 30 --no-pager 2>/dev/null
+	hyst_pause
+}
+
+hyst_follow_logs() {
+	hyst_clear
+	echo -e "${CYAN}             LOG EN VIVO HYSTERIA v1${NC}"
+	hyst_line
+	echo -e "${WHITE}Intente conectar desde el cliente ahora. Use CTRL+C para salir.${NC}"
+	hyst_line
+	journalctl -u hysteria-server -f --no-pager
+}
+
+hyst_menu() {
+	while true; do
+		hyst_clear
+		if [[ ! -f "$HYST_CONF" ]]; then
+			hyst_red_line
+			echo -e "${CYAN}                       UDP-HYSTERIA v1${NC}"
+			hyst_red_line
+			hyst_opt "1" "${WHITE}INSTALAR HYSTERIA v1${NC}"
+			hyst_red_line
+			hyst_opt "0" "${WHITE}Volver${NC}"
+		else
+			hyst_show_summary
+			hyst_opt "1" "${WHITE}RECONFIGURAR UDP-HYSTERIA v1${NC}"
+			hyst_opt "2" "${WHITE}MODIFICAR OBFS${NC}"
+			hyst_red_line
+			hyst_opt "3" "${WHITE}MODIFICAR RANGOS IPTABLE${NC}"
+			hyst_opt "4" "${WHITE}ESTADO DEL SERVICIO${NC}"
+			hyst_opt "5" "${WHITE}REINICIAR SERVICIO${NC}"
+			hyst_opt "6" "${WHITE}INICIAR/PARAR SERVICIO ${NC}$(hyst_status_text)"
+			hyst_red_line
+			hyst_opt "7" "${WHITE}LOG UDP-HYSTERIA v1${NC}"
+			hyst_opt "8" "${WHITE}LOG UDP-HYSTERIA v1 EN TIEMPO REAL${NC}"
+			hyst_red_line
+			printf "%b  %b  %b\n" "${NEON}[0]${NC} ${WHITE}>${NC} ${WHITE}Volver${NC}" "${NEON}[9]${NC} ${WHITE}>${NC} ${WHITE}REINSTALAR${NC}" "${NEON}[10]${NC} ${WHITE}>${NC} ${WHITE}DESINSTALAR${NC}"
+		fi
+		hyst_red_line
+		echo -ne "${CYAN}Opcion:${NC} "
+		read -r opt
+		case "$opt" in
+			1) hyst_configure ;;
+			2) [[ -f "$HYST_CONF" ]] && hyst_change_obfs ;;
+			3) [[ -f "$HYST_CONF" ]] && hyst_change_range ;;
+			4) [[ -f "$HYST_CONF" ]] && hyst_service_status ;;
+			5) [[ -f "$HYST_CONF" ]] && systemctl restart hysteria-server && sleep 1 ;;
+			6) [[ -f "$HYST_CONF" ]] && hyst_toggle_service ;;
+			7) [[ -f "$HYST_CONF" ]] && hyst_show_logs ;;
+			8) [[ -f "$HYST_CONF" ]] && hyst_follow_logs ;;
+			9) [[ -f "$HYST_CONF" ]] && hyst_reinstall ;;
+			10) [[ -f "$HYST_CONF" ]] && hyst_uninstall ;;
+			0|00) clear; connection; exit ;;
+			*) echo -e "${RED}Opcion no valida.${NC}"; sleep 1 ;;
+		esac
+	done
+}
+
+case "${1:-}" in
+	--sync) hyst_sync_users ;;
+	*) hyst_menu ;;
+esac

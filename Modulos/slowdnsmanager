@@ -1,0 +1,600 @@
+#!/bin/bash
+# lang=es slowdnsmanager
+
+NC='\033[0m'
+WHITE='\033[1;37m'
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+DARK_GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[1;38;2;76;228;255m'
+NEON='\033[1;38;2;0;255;127m'
+
+SLOW_DIR="/etc/slowdns"
+SLOW_CONF="${SLOW_DIR}/slowdns.conf"
+SLOW_KEY="${SLOW_DIR}/server.key"
+SLOW_PUB="${SLOW_DIR}/server.pub"
+SLOW_BIN="/usr/local/bin/dnstt-server"
+SLOW_SERVICE="/etc/systemd/system/slowdns.service"
+SLOW_LOG="/var/log/slowdns.log"
+SLOW_PORT_DEFAULT="5300"
+SLOW_TRAFFIC_DEFAULT="22"
+SLOW_DOMAIN_DEFAULT=""
+
+slow_line() {
+	echo -e "${CYAN}============================================================${NC}"
+}
+
+slow_title() {
+	local title="$1" pad
+	slow_line
+	pad=$(( (60 - ${#title}) / 2 ))
+	[[ "$pad" -lt 0 ]] && pad=0
+	printf '%*s%b%s%b\n' "$pad" "" "$CYAN" "$title" "$NC"
+	slow_line
+}
+
+slow_opt() {
+	echo -e "${NEON}[$1]${NC} ${WHITE}>${NC} ${WHITE}$2${NC} $3"
+}
+
+slow_pause() {
+	echo -ne "\n${YELLOW}* ${WHITE}Enter para continuar${NC}"
+	read -r _
+}
+
+slow_load_conf() {
+	SLOW_PORT="$SLOW_PORT_DEFAULT"
+	SLOW_TRAFFIC="$SLOW_TRAFFIC_DEFAULT"
+	SLOW_DOMAIN="$SLOW_DOMAIN_DEFAULT"
+	SLOW_REDIRECT="53"
+	[[ -f "$SLOW_CONF" ]] && . "$SLOW_CONF" 2>/dev/null || true
+}
+
+slow_save_conf() {
+	mkdir -p "$SLOW_DIR"
+	cat > "$SLOW_CONF" <<EOF
+SLOW_PORT="${SLOW_PORT:-$SLOW_PORT_DEFAULT}"
+SLOW_TRAFFIC="${SLOW_TRAFFIC:-$SLOW_TRAFFIC_DEFAULT}"
+SLOW_DOMAIN="${SLOW_DOMAIN:-$SLOW_DOMAIN_DEFAULT}"
+SLOW_REDIRECT="${SLOW_REDIRECT:-53}"
+EOF
+	chmod 644 "$SLOW_CONF"
+}
+
+slow_detect_arch() {
+	case "$(uname -m)" in
+		x86_64|amd64) echo "amd64" ;;
+		aarch64|arm64) echo "arm64" ;;
+		armv7l|armhf) echo "arm" ;;
+		*) return 1 ;;
+	esac
+}
+
+slow_install_deps() {
+	if command -v apt-get >/dev/null 2>&1; then
+		apt-get update -y >/dev/null 2>&1 || true
+		apt-get install -y curl wget iptables net-tools ca-certificates dnsutils >/dev/null 2>&1 || true
+	fi
+}
+
+slow_download_bin() {
+	local arch url tmp
+	arch="$(slow_detect_arch)" || {
+		echo -e "${RED}Arquitectura no soportada: $(uname -m)${NC}"
+		return 1
+	}
+	url="https://dnstt.network/dnstt-server-linux-${arch}"
+	tmp="/tmp/dnstt-server.$$"
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL -o "$tmp" "$url" || true
+	fi
+	if [[ ! -s "$tmp" ]] && command -v wget >/dev/null 2>&1; then
+		wget -qO "$tmp" "$url" || true
+	fi
+	[[ -s "$tmp" ]] || {
+		echo -e "${RED}No se pudo descargar dnstt-server.${NC}"
+		return 1
+	}
+	chmod +x "$tmp"
+	mv -f "$tmp" "$SLOW_BIN"
+	chmod +x "$SLOW_BIN"
+}
+
+slow_generate_keys() {
+	mkdir -p "$SLOW_DIR"
+	[[ -x "$SLOW_BIN" ]] || slow_download_bin || return 1
+	"$SLOW_BIN" -gen-key -privkey-file "$SLOW_KEY" -pubkey-file "$SLOW_PUB" >/dev/null 2>&1
+	chmod 600 "$SLOW_KEY"
+	chmod 644 "$SLOW_PUB"
+}
+
+SLOW_IPTABLES="${SLOW_DIR}/iptables.sh"
+
+slow_tune_system() {
+	if [[ -f /etc/ssh/sshd_config ]]; then
+		sed -i '/^#\?MaxStartups/d' /etc/ssh/sshd_config
+		sed -i '/^#\?MaxSessions/d' /etc/ssh/sshd_config
+		sed -i '/^#\?ClientAliveInterval/d' /etc/ssh/sshd_config
+		sed -i '/^#\?ClientAliveCountMax/d' /etc/ssh/sshd_config
+		sed -i '/^#\?TCPKeepAlive/d' /etc/ssh/sshd_config
+		echo "MaxStartups 100:30:500" >> /etc/ssh/sshd_config
+		echo "MaxSessions 100" >> /etc/ssh/sshd_config
+		echo "ClientAliveInterval 10" >> /etc/ssh/sshd_config
+		echo "ClientAliveCountMax 6" >> /etc/ssh/sshd_config
+		echo "TCPKeepAlive yes" >> /etc/ssh/sshd_config
+		systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1 || true
+	fi
+
+	sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+	sysctl -w net.core.rmem_max=26214400 >/dev/null 2>&1 || true
+	sysctl -w net.core.rmem_default=26214400 >/dev/null 2>&1 || true
+	sysctl -w net.core.wmem_max=26214400 >/dev/null 2>&1 || true
+	sysctl -w net.core.wmem_default=26214400 >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.udp_rmem_min=16384 >/dev/null 2>&1 || true
+	sysctl -w net.ipv4.udp_wmem_min=16384 >/dev/null 2>&1 || true
+	sysctl -w net.netfilter.nf_conntrack_udp_timeout=120 >/dev/null 2>&1 || true
+	sysctl -w net.netfilter.nf_conntrack_udp_timeout_stream=300 >/dev/null 2>&1 || true
+	sysctl -p >/dev/null 2>&1 || true
+
+	iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu >/dev/null 2>&1 || \
+		iptables -t mangle -I FORWARD 1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu >/dev/null 2>&1 || true
+	iptables -t mangle -C OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu >/dev/null 2>&1 || \
+		iptables -t mangle -I OUTPUT 1 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu >/dev/null 2>&1 || true
+}
+
+slow_write_iptables_helper() {
+	mkdir -p "$SLOW_DIR"
+	cat > "$SLOW_IPTABLES" <<EOF
+#!/bin/bash
+ACTION="\$1"
+PORT="${SLOW_PORT:-$SLOW_PORT_DEFAULT}"
+REDIR="${SLOW_REDIRECT:-53}"
+
+clear_rules() {
+	iptables -D INPUT -p udp --dport "\$REDIR" -j ACCEPT >/dev/null 2>&1 || true
+	iptables -D INPUT -p udp --dport "\$PORT" -j ACCEPT >/dev/null 2>&1 || true
+	while iptables -t nat -C PREROUTING -p udp -m udp --dport "\$REDIR" -j REDIRECT --to-ports "\$PORT" >/dev/null 2>&1; do
+		iptables -t nat -D PREROUTING -p udp -m udp --dport "\$REDIR" -j REDIRECT --to-ports "\$PORT" >/dev/null 2>&1 || break
+	done
+	while iptables -t nat -C PREROUTING -p udp --dport "\$REDIR" -j REDIRECT --to-ports "\$PORT" >/dev/null 2>&1; do
+		iptables -t nat -D PREROUTING -p udp --dport "\$REDIR" -j REDIRECT --to-ports "\$PORT" >/dev/null 2>&1 || break
+	done
+}
+
+apply_rules() {
+	clear_rules
+	iptables -I INPUT 1 -p udp --dport "\$REDIR" -j ACCEPT >/dev/null 2>&1 || true
+	iptables -I INPUT 1 -p udp --dport "\$PORT" -j ACCEPT >/dev/null 2>&1 || true
+	iptables -t nat -I PREROUTING 1 -p udp -m udp --dport "\$REDIR" -j REDIRECT --to-ports "\$PORT" >/dev/null 2>&1 || true
+}
+
+case "\$ACTION" in
+	apply) apply_rules ;;
+	clear) clear_rules ;;
+esac
+EOF
+	chmod +x "$SLOW_IPTABLES" 2>/dev/null || true
+}
+
+slow_write_service() {
+	slow_write_iptables_helper
+	cat > "$SLOW_SERVICE" <<EOF
+[Unit]
+Description=SSHPlus SlowDNS DNSTT Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=${SLOW_IPTABLES} apply
+ExecStart=${SLOW_BIN} -udp :${SLOW_PORT} -privkey-file ${SLOW_KEY} ${SLOW_DOMAIN} 127.0.0.1:${SLOW_TRAFFIC}
+ExecStopPost=${SLOW_IPTABLES} clear
+Restart=always
+RestartSec=3
+LimitNOFILE=infinity
+StandardOutput=append:${SLOW_LOG}
+StandardError=append:${SLOW_LOG}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+	systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+slow_delete_rule() {
+	local tool="$1" rule="$2"
+	local -a args
+	rule="${rule/-A /-D }"
+	read -r -a args <<< "$rule"
+	"$tool" -t nat "${args[@]}" >/dev/null 2>&1 || true
+}
+
+slow_clean_redirects() {
+	local tool="$1" old_rule
+	while IFS= read -r old_rule; do
+		[[ -z "$old_rule" ]] && continue
+		slow_delete_rule "$tool" "$old_rule"
+	done < <("$tool" -t nat -S PREROUTING 2>/dev/null | grep -E -- "-p udp .*--dport ${SLOW_REDIRECT:-53} .* -j REDIRECT")
+}
+
+slow_apply_redirect() {
+	[[ -x "$SLOW_IPTABLES" ]] && "$SLOW_IPTABLES" apply && return 0
+	slow_write_iptables_helper
+	"$SLOW_IPTABLES" apply
+}
+
+slow_restart() {
+	slow_load_conf
+	slow_tune_system
+	slow_write_service
+	slow_apply_redirect
+	systemctl enable slowdns >/dev/null 2>&1 || true
+	systemctl restart slowdns >/dev/null 2>&1 || true
+}
+
+slow_check_connection() {
+	slow_load_conf
+	slow_line
+	echo -e "${DARK_GREEN}COMANDO:${NC} ${WHITE}${SLOW_BIN} -udp :${SLOW_PORT} -privkey-file ${SLOW_KEY} ${SLOW_DOMAIN} 127.0.0.1:${SLOW_TRAFFIC}${NC}"
+	if systemctl is-active --quiet slowdns 2>/dev/null; then
+		echo -e "${GREEN}SERVICIO SLOWDNS ACTIVO.${NC}"
+	else
+		echo -e "${RED}SERVICIO SLOWDNS NO ESTA ACTIVO.${NC}"
+		journalctl -u slowdns -n 12 --no-pager 2>/dev/null
+	fi
+	if ss -ulnp 2>/dev/null | grep -q ":${SLOW_PORT} "; then
+		echo -e "${GREEN}PUERTO UDP ${SLOW_PORT} EN ESCUCHA.${NC}"
+	else
+		echo -e "${RED}PUERTO UDP ${SLOW_PORT} NO APARECE EN ESCUCHA.${NC}"
+	fi
+	if iptables -t nat -S PREROUTING 2>/dev/null | grep -Eq -- "--dport ${SLOW_REDIRECT:-53} .*--to-ports ${SLOW_PORT}"; then
+		echo -e "${GREEN}REDIRECCION UDP ${SLOW_REDIRECT:-53} > ${SLOW_PORT} ACTIVA.${NC}"
+	else
+		echo -e "${RED}NO SE ENCONTRO REDIRECCION UDP ${SLOW_REDIRECT:-53} > ${SLOW_PORT}.${NC}"
+	fi
+	if command -v dig >/dev/null 2>&1 && [[ -n "$SLOW_DOMAIN" ]]; then
+		local dns_ns dns_a dns_ns_a
+		dns_ns="$(dig +short NS "$SLOW_DOMAIN" 2>/dev/null | xargs)"
+		dns_a="$(dig +short A "$SLOW_DOMAIN" 2>/dev/null | xargs)"
+		[[ -n "$dns_ns" ]] && dns_ns_a="$(dig +short A "$dns_ns" 2>/dev/null | xargs)"
+		echo -e "${DARK_GREEN}DNS NS:${NC} ${WHITE}${dns_ns:-NO RESUELVE}${NC}"
+		echo -e "${DARK_GREEN}DNS A:${NC} ${WHITE}${dns_a:-${dns_ns_a:-NO RESUELVE}}${NC}"
+	fi
+	slow_line
+}
+
+slow_diagnostics() {
+	clear
+	slow_title "DIAGNOSTICO SLOWDNS"
+	slow_check_connection
+	echo -e "${DARK_GREEN}CONFIG:${NC}"
+	[[ -f "$SLOW_CONF" ]] && sed 's/^/  /' "$SLOW_CONF" || echo -e "  ${RED}No existe ${SLOW_CONF}${NC}"
+	slow_line
+	echo -e "${DARK_GREEN}SYSTEMD:${NC}"
+	systemctl status slowdns --no-pager -l 2>/dev/null | tail -n 18 || echo -e "  ${RED}Servicio no instalado.${NC}"
+	slow_line
+	echo -e "${DARK_GREEN}ULTIMOS ERRORES:${NC}"
+	journalctl -u slowdns -n 40 --no-pager 2>/dev/null || true
+	slow_line
+	echo -e "${DARK_GREEN}UDP LISTEN:${NC}"
+	(ss -ulnp 2>/dev/null || netstat -unlp 2>/dev/null) | grep -E "(:${SLOW_PORT}|:53)" || echo -e "  ${RED}Sin escucha UDP detectada.${NC}"
+	slow_line
+	echo -e "${DARK_GREEN}IPTABLES NAT:${NC}"
+	iptables -t nat -S PREROUTING 2>/dev/null | grep -E "dport (${SLOW_REDIRECT:-53}|${SLOW_PORT})|to-ports ${SLOW_PORT}" || echo -e "  ${RED}Sin regla NAT detectada.${NC}"
+	slow_line
+	slow_pause
+}
+
+slow_status_text() {
+	if systemctl is-active --quiet slowdns 2>/dev/null; then
+		echo -e "${GREEN}[ON]${NC}"
+	else
+		echo -e "${RED}[OFF]${NC}"
+	fi
+}
+
+slow_add_target() {
+	local label="$1" port="$2"
+	[[ -z "$port" || ! "$port" =~ ^[0-9]+$ ]] && return
+	[[ -n "${SLOW_SEEN_PORT[$port]}" ]] && return
+	SLOW_SEEN_PORT[$port]=1
+	SLOW_TARGET_LABELS+=("$label")
+	SLOW_TARGET_PORTS+=("$port")
+}
+
+slow_detect_targets() {
+	local line port proc
+	SLOW_TARGET_LABELS=()
+	SLOW_TARGET_PORTS=()
+	declare -gA SLOW_SEEN_PORT=()
+
+	if command -v ss >/dev/null 2>&1; then
+		while IFS= read -r line; do
+			[[ "$line" != *LISTEN* ]] && continue
+			port="$(echo "$line" | awk '{print $4}' | grep -oE '[0-9]+$')"
+			proc="$(echo "$line" | sed -n 's/.*users:((("\([^"]*\)".*/\1/p')"
+			[[ -z "$proc" ]] && proc="TCP"
+			case "$proc" in
+				sshd) slow_add_target "OPENSSH" "$port" ;;
+				dropbear) slow_add_target "DROPBEAR" "$port" ;;
+				openvpn) slow_add_target "OPENVPN" "$port" ;;
+				v2ray|xray) slow_add_target "V2RAY" "$port" ;;
+				python|python3) slow_add_target "PROXY SOCKS" "$port" ;;
+				stunnel|stunnel4) slow_add_target "SSL TUNNEL" "$port" ;;
+				squid|squid3) slow_add_target "SQUID" "$port" ;;
+			esac
+		done < <(ss -tlnp 2>/dev/null)
+	else
+		while IFS= read -r line; do
+			port="$(echo "$line" | awk '{print $4}' | grep -oE '[0-9]+$')"
+			echo "$line" | grep -q 'sshd' && slow_add_target "OPENSSH" "$port"
+			echo "$line" | grep -q 'dropbear' && slow_add_target "DROPBEAR" "$port"
+			echo "$line" | grep -q 'openvpn' && slow_add_target "OPENVPN" "$port"
+			echo "$line" | grep -qE 'v2ray|xray' && slow_add_target "V2RAY" "$port"
+			echo "$line" | grep -qE 'python|python3' && slow_add_target "PROXY SOCKS" "$port"
+			echo "$line" | grep -qE 'stunnel|stunnel4' && slow_add_target "SSL TUNNEL" "$port"
+			echo "$line" | grep -qE 'squid|squid3' && slow_add_target "SQUID" "$port"
+		done < <(netstat -nplt 2>/dev/null)
+	fi
+
+	if pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1; then
+		port="$(ps x | grep '[S]SHPlus/proxy.py' | head -1 | awk '{print $NF}')"
+		slow_add_target "PROXY SOCKS" "$port"
+	fi
+	if pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
+		port="$(ps x | grep '[S]SHPlus/wsproxy.py' | head -1 | awk '{print $NF}')"
+		slow_add_target "WEBSOCKET" "$port"
+	fi
+	if [[ -f /etc/autostart ]]; then
+		while IFS= read -r port; do slow_add_target "PROXY SOCKS" "$port"; done < <(grep -oE 'proxy.py [0-9]+' /etc/autostart 2>/dev/null | awk '{print $2}')
+		while IFS= read -r port; do slow_add_target "WEBSOCKET" "$port"; done < <(grep -oE 'wsproxy.py [0-9]+' /etc/autostart 2>/dev/null | awk '{print $2}')
+	fi
+	if [[ -f /etc/default/dropbear ]]; then
+		port="$(grep -E '^DROPBEAR_PORT=' /etc/default/dropbear 2>/dev/null | cut -d= -f2 | grep -oE '[0-9]+' | head -1)"
+		slow_add_target "DROPBEAR" "$port"
+		while IFS= read -r port; do slow_add_target "DROPBEAR" "$port"; done < <(grep -oE -- '-p[[:space:]]+[0-9]+' /etc/default/dropbear 2>/dev/null | awk '{print $2}')
+	fi
+	if [[ -f /etc/stunnel/stunnel.conf ]]; then
+		port="$(awk '/^[[:space:]]*accept[[:space:]]*=/{print $NF}' /etc/stunnel/stunnel.conf 2>/dev/null | grep -oE '[0-9]+' | tail -1)"
+		slow_add_target "SSL TUNNEL" "$port"
+	fi
+	if [[ -f /etc/openvpn/server.conf ]]; then
+		port="$(awk '/^port[[:space:]]/{print $2}' /etc/openvpn/server.conf 2>/dev/null | head -1)"
+		slow_add_target "OPENVPN" "$port"
+	fi
+	if [[ -f /etc/squid/squid.conf || -f /etc/squid3/squid.conf ]]; then
+		while IFS= read -r port; do slow_add_target "SQUID" "$port"; done < <(awk '/^[[:space:]]*http_port[[:space:]]+[0-9]+/{print $2}' /etc/squid/squid.conf /etc/squid3/squid.conf 2>/dev/null | grep -oE '[0-9]+')
+	fi
+	if [[ -f /etc/v2ray/config.json ]]; then
+		while IFS= read -r port; do slow_add_target "V2RAY" "$port"; done < <(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' /etc/v2ray/config.json 2>/dev/null | grep -oE '[0-9]+')
+	fi
+
+	slow_add_target "OPENSSH" "22"
+}
+
+slow_pick_traffic() {
+	local opt i left dots pad
+	slow_detect_targets
+	while true; do
+		clear
+		slow_title "CONFIGURAR SLOWDNS (REDIRECCION)"
+		echo -e "${WHITE}PUERTO SLOWDNS (escucha)${DARK_GREEN}:${NC} ${GREEN}${SLOW_PORT}${NC}"
+		slow_line
+		echo -e "${YELLOW}      A QUE PUERTO REDIRIGIR EL TRAFICO?${NC}"
+		slow_line
+		for i in "${!SLOW_TARGET_PORTS[@]}"; do
+			left="[$((i + 1))] > ${SLOW_TARGET_LABELS[$i]} "
+			pad=$((50 - ${#left} - ${#SLOW_TARGET_PORTS[$i]}))
+			[[ "$pad" -lt 2 ]] && pad=2
+			dots="$(printf '%*s' "$pad" '' | tr ' ' '.')"
+			echo -e "${NEON}[$((i + 1))]${NC} ${WHITE}>${NC} ${WHITE}${SLOW_TARGET_LABELS[$i]} ${YELLOW}${dots}${GREEN}${SLOW_TARGET_PORTS[$i]}${NC}"
+		done
+		slow_line
+		slow_opt "0" "CANCELAR"
+		slow_line
+		echo -ne "${CYAN}Opcion:${NC} "
+		read -r opt
+		[[ "$opt" = "0" ]] && return 1
+		if [[ "$opt" =~ ^[0-9]+$ ]] && [[ "$opt" -ge 1 ]] && [[ "$opt" -le "${#SLOW_TARGET_PORTS[@]}" ]]; then
+			SLOW_TRAFFIC="${SLOW_TARGET_PORTS[$((opt - 1))]}"
+			return 0
+		fi
+	done
+}
+
+slow_configure() {
+	clear
+	slow_title "CONFIGURAR SLOWDNS"
+	slow_load_conf
+	echo -ne "${DARK_GREEN}PUERTO SLOWDNS [Enter = 5300]:${NC} "; read -r new_port
+	echo -ne "${DARK_GREEN}DOMINIO NS:${NC} "; read -r new_domain
+	[[ -n "$new_port" ]] && SLOW_PORT="$new_port"
+	[[ -n "$new_domain" ]] && SLOW_DOMAIN="$new_domain"
+	if [[ -z "$SLOW_DOMAIN" || "$SLOW_DOMAIN" = "ns.example.com" ]]; then
+		echo -e "${RED}Debe ingresar un dominio NS real apuntando a la IP de esta VPS.${NC}"
+		slow_pause
+		return
+	fi
+	slow_pick_traffic || return
+	SLOW_REDIRECT="53"
+	slow_install_deps
+	[[ -x "$SLOW_BIN" ]] || slow_download_bin || { slow_pause; return; }
+	[[ -f "$SLOW_KEY" && -f "$SLOW_PUB" ]] || slow_generate_keys || { slow_pause; return; }
+	slow_save_conf
+	slow_restart
+	echo -e "\n${GREEN}SLOWDNS configurado correctamente.${NC}"
+	slow_check_connection
+	slow_pause
+}
+
+slow_show_keys() {
+	clear
+	slow_title "CLAVES SLOWDNS"
+	[[ -f "$SLOW_PUB" ]] && echo -e "${DARK_GREEN}CLAVE PUB:${NC} ${GREEN}$(cat "$SLOW_PUB")${NC}" || echo -e "${RED}No existe clave publica.${NC}"
+	[[ -f "$SLOW_KEY" ]] && echo -e "${DARK_GREEN}CLAVE PRIV:${NC} ${WHITE}${SLOW_KEY}${NC}" || echo -e "${RED}No existe clave privada.${NC}"
+	slow_line
+	slow_pause
+}
+
+slow_custom_keys() {
+	clear
+	slow_title "PAR DE CLAVES PERSONALES"
+	mkdir -p "$SLOW_DIR"
+	echo -ne "${DARK_GREEN}CLAVE PRIVADA:${NC} "; read -r priv
+	echo -ne "${DARK_GREEN}CLAVE PUBLICA:${NC} "; read -r pub
+	[[ -z "$priv" || -z "$pub" ]] && echo -e "${RED}Datos incompletos.${NC}" && slow_pause && return
+	echo "$priv" > "$SLOW_KEY"
+	echo "$pub" > "$SLOW_PUB"
+	chmod 600 "$SLOW_KEY"
+	chmod 644 "$SLOW_PUB"
+	slow_restart
+	echo -e "${GREEN}Claves actualizadas.${NC}"
+	slow_pause
+}
+
+slow_change_traffic() {
+	slow_load_conf
+	slow_pick_traffic || return
+	slow_save_conf
+	slow_restart
+	slow_check_connection
+	slow_pause
+}
+
+slow_change_domain() {
+	slow_load_conf
+	echo -ne "${DARK_GREEN}DOMINIO NS:${NC} "; read -r SLOW_DOMAIN
+	[[ -z "$SLOW_DOMAIN" ]] && return
+	slow_save_conf
+	slow_restart
+}
+
+slow_service_status() {
+	clear
+	slow_title "ESTADO SLOWDNS"
+	systemctl status slowdns --no-pager 2>/dev/null || echo -e "${RED}Servicio no instalado.${NC}"
+	slow_pause
+}
+
+slow_toggle() {
+	if systemctl is-active --quiet slowdns 2>/dev/null; then
+		systemctl stop slowdns >/dev/null 2>&1
+	else
+		slow_restart
+	fi
+}
+
+slow_logs() {
+	clear
+	slow_title "LOG SLOWDNS"
+	slow_check_connection
+	journalctl -u slowdns -n 80 --no-pager 2>/dev/null || tail -n 80 "$SLOW_LOG" 2>/dev/null
+	slow_pause
+}
+
+slow_logs_live() {
+	clear
+	slow_title "LOG SLOWDNS EN TIEMPO REAL"
+	journalctl -u slowdns -f 2>/dev/null || tail -f "$SLOW_LOG" 2>/dev/null
+}
+
+slow_uninstall() {
+	clear
+	slow_title "DESINSTALAR SLOWDNS"
+	slow_load_conf
+	echo -ne "${DARK_GREEN}CONFIRMAR DESINSTALACION [s/n]:${NC} "; read -r resp
+	[[ "$resp" =~ ^[sS]$ ]] || return
+	systemctl stop slowdns >/dev/null 2>&1 || true
+	systemctl disable slowdns >/dev/null 2>&1 || true
+	rm -f "$SLOW_SERVICE"
+	systemctl daemon-reload >/dev/null 2>&1 || true
+	iptables -D INPUT -p udp --dport "${SLOW_REDIRECT:-53}" -j ACCEPT >/dev/null 2>&1 || true
+	iptables -D INPUT -p udp --dport "$SLOW_PORT" -j ACCEPT >/dev/null 2>&1 || true
+	slow_clean_redirects iptables
+	if command -v ip6tables >/dev/null 2>&1; then
+		ip6tables -D INPUT -p udp --dport "${SLOW_REDIRECT:-53}" -j ACCEPT >/dev/null 2>&1 || true
+		ip6tables -D INPUT -p udp --dport "$SLOW_PORT" -j ACCEPT >/dev/null 2>&1 || true
+		slow_clean_redirects ip6tables
+	fi
+	rm -rf "$SLOW_DIR" "$SLOW_LOG"
+	echo -e "${GREEN}SlowDNS desinstalado.${NC}"
+	slow_pause
+}
+
+slow_summary() {
+	slow_load_conf
+	echo -e "${DARK_GREEN}PORT:${NC} ${GREEN}${SLOW_PORT}${NC}"
+	echo -e "${DARK_GREEN}REDIRECT:${NC} ${GREEN}${SLOW_REDIRECT:-53} > ${SLOW_PORT}${NC}"
+	echo -e "${DARK_GREEN}TRAFIC PORT:${NC} ${GREEN}${SLOW_TRAFFIC}${NC}"
+	echo -e "${DARK_GREEN}NS DOMAIN:${NC} ${GREEN}${SLOW_DOMAIN}${NC}"
+	if [[ -f "$SLOW_PUB" ]]; then
+		echo -e "${DARK_GREEN}CLAVE PUB:${NC} ${GREEN}$(cat "$SLOW_PUB")${NC}"
+	else
+		echo -e "${DARK_GREEN}CLAVE PUB:${NC} ${WHITE}N/A${NC}"
+	fi
+}
+
+slow_config_menu() {
+	while true; do
+		clear
+		slow_title "CONFIGURACION SLOWDNS"
+		slow_opt "1" "MIS CLAVES SLOWDNS"
+		slow_opt "2" "GENERAR NUEVO PAR DE CLAVES"
+		slow_opt "3" "PAR DE CLAVES PERSONALES"
+		slow_opt "4" "MODIFICAR PUERTO DE TRAFICO"
+		slow_opt "5" "MODIFICAR DOMINIO NS"
+		slow_opt "0" "VOLVER"
+		slow_line
+		echo -ne "${CYAN}Opcion:${NC} "
+		read -r cfg_opt
+		case "$cfg_opt" in
+			1) slow_show_keys ;;
+			2) slow_generate_keys && slow_restart && echo -e "${GREEN}Nuevo par de claves generado.${NC}" && slow_pause ;;
+			3) slow_custom_keys ;;
+			4) slow_change_traffic ;;
+			5) slow_change_domain ;;
+			0) return ;;
+		esac
+	done
+}
+
+while true; do
+	clear
+	if [[ ! -f "$SLOW_CONF" ]]; then
+		slow_line
+		echo -e "${CYAN}                         SLOWDNS${NC}"
+		slow_line
+		slow_opt "1" "INSTALAR SLOWDNS"
+		slow_line
+		slow_opt "0" "Volver"
+	else
+		slow_title "SLOWDNS"
+		slow_summary
+		slow_line
+		slow_opt "1" "CONFIGURACION DE SLOWDNS"
+		slow_opt "2" "ESTADO DEL SERVICIO"
+		slow_opt "3" "REINICIAR SERVICIO"
+		slow_opt "4" "INICIAR/PARAR SERVICIO" "$(slow_status_text)"
+		slow_opt "5" "DIAGNOSTICO SLOWDNS"
+		slow_opt "6" "LOG SLOWDNS EN TIEMPO REAL"
+		slow_opt "7" "REINSTALAR"
+		slow_opt "8" "DESINSTALAR SLOWDNS"
+		slow_line
+		slow_opt "0" "Volver"
+	fi
+	slow_line
+	echo -ne "${CYAN}Opcion:${NC} "
+	read -r opt
+	case "$opt" in
+		1) [[ -f "$SLOW_CONF" ]] && slow_config_menu || slow_configure ;;
+		2) [[ -f "$SLOW_CONF" ]] && slow_service_status ;;
+		3) [[ -f "$SLOW_CONF" ]] && slow_restart && echo -e "${GREEN}Servicio reiniciado.${NC}" && slow_pause ;;
+		4) [[ -f "$SLOW_CONF" ]] && slow_toggle ;;
+		5) [[ -f "$SLOW_CONF" ]] && slow_diagnostics ;;
+		6) [[ -f "$SLOW_CONF" ]] && slow_logs_live ;;
+		7) [[ -f "$SLOW_CONF" ]] && slow_download_bin && slow_configure ;;
+		8) [[ -f "$SLOW_CONF" ]] && slow_uninstall ;;
+		0) connection; exit ;;
+	esac
+done

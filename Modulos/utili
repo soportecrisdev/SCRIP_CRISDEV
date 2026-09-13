@@ -1,0 +1,271 @@
+#!/bin/bash
+# lang=es utili
+# blocksite no se sincroniza por wget: el repo remoto podía seguir sirviendo el binario PT y machacaba /bin/blocksite.
+_sshplus_sync_herramientas_submodulos() {
+	for _m in blockt ddos multi blockuser badvpn2 badvpn3 badpro badpro1 menub changedate delhost restartservices rootpass v2raymanager; do
+		if [[ ! -f "/bin/$_m" ]] || ! grep -aFq "lang=es $_m" "/bin/$_m" 2>/dev/null; then
+			wget -qO "/bin/$_m" "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/$_m" && chmod +x "/bin/$_m"
+		fi
+	done
+}
+# Instala en /bin/blocksite el script en español (embebido) antes de ejecutarlo; no depende de GitHub ni del binario antiguo.
+_sshplus_install_blocksite_es() {
+	cat >/bin/blocksite <<'BLOCKSITE_EMBED'
+#!/bin/bash
+# lang=es blocksite
+# Bloqueo de dominios en Squid (túnel SSH / VPN). Sustituye el binario antiguo (solo PT).
+
+_blocksite_paths() {
+	if [[ -d /etc/squid ]] && [[ -f /etc/squid/squid.conf ]]; then
+		VAR_SQD="/etc/squid/squid.conf"
+		BLOCK_LIST="/etc/squid/blocked.txt"
+	elif [[ -d /etc/squid3 ]] && [[ -f /etc/squid3/squid.conf ]]; then
+		VAR_SQD="/etc/squid3/squid.conf"
+		BLOCK_LIST="/etc/squid3/blocked.txt"
+	else
+		return 1
+	fi
+	return 0
+}
+
+_blocksite_reload() {
+	if [[ -d /etc/squid ]]; then
+		service squid reload 2>/dev/null || /etc/init.d/squid reload 2>/dev/null || service squid restart 2>/dev/null
+	fi
+	if [[ -d /etc/squid3 ]]; then
+		service squid3 reload 2>/dev/null || /etc/init.d/squid3 reload 2>/dev/null || service squid3 restart 2>/dev/null
+	fi
+}
+
+_blocksite_ensure_acl() {
+	if grep -q 'acl blocked_sites' "$VAR_SQD" 2>/dev/null; then
+		return 0
+	fi
+	if ! grep -q 'acl payload url_regex' "$VAR_SQD" 2>/dev/null; then
+		echo -e "\033[1;31mNo se encontró la ACL de payload en squid.conf. Instale o repare Squid desde el menú de conexión.\033[0m"
+		sleep 3
+		return 1
+	fi
+	touch "$BLOCK_LIST"
+	chmod 644 "$BLOCK_LIST" 2>/dev/null
+	local tmp
+	tmp=$(mktemp)
+	awk -v bf="$BLOCK_LIST" '
+		/acl payload url_regex/ {
+			print
+			print "\t\tacl blocked_sites dstdomain -i \"" bf "\""
+			next
+		}
+		/^[\t ]*http_access allow payload/ {
+			print "\t\thttp_access deny blocked_sites"
+			print
+			next
+		}
+		{ print }
+	' "$VAR_SQD" >"$tmp" && mv "$tmp" "$VAR_SQD"
+	return 0
+}
+
+_blocksite_norm() {
+	local h
+	h=$(echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+	[[ -z "$h" ]] && return 1
+	h="${h#http://}"
+	h="${h#https://}"
+	h="${h%%/*}"
+	h="${h#www.}"
+	[[ -z "$h" ]] && return 1
+	h=".${h#.}"
+	echo "$h"
+}
+
+_blocksite_do_block() {
+	local d
+	d=$(_blocksite_norm "$1") || return 1
+	if grep -Fxq "$d" "$BLOCK_LIST" 2>/dev/null; then
+		echo -e "\033[1;33mEl dominio ya está en la lista bloqueada.\033[0m"
+		sleep 2
+		return 0
+	fi
+	echo "$d" >>"$BLOCK_LIST"
+	sort -u "$BLOCK_LIST" -o "$BLOCK_LIST"
+	_blocksite_reload
+	echo -e "\033[1;32mDominio bloqueado: $d\033[0m"
+	sleep 2
+}
+
+_blocksite_do_unblock() {
+	local d
+	d=$(_blocksite_norm "$1") || return 1
+	if ! grep -Fxq "$d" "$BLOCK_LIST" 2>/dev/null; then
+		echo -e "\033[1;33mEse dominio no está en la lista.\033[0m"
+		sleep 2
+		return 0
+	fi
+	grep -Fxv "$d" "$BLOCK_LIST" >"${BLOCK_LIST}.tmp" && mv "${BLOCK_LIST}.tmp" "$BLOCK_LIST"
+	_blocksite_reload
+	echo -e "\033[1;32mDominio desbloqueado: $d\033[0m"
+	sleep 2
+}
+
+_blocksite_do_unblock_all() {
+	: >"$BLOCK_LIST"
+	_blocksite_reload
+	echo -e "\033[1;32mLista de bloqueo vaciada.\033[0m"
+	sleep 2
+}
+
+_blocksite_do_list() {
+	echo -e "\033[1;33mDominios bloqueados (\033[1;37m$BLOCK_LIST\033[1;33m):\033[0m"
+	echo ""
+	if [[ ! -s "$BLOCK_LIST" ]]; then
+		echo -e "\033[1;31m(lista vacía)\033[0m"
+	else
+		echo -e "\033[1;36m"
+		cat "$BLOCK_LIST"
+		echo -e "\033[0m"
+	fi
+	echo ""
+	read -r -p "$(echo -e "\033[1;32mPulse Enter para continuar...\033[0m")" _
+}
+
+while true; do
+	clear
+	if ! _blocksite_paths; then
+		echo -e "\033[1;31mSquid no está instalado o falta squid.conf.\033[0m"
+		echo -e "\033[1;33mInstale el proxy desde el menú de conexión.\033[0m"
+		sleep 3
+		exit 0
+	fi
+	touch "$BLOCK_LIST"
+	if ! _blocksite_ensure_acl; then
+		continue
+	fi
+	echo -e "\033[1;31m× × × × × × \033[1;37m[ BLOQUEADOR DE SITIOS ] \033[1;31m× × × × × ×\033[0m"
+	echo -e "\033[0;31m════════════════════════════════════════════════════════════════\033[0m"
+	echo -e "\033[1;33mBLOQUEO PARA TUNELADO SSH (VPN)\033[0m"
+	echo -e "\033[1;33mUSE COMO (www.google.com) PARA BLOQUEAR.\033[0m"
+	echo -e "\033[0;31m════════════════════════════════════════════════════════════════\033[0m"
+	echo -e "\033[1;34m[\033[1;37m 01 •\033[1;34m]\033[1;37m > \033[1;33mBLOQUEAR SITIO.\033[0m"
+	echo -e "\033[1;34m[\033[1;37m 02 •\033[1;34m]\033[1;37m > \033[1;33mDESBLOQUEAR SITIO.\033[0m"
+	echo -e "\033[1;34m[\033[1;37m 03 •\033[1;34m]\033[1;37m > \033[1;33mDESBLOQUEAR TODOS LOS SITIOS.\033[0m"
+	echo -e "\033[1;34m[\033[1;37m 04 •\033[1;34m]\033[1;37m > \033[1;33mVER LISTA BLOQUEADA.\033[0m"
+	echo -e "\033[1;34m[\033[1;37m 00 •\033[1;34m]\033[1;37m > \033[1;33mVOLVER AL MENÚ ANTERIOR.\033[0m"
+	echo -e "\033[0;31m════════════════════════════════════════════════════════════════\033[0m"
+	echo -ne "\033[1;37m[\033[1;32mELIJA UN NÚMERO\033[1;37m]: \033[0m"
+	read -r x
+	case "$x" in
+	1 | 01)
+		read -r -p "$(echo -e "\033[1;32mDominio a bloquear (ej. www.google.com): \033[0m")" dom
+		_blocksite_do_block "$dom"
+		;;
+	2 | 02)
+		read -r -p "$(echo -e "\033[1;32mDominio a desbloquear: \033[0m")" dom
+		_blocksite_do_unblock "$dom"
+		;;
+	3 | 03)
+		read -r -p "$(echo -e "\033[1;32m¿Desbloquear TODOS los sitios? [s/N]: \033[0m")" c
+		[[ "$c" =~ ^[sSyY]$ ]] && _blocksite_do_unblock_all
+		;;
+	4 | 04)
+		_blocksite_do_list
+		;;
+	0 | 00)
+		clear
+		break
+		;;
+	*)
+		echo -e "\033[1;31mOpción no válida.\033[0m"
+		sleep 2
+		;;
+	esac
+done
+BLOCKSITE_EMBED
+	chmod +x /bin/blocksite
+}
+while true; do
+	_sshplus_sync_herramientas_submodulos
+	clear
+	echo -e "\033[01;31m║\033[1;31m\033[5;34;47m               HERRAMIENTAS               \033[1;33m \033[0m\033[01;31m║"
+	echo -e "\033[01;31m║\033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 01 •\033[1;34m]\033[1;37m ➩  \033[1;33mBLOQUEO DE SITIOS WEB \033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 02 •\033[1;34m]\033[1;37m ➩  \033[1;33mBLOQUEO TORRENT \033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 03 •\033[1;34m]\033[1;37m ➩  \033[1;33mPROTECCIÓN ANTI DDoS \033[01;31m ${sts2:-}\033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 04 •\033[1;34m]\033[1;37m ➩  \033[1;33mBOT REVENDEDOR \033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 05 •\033[1;34m]\033[1;37m ➩  \033[1;33mOPTIMIZACIÓN \033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 06 •\033[1;34m]\033[1;37m ➩  \033[1;33mSISTEMA AVANZADO \033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 07 •\033[1;34m]\033[1;37m ➩  \033[1;33mTRÁFICO TOTAL \033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 08 •\033[1;34m]\033[1;37m ➩  \033[1;33mBLOQUEAR USUARIOS \033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 09 •\033[1;34m]\033[1;37m ➩  \033[1;33mMONITORIZAR TRÁFICO DE RED \033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 10 •\033[1;34m]\033[1;37m ➩  \033[1;33mMONITORIZAR PROCESOS ACTIVOS \033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 11 •\033[1;34m]\033[1;37m ➩  \033[1;33mMONITORIZAR SISTEMA COMPLETO \033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 12 •\033[1;34m]\033[1;37m ➩  \033[1;33mMONITORIZAR ANCHO DE BANDA POR PROCESO \033[0m"
+	echo -e "\033[01;31m║\033[1;31m\033[1;34m[\033[1;37m 00 •\033[1;34m]\033[1;37m ➩  \033[1;33mVOLVER  \033[1;32m<\033[1;33m<\033[1;31m< \033[0m"
+	echo -e "\033[01;31m║\033[0m"
+	echo -e "\033[0;31m╠━━═━═━═━═━═━═━═━═━━═━═━═━═━═━━═━═━═━═━═━━═━═━═━═━═━\033[0m"
+	tput civis
+	echo -ne "\033[1;37mOpcion: "
+	read x
+	tput cnorm
+	clear
+	case $x in
+	1 | 01)
+		_sshplus_install_blocksite_es
+		blocksite
+		;;
+	2 | 02)
+		blockt
+		;;
+	3 | 03)
+		ddos
+		;;
+	4 | 04)
+		initbot
+		;;
+	5 | 05)
+		mtuning
+		;;
+	6 | 06)
+		multi
+		;;
+	7 | 07)
+		totaltraffic
+		;;
+	8 | 08)
+		blockuser
+		;;
+	9 | 09)
+		clear
+		echo -e "\033[1;33mPARA SALIR PULSE CTRL + C\033[1;36m"
+		sleep 5s
+		apt install slurm -y && slurm -i eth0
+		;;
+	10 | 10)
+		clear
+		echo -e "\033[1;33mPARA SALIR PULSE CTRL + C\033[1;36m"
+		sleep 5s
+		apt install htop -y && htop
+		;;
+	11 | 11)
+		clear
+		echo -e "\033[1;33mPARA SALIR PULSE CTRL + C\033[1;36m"
+		sleep 5s
+		apt install glances -y && glances
+		;;
+	12 | 12)
+		clear
+		echo -e "\033[1;33mPARA SALIR PULSE CTRL + C\033[1;36m"
+		sleep 5s
+		apt install nethogs -y && nethogs
+		;;
+	0 | 00)
+		clear
+		menu
+		break
+		;;
+	*)
+		echo -e "\033[1;31m${L_OPC_INVALIDA:-Opcion no valida!}\033[0m"
+		sleep 2
+		;;
+	esac
+done

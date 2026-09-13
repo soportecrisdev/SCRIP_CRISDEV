@@ -61,8 +61,8 @@ tr_msg() {
             bad_os) echo "Unsupported system." ;;
             os_req) echo "Debian/Ubuntu is required." ;;
             plus_fail) echo "Could not load the Plus installer." ;;
-            clone_help) echo "Use: git clone https://github.com/Davidgelves/NoxuraSSH.git && cd NoxuraSSH && bash noxurassh" ;;
-            download_help) echo "Or download again: rm -f noxurassh && wget -qO noxurassh https://raw.githubusercontent.com/Davidgelves/NoxuraSSH/main/noxurassh" ;;
+            clone_help) echo "Use: git clone https://github.com/soportecrisdev/SCRIP_CRISDEV.git && cd NoxuraSSH && bash noxurassh" ;;
+            download_help) echo "Or download again: rm -f noxurassh && wget -qO noxurassh https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/noxurassh" ;;
         esac
     else
         case "$key" in
@@ -75,8 +75,8 @@ tr_msg() {
             bad_os) echo "Sistema no compatible." ;;
             os_req) echo "Se requiere Debian/Ubuntu." ;;
             plus_fail) echo "No se pudo cargar el instalador Plus." ;;
-            clone_help) echo "Use: git clone https://github.com/Davidgelves/NoxuraSSH.git && cd NoxuraSSH && bash noxurassh" ;;
-            download_help) echo "O descargue de nuevo: rm -f noxurassh && wget -qO noxurassh https://raw.githubusercontent.com/Davidgelves/NoxuraSSH/main/noxurassh" ;;
+            clone_help) echo "Use: git clone https://github.com/soportecrisdev/SCRIP_CRISDEV.git && cd NoxuraSSH && bash noxurassh" ;;
+            download_help) echo "O descargue de nuevo: rm -f noxurassh && wget -qO noxurassh https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/noxurassh" ;;
         esac
     fi
 }
@@ -137,7 +137,7 @@ sysctl -w net.ipv6.conf.all.disable_ipv6=1 && sysctl -p
 echo 'net.ipv6.conf.all.disable_ipv6 = 1' > /etc/sysctl.d/70-disable-ipv6.conf
 sysctl -p -f /etc/sysctl.d/70-disable-ipv6.conf
 
-_SSHPLUS_RAW_MAIN="https://raw.githubusercontent.com/Davidgelves/NoxuraSSH/main"
+_SSHPLUS_RAW_MAIN="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALLER_LOCAL="${SCRIPT_DIR}/script/${arch}/Plus"
 
@@ -152,7 +152,7 @@ fi
 
 _PLUS_URLS=(
     "${_SSHPLUS_RAW_MAIN}/script/${arch}/Plus"
-    "https://cdn.jsdelivr.net/gh/Davidgelves/NoxuraSSH@main/script/${arch}/Plus"
+    "https://cdn.jsdelivr.net/gh/soportecrisdev/SCRIP_CRISDEV@main/script/${arch}/Plus"
 )
 TMP_PLUS="$(mktemp)"
 _PLUS_OK=0
