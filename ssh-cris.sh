@@ -143,14 +143,6 @@ get_ssl_live_status() {
     fi
 }
 
-get_dropbear_live_status() {
-    if systemctl is-active --quiet dropbear 2>/dev/null || pgrep -f dropbear >/dev/null 2>&1; then
-        echo -e "${GREEN}[ONLINE]${NC} ${CYAN}80, 8080, 442, 8888${NC}"
-    else
-        echo -e "${RED}[OFFLINE]${NC}"
-    fi
-}
-
 get_slowdns_live_status() {
     if pgrep -f dnstt-server >/dev/null 2>&1 || systemctl is-active --quiet dnstt-server 2>/dev/null; then
         local ns; ns=$(cat /etc/slowdns/ns.txt 2>/dev/null || echo "Configurado")
@@ -192,7 +184,6 @@ draw_header() {
     echo -e " ${WHITE}• UDP CRIS:     $(get_udpcris_live_status)"
     echo -e " ${WHITE}• OpenSSH:      $(get_ssh_live_status)"
     echo -e " ${WHITE}• Stunnel SSL:  $(get_ssl_live_status)"
-    echo -e " ${WHITE}• Dropbear:     $(get_dropbear_live_status)"
     echo -e " ${WHITE}• SlowDNS:      $(get_slowdns_live_status)"
     echo -e "${CYAN}────────────────────────────────────────────────────────────────────${NC}"
     echo ""
@@ -870,25 +861,23 @@ desinstalar_udpcris() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  4. OPENSSH, DROPBEAR & STUNNEL SSL
+#  4. OPENSSH & STUNNEL SSL
 # ─────────────────────────────────────────────────────────────────────────────
 menu_ssh_ssl() {
     while true; do
         draw_header
-        echo -e "${CYAN}══ OPENSSH, DROPBEAR & STUNNEL SSL ══════════════════════════════${NC}"
+        echo -e "${CYAN}══ OPENSSH & STUNNEL SSL ════════════════════════════════════════${NC}"
         echo -e " ${GREEN}1)${WHITE} Configurar OpenSSH (Puerto 22, TCP Forwarding)"
-        echo -e " ${GREEN}2)${WHITE} Instalar / Configurar Dropbear (Puertos 80, 8080, 442, 8888)"
-        echo -e " ${GREEN}3)${WHITE} Instalar / Configurar Stunnel4 SSL (Puerto 443 -> SSH 22)"
-        echo -e " ${GREEN}4)${WHITE} Reiniciar Servicios SSH/SSL"
+        echo -e " ${GREEN}2)${WHITE} Instalar / Configurar Stunnel4 SSL (Puerto 443 -> SSH 22)"
+        echo -e " ${GREEN}3)${WHITE} Reiniciar Servicios SSH/SSL"
         echo -e " ${RED}0)${WHITE} Volver al Menú Principal"
         echo -e "${CYAN}────────────────────────────────────────────────────────────────${NC}"
-        read -r -p " Selecciona una opción [0-4]: " opt
+        read -r -p " Selecciona una opción [0-3]: " opt
 
         case "$opt" in
             1) config_openssh ;;
-            2) config_dropbear ;;
-            3) config_stunnel ;;
-            4) restart_ssh_ssl ;;
+            2) config_stunnel ;;
+            3) restart_ssh_ssl ;;
             0) break ;;
             *) warn "Opción inválida"; sleep 1 ;;
         esac
@@ -905,26 +894,6 @@ config_openssh() {
     sed -i 's/#*ClientAliveCountMax.*/ClientAliveCountMax 3/' /etc/ssh/sshd_config
     systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
     ok "OpenSSH configurado en puerto 22 con TCP Forwarding activado."
-    pause
-}
-
-config_dropbear() {
-    draw_header
-    info "Instalando y configurando Dropbear..."
-    apt-get install -y dropbear 2>/dev/null || true
-    cat > /etc/default/dropbear << 'EOF'
-NO_START=0
-DROPBEAR_PORT=80
-DROPBEAR_EXTRA_ARGS="-p 8080 -p 442 -p 8888"
-DROPBEAR_BANNER=""
-DROPBEAR_RECEIVE_WINDOW=65536
-EOF
-    systemctl restart dropbear 2>/dev/null || true
-    ufw allow 80/tcp 2>/dev/null || true
-    ufw allow 8080/tcp 2>/dev/null || true
-    ufw allow 442/tcp 2>/dev/null || true
-    ufw allow 8888/tcp 2>/dev/null || true
-    ok "Dropbear activo en puertos 80, 8080, 442, 8888."
     pause
 }
 
@@ -1040,7 +1009,7 @@ menu_protocolos() {
         echo -e "${CYAN}══ APARTADO MAESTRO DE PROTOCOLOS ═══════════════════════════════${NC}"
         echo -e " ${GREEN}[1]${WHITE}  BHTTP Multi-Puerto Relay (Wakko Engine)"
         echo -e " ${GREEN}[2]${WHITE}  UDP CRIS (Hysteria Engine & BadVPN 7300)"
-        echo -e " ${GREEN}[3]${WHITE}  OpenSSH, Dropbear & Stunnel SSL"
+        echo -e " ${GREEN}[3]${WHITE}  OpenSSH & Stunnel SSL (22 / 443)"
         echo -e " ${GREEN}[4]${WHITE}  SlowDNS (DNSTT Puerto 53)"
         echo -e " ${GREEN}[5]${WHITE}  Xray / V2Ray Core"
         echo -e " ${GREEN}[6]${WHITE}  Test de Conectividad General de Puertos"
@@ -1070,7 +1039,7 @@ test_general_puertos() {
     draw_header
     echo -e "${CYAN}── DIAGNÓSTICO GENERAL DE PUERTOS Y SOCKETS ─────────────────────${NC}"
     echo -e "${YELLOW}Sockets TCP en escucha:${NC}"
-    ss -tlpn | grep -E "sshd|dropbear|stunnel|wakkodev|bhttp|xray" || echo "No se encontraron puertos TCP activos"
+    ss -tlpn | grep -E "sshd|stunnel|wakkodev|bhttp|xray" || echo "No se encontraron puertos TCP activos"
     echo ""
     echo -e "${YELLOW}Sockets UDP en escucha:${NC}"
     ss -ulpn | grep -E "hysteria|dnstt|badvpn" || echo "No se encontraron puertos UDP activos"
@@ -1110,7 +1079,6 @@ exportar_servidor_gen() {
     printf "${CYAN}║${WHITE} • IP Servidor:         ${GREEN}%-40s${CYAN}║\n" "$ip"
     printf "${CYAN}║${WHITE} • Puerto SSH:          ${GREEN}%-40s${CYAN}║\n" "22"
     printf "${CYAN}║${WHITE} • Puerto SSL:          ${GREEN}%-40s${CYAN}║\n" "443"
-    printf "${CYAN}║${WHITE} • Dropbear:            ${GREEN}%-40s${CYAN}║\n" "80, 8080, 442, 8888"
     printf "${CYAN}║${WHITE} • BHTTP Relay:         ${GREEN}%-40s${CYAN}║\n" "Principal: $bhttp_main_port (Todos: $bhttp_all)"
     printf "${CYAN}║${WHITE} • UDP CRIS (Hysteria): ${GREEN}%-40s${CYAN}║\n" "$uport (OBFS: $obfs_val | Auth: $auth_val)"
     printf "${CYAN}║${WHITE} • BadVPN UDPGW:        ${GREEN}%-40s${CYAN}║\n" "7300"

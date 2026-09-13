@@ -32,11 +32,14 @@ fi
 echo -e "${YELLOW}[1/4]${NC} Actualizando repositorios e instalando paquetes base..."
 if command -v apt-get >/dev/null 2>&1; then
     DEBIAN_FRONTEND=noninteractive apt-get update -y -qq >/dev/null 2>&1 || true
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl wget git jq openssl stunnel4 dropbear ufw fail2ban \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl wget git jq openssl stunnel4 ufw fail2ban \
         socat netcat-openbsd python3 libssl-dev screen nano unzip iproute2 procps >/dev/null 2>&1 || true
 elif command -v yum >/dev/null 2>&1; then
     yum install -y -q curl wget git jq openssl stunnel ufw fail2ban socat python3 screen nano unzip iproute procps-ng >/dev/null 2>&1 || true
 fi
+# Asegurar que dropbear no interfiera con los puertos de BHTTP
+systemctl stop dropbear 2>/dev/null || true
+systemctl disable dropbear 2>/dev/null || true
 echo -e "${GREEN}[✔]${NC} Dependencias listas."
 
 echo -e "${YELLOW}[2/4]${NC} Creando directorios y descargando SSH-CRIS Suite..."

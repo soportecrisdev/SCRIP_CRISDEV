@@ -37,8 +37,7 @@ menu        # Menú estándar
 | Protocolo | Puertos Soportados | Descripción |
 |---|---|---|
 | **OpenSSH** | `22` | SSH directo con `AllowTcpForwarding` y keepalive activo. |
-| **Dropbear** | `80`, `8080`, `442`, `8888` | Dropbear multipuerto para inyección HTTP. |
-| **Stunnel4 (SSL/TLS)** | `443` | Wrapper SSL hacia OpenSSH / Dropbear con certificado auto-firmado. |
+| **Stunnel4 (SSL/TLS)** | `443` | Wrapper SSL hacia OpenSSH con certificado auto-firmado. |
 | **BHTTP Multi-Puerto** | `8080`, `80`, `8888`, `8081` | Motor de Relay BHTTP (Wakko Engine) compatible con `BHP1`. Permite abrir múltiples puertos simultáneos. |
 | **UDP CRIS / Hysteria** | `36712` (Port hopping `6000:50000`) | Núcleo UDP Hysteria v1/v2 con OBFS y buffer optimizado para LTE. |
 | **BadVPN UDPGW** | `7300` | Reenvío UDP para llamadas de WhatsApp y videojuegos online. |
