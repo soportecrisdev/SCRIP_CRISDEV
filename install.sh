@@ -32,9 +32,10 @@ echo -e "${YELLOW}[1/4]${NC} Actualizando repositorios e instalando paquetes bas
 if command -v apt-get >/dev/null 2>&1; then
     DEBIAN_FRONTEND=noninteractive apt-get update -y -qq >/dev/null 2>&1 || true
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl wget git jq openssl stunnel4 ufw fail2ban \
-        socat netcat-openbsd python3 libssl-dev screen nano unzip iproute2 procps net-tools >/dev/null 2>&1 || true
+        socat netcat-openbsd python3 libssl-dev screen nano unzip iproute2 procps net-tools \
+        build-essential cmake make gcc g++ iptables >/dev/null 2>&1 || true
 elif command -v yum >/dev/null 2>&1; then
-    yum install -y -q curl wget git jq openssl stunnel ufw fail2ban socat python3 screen nano unzip iproute procps-ng net-tools >/dev/null 2>&1 || true
+    yum install -y -q curl wget git jq openssl stunnel ufw fail2ban socat python3 screen nano unzip iproute procps-ng net-tools gcc gcc-c++ make cmake iptables >/dev/null 2>&1 || true
 fi
 echo -e "${GREEN}[✔]${NC} Dependencias listas."
 

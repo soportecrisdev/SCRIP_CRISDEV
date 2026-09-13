@@ -1214,42 +1214,188 @@ EOF
 }
 
 # 6. BADVPN UDPGW
+install_badvpn_bin() {
+    if [[ -x /usr/local/bin/badvpn-udpgw || -x /bin/badvpn-udpgw ]]; then
+        [[ ! -x /usr/local/bin/badvpn-udpgw && -x /bin/badvpn-udpgw ]] && ln -sf /bin/badvpn-udpgw /usr/local/bin/badvpn-udpgw
+        [[ ! -x /bin/badvpn-udpgw && -x /usr/local/bin/badvpn-udpgw ]] && ln -sf /usr/local/bin/badvpn-udpgw /bin/badvpn-udpgw
+        return 0
+    fi
+    echo -e "${YELLOW}Instalando y compilando badvpn-udpgw oficial...${NC}"
+    apt-get update -qq >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential cmake make gcc g++ screen >/dev/null 2>&1 || true
+    
+    local workdir="/usr/local/src"
+    mkdir -p "$workdir"
+    cd "$workdir" || return 1
+    rm -rf badvpn-1.999.130 badvpn-build badvpn.tar.gz 2>/dev/null || true
+    curl -fL --retry 3 "https://github.com/ambrop72/badvpn/archive/refs/tags/1.999.130.tar.gz" -o badvpn.tar.gz 2>/dev/null || \
+    wget -q "https://github.com/ambrop72/badvpn/archive/refs/tags/1.999.130.tar.gz" -O badvpn.tar.gz 2>/dev/null || true
+    
+    if [[ -f badvpn.tar.gz ]]; then
+        tar -xzf badvpn.tar.gz >/dev/null 2>&1 || true
+        mkdir -p badvpn-build
+        cd badvpn-build || return 1
+        cmake ../badvpn-1.999.130 -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 >/dev/null 2>&1 || true
+        make -j"$(nproc 2>/dev/null || echo 1)" >/dev/null 2>&1 || true
+        make install >/dev/null 2>&1 || true
+    fi
+    
+    if [[ -x /usr/local/bin/badvpn-udpgw ]]; then
+        ln -sf /usr/local/bin/badvpn-udpgw /bin/badvpn-udpgw
+        chmod +x /usr/local/bin/badvpn-udpgw /bin/badvpn-udpgw 2>/dev/null || true
+        return 0
+    fi
+    return 1
+}
+
 menub() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       BADVPN UDPGW (JUEGOS / VOIP)                     ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e " ${GREEN}[1]${WHITE} > Iniciar BadVPN Puerto 7300"
-    echo -e " ${GREEN}[2]${WHITE} > Iniciar Multi-BadVPN (7100, 7200, 7300)"
-    echo -e " ${RED}[3]${WHITE} > Detener BadVPN"
-    echo -e " ${RED}[0]${WHITE} > Volver"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Opcion: " b_opt
-    case "$b_opt" in
-        1|2)
-            if [[ ! -f /usr/local/bin/badvpn-udpgw ]]; then
-                wget -q -O /usr/local/bin/badvpn-udpgw "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/UDP_CRIS/badvpn-udpgw" 2>/dev/null || \
-                wget -q -O /usr/local/bin/badvpn-udpgw "https://github.com/ambrop72/badvpn/raw/master/bin/badvpn-udpgw" 2>/dev/null
-                chmod +x /usr/local/bin/badvpn-udpgw 2>/dev/null || true
-            fi
-            screen -dmS badvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000
-            [[ "$b_opt" == "2" ]] && {
-                screen -dmS badvpn1 /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7100 --max-clients 1000
-                screen -dmS badvpn2 /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7200 --max-clients 1000
-            }
-            echo -e "\n\033[1;32mBadVPN UDPGW iniciado con éxito!\033[0m"
-            sleep 2
-            ;;
-        3)
-            for sp in $(screen -ls 2>/dev/null | grep 'badvpn' | awk '{print $1}'); do
-                screen -r -S "$sp" -X quit 2>/dev/null || true
-            done
-            pkill -f badvpn-udpgw 2>/dev/null || true
-            echo -e "\n\033[1;32mBadVPN detenido!\033[0m"
-            sleep 2
-            ;;
-        0) return ;;
-    esac
+    while true; do
+        clear
+        local bad_p
+        bad_p=$(ss -tulpn 2>/dev/null | grep -E 'badvpn-udpgw|udpvpn' | awk '{print $5}' | grep -oE '[0-9]+$' | sort -u | xargs || true)
+        [[ -z "$bad_p" && -f /etc/systemd/system/badvpn-udpgw.service ]] && bad_p=$(grep -oE '\-\-listen\-addr[[:space:]]+127\.0\.0\.1:[0-9]+' /etc/systemd/system/badvpn-udpgw.service 2>/dev/null | cut -d: -f2 | xargs || true)
+        
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "${BLUE}                       BADVPN UDPGW (7300)${NC}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        if [[ -n "$bad_p" ]]; then
+            echo -e " ${WHITE}Estado: ${GREEN}ACTIVO${WHITE} | Puertos: ${YELLOW}${bad_p}${NC}"
+        else
+            echo -e " ${WHITE}Estado: ${RED}APAGADO${NC}"
+        fi
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e " ${SSHPLUS_NUM}[1]${NC} ${WHITE}> Activar BadVPN Puerto 7300 (Servicio Continuo)${NC}"
+        echo -e " ${SSHPLUS_NUM}[2]${NC} ${WHITE}> Activar BadVPN en Puerto Personalizado (ej: 7200, 7300)${NC}"
+        echo -e " ${SSHPLUS_NUM}[3]${NC} ${WHITE}> Activar Multi-BadVPN (7100, 7200, 7300)${NC}"
+        echo -e " ${RED}[4]${NC} ${WHITE}> Detener BadVPN${NC}"
+        echo -e " ${RED}[0]${NC} ${WHITE}> Volver${NC}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${NC} "
+        read -r b_opt
+        case "$b_opt" in
+            1)
+                echo -e "\n\033[1;32mIniciando BadVPN en puerto 7300...\033[0m"
+                fun_bar "install_badvpn_bin"
+                cat > /etc/systemd/system/badvpn-udpgw.service << EOF
+[Unit]
+Description=CRISDEV BadVPN UDPGW Port 7300
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 9000 --max-connections-for-client 8 --client-socket-sndbuf 10000
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                systemctl daemon-reload
+                systemctl enable --now badvpn-udpgw.service 2>/dev/null || true
+                systemctl restart badvpn-udpgw.service 2>/dev/null || true
+                
+                screen -dmS udpvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 9000 2>/dev/null || true
+                echo -e "\n\033[1;32m[✔] BadVPN UDPGW activo en 127.0.0.1:7300!\033[0m"
+                pause
+                ;;
+            2)
+                echo -ne "\n\033[1;32mPuerto UDPGW deseado (ej: 7300 o 7200)\033[1;37m: "
+                read -r cus_port
+                [[ ! "$cus_port" =~ ^[0-9]+$ ]] && cus_port=7300
+                fun_bar "install_badvpn_bin"
+                cat > "/etc/systemd/system/badvpn-udpgw.service" << EOF
+[Unit]
+Description=CRISDEV BadVPN UDPGW Port $cus_port
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:$cus_port --max-clients 9000 --max-connections-for-client 8 --client-socket-sndbuf 10000
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                systemctl daemon-reload
+                systemctl enable --now badvpn-udpgw.service 2>/dev/null || true
+                systemctl restart badvpn-udpgw.service 2>/dev/null || true
+                screen -dmS udpvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:"$cus_port" --max-clients 9000 2>/dev/null || true
+                echo -e "\n\033[1;32m[✔] BadVPN UDPGW activo en 127.0.0.1:$cus_port!\033[0m"
+                pause
+                ;;
+            3)
+                fun_bar "install_badvpn_bin"
+                cat > /etc/systemd/system/badvpn-udpgw.service << EOF
+[Unit]
+Description=CRISDEV BadVPN UDPGW Port 7300
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 9000 --max-connections-for-client 8 --client-socket-sndbuf 10000
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                cat > /etc/systemd/system/badvpn-udpgw-7200.service << EOF
+[Unit]
+Description=CRISDEV BadVPN UDPGW Port 7200
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7200 --max-clients 9000 --max-connections-for-client 8 --client-socket-sndbuf 10000
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                cat > /etc/systemd/system/badvpn-udpgw-7100.service << EOF
+[Unit]
+Description=CRISDEV BadVPN UDPGW Port 7100
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7100 --max-clients 9000 --max-connections-for-client 8 --client-socket-sndbuf 10000
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                systemctl daemon-reload
+                systemctl enable --now badvpn-udpgw.service badvpn-udpgw-7200.service badvpn-udpgw-7100.service 2>/dev/null || true
+                systemctl restart badvpn-udpgw.service badvpn-udpgw-7200.service badvpn-udpgw-7100.service 2>/dev/null || true
+                screen -dmS udpvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 9000 2>/dev/null || true
+                screen -dmS udpvpn1 /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7200 --max-clients 9000 2>/dev/null || true
+                screen -dmS udpvpn2 /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7100 --max-clients 9000 2>/dev/null || true
+                echo -e "\n\033[1;32m[✔] Multi-BadVPN activo en puertos 7100, 7200 y 7300!\033[0m"
+                pause
+                ;;
+            4)
+                systemctl disable --now badvpn-udpgw.service badvpn-udpgw-7200.service badvpn-udpgw-7100.service 2>/dev/null || true
+                rm -f /etc/systemd/system/badvpn-udpgw*.service
+                systemctl daemon-reload
+                for sid in $(screen -ls 2>/dev/null | grep -E 'badvpn|udpvpn' | awk '{print $1}'); do
+                    screen -r -S "$sid" -X quit 2>/dev/null || true
+                done
+                pkill -f badvpn-udpgw 2>/dev/null || true
+                echo -e "\n\033[1;32mBadVPN detenido con éxito!\033[0m"
+                pause
+                ;;
+            0) return ;;
+        esac
+    done
 }
 
 # 7. SLOWDNS
@@ -1538,24 +1684,37 @@ hyst_shell_quote() {
 
 hyst_build_auth_list() {
     local db="/root/usuarios.db" pass_dir="/etc/SSHPlus/senha" user pass found=0 sep=""
-    [[ -f "$db" ]] || return 1
-    while read -r user _; do
-        [[ -z "$user" ]] && continue
-        [[ -f "$pass_dir/$user" ]] || continue
-        pass="$(cat "$pass_dir/$user" 2>/dev/null)"
-        [[ -z "$pass" ]] && continue
-        printf '%s      %s\n' "$sep" "$(hyst_json_quote "${user}:${pass}")"
-        sep=","
-        found=1
-    done <"$db"
-    [[ "$found" = "1" ]]
+    if [[ -f "$db" ]]; then
+        while read -r user _; do
+            [[ -z "$user" ]] && continue
+            [[ -f "$pass_dir/$user" ]] || continue
+            pass="$(cat "$pass_dir/$user" 2>/dev/null)"
+            [[ -z "$pass" ]] && continue
+            printf '%s      %s\n' "$sep" "$(hyst_json_quote "${user}:${pass}")"
+            sep=","
+            found=1
+        done <"$db"
+    fi
+    if [[ "$found" != "1" && -f "$USER_DATABASE" ]]; then
+        while IFS=: read -r user limit exp pass; do
+            [[ -z "$user" || -z "$pass" ]] && continue
+            printf '%s      %s\n' "$sep" "$(hyst_json_quote "${user}:${pass}")"
+            sep=","
+            found=1
+        done <"$USER_DATABASE"
+    fi
+    if [[ "$found" != "1" ]]; then
+        printf '      %s\n' "$(hyst_json_quote "crisdev:crisdev")"
+    fi
+    return 0
 }
 
 hyst_install_binary() {
+    mkdir -p /etc/hysteria /usr/local/bin
     hyst_cleanup_old_menu_bins
     apt-get update -y >/dev/null 2>&1 || true
     apt-get install -y iptables openssl curl wget >/dev/null 2>&1 || true
-    if [[ -x "$HYST_BIN" ]]; then
+    if [[ -x "$HYST_BIN" && -x /usr/local/bin/hysteria ]]; then
         return 0
     fi
     echo -e "${YELLOW}Descargando Hysteria v1.3.5 Oficial...${NC}"
@@ -1563,58 +1722,65 @@ hyst_install_binary() {
     case "$(uname -m)" in
         x86_64|amd64) asset="hysteria-linux-amd64" ;;
         aarch64|arm64|armv8) asset="hysteria-linux-arm64" ;;
-        *) echo -e "${RED}Arquitectura no compatible para Hysteria v1.${NC}"; return 1 ;;
+        *) asset="hysteria-linux-amd64" ;;
     esac
     url="https://github.com/apernet/hysteria/releases/download/v1.3.5/${asset}"
-    if command -v curl >/dev/null 2>&1; then
-        curl -fL "$url" -o "$HYST_BIN"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$HYST_BIN" "$url"
-    else
-        echo -e "${RED}Necesita curl o wget para instalar Hysteria.${NC}"
-        return 1
-    fi
-    chmod +x "$HYST_BIN" 2>/dev/null
+    curl -fL --retry 3 --connect-timeout 10 "$url" -o "$HYST_BIN" 2>/dev/null || \
+    wget -t 3 -T 10 -qO "$HYST_BIN" "$url" 2>/dev/null || true
+    
+    chmod 755 "$HYST_BIN" 2>/dev/null || true
     ln -sfn "$HYST_BIN" /usr/local/bin/hysteria 2>/dev/null || true
+    chmod 755 /usr/local/bin/hysteria 2>/dev/null || true
     [[ -x "$HYST_BIN" ]]
 }
 
 hyst_write_service() {
+    sysctl -w net.core.rmem_max=67108864 >/dev/null 2>&1 || true
+    sysctl -w net.core.wmem_max=67108864 >/dev/null 2>&1 || true
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+
     cat >"$HYST_SERVICE" <<EOF
 [Unit]
-Description=Hysteria v1 Server - SSH Plus / UDP CRIS
-After=network.target
+Description=CRISDEV UDP Hysteria v1.3.5 Server
+After=network.target network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+User=root
 Environment=HYSTERIA_LOG_LEVEL=debug
-ExecStart=${HYST_BIN} -c ${HYST_CONF} server
-ExecStartPre=${HYST_IPTABLES} apply
-ExecStopPost=${HYST_IPTABLES} clear
+ExecStartPre=-${HYST_IPTABLES} apply
+ExecStart=/usr/local/bin/hysteria -c ${HYST_CONF} server
+ExecStopPost=-${HYST_IPTABLES} clear
 WorkingDirectory=${HYST_DIR}
-Restart=on-failure
-RestartSec=5
-LimitNOFILE=infinity
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload >/dev/null 2>&1
-    systemctl enable hysteria-server >/dev/null 2>&1
+    systemctl enable hysteria-server.service >/dev/null 2>&1 || true
+    systemctl enable hysteria-server >/dev/null 2>&1 || true
 }
 
 hyst_write_config() {
-    local port="$1" rules="$2" obfs="$3" auth_block
-    auth_block="$(hyst_build_auth_list)" || return 2
+    local port="$1" rules="$2" obfs="$3"
+    local auth_block
+    auth_block="$(hyst_build_auth_list)"
     mkdir -p "$HYST_DIR"
     if [[ ! -f "$HYST_CERT" || ! -f "$HYST_KEY" ]]; then
         openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
-            -keyout "$HYST_KEY" -out "$HYST_CERT" -subj "/CN=crisdev-hysteria" >/dev/null 2>&1
+            -keyout "$HYST_KEY" -out "$HYST_CERT" -subj "/CN=crisdev.online" >/dev/null 2>&1 || true
     fi
+    chmod 600 "$HYST_KEY" 2>/dev/null || true
+    chmod 644 "$HYST_CERT" 2>/dev/null || true
     rm -f /etc/hysteria/config.yaml 2>/dev/null || true
     cat >"$HYST_CONF" <<EOF
 {
   "listen": ":${port}",
+  "protocol": "udp",
   "cert": "${HYST_CERT}",
   "key": "${HYST_KEY}",
   "obfs": $(hyst_json_quote "$obfs"),
@@ -1674,6 +1840,7 @@ case "$ACTION" in
     apply) apply_rules ;;
     clear) clear_rules ;;
 esac
+exit 0
 EOF
     chmod +x "$HYST_IPTABLES" 2>/dev/null
     chmod 600 "$HYST_CONF" "$HYST_ENV" "$HYST_KEY" 2>/dev/null
@@ -1682,13 +1849,9 @@ EOF
 hyst_sync_users() {
     [[ -f "$HYST_ENV" ]] || return 0
     hyst_load_env
-    if ! hyst_build_auth_list >/dev/null; then
-        systemctl stop hysteria-server >/dev/null 2>&1 || true
-        return 0
-    fi
-    hyst_write_config "${HYST_PORT:-36712}" "${HYST_RULES:-20000:50000}" "${HYST_OBFS:-$(hyst_rand 18)}" || return 0
+    hyst_write_config "${HYST_PORT:-36712}" "${HYST_RULES:-20000:50000}" "${HYST_OBFS:-crisdev}"
     hyst_install_binary >/dev/null 2>&1 && hyst_write_service
-    systemctl restart hysteria-server >/dev/null 2>&1 || true
+    systemctl restart hysteria-server.service >/dev/null 2>&1 || systemctl restart hysteria-server >/dev/null 2>&1 || true
 }
 
 hyst_show_info() {
@@ -1725,12 +1888,7 @@ hyst_configure() {
     echo -e "${BLUE}            INSTALAR UDP CRIS (HYSTERIA v1.3.5)${NC}"
     echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
     local port rules obfs
-    if ! hyst_build_auth_list >/dev/null; then
-        echo -e "${RED}No hay usuarios SSH con contraseña guardada.${NC}"
-        echo -e "${WHITE}Cree un usuario desde el menú de usuarios y vuelva a configurar UDP CRIS.${NC}"
-        pause
-        return
-    fi
+    
     echo -ne "${GREEN}Puerto principal UDP CRIS [36712]: ${NC}"
     read -r port
     [[ -z "$port" ]] && port="36712"
@@ -1753,20 +1911,13 @@ hyst_configure() {
     else
         rules="none"
     fi
-    echo -ne "${GREEN}OBFS UDP CRIS [crisdev / enter para aleatorio]: ${NC}"
+    echo -ne "${GREEN}OBFS UDP CRIS [default: crisdev]: ${NC}"
     read -r obfs
-    [[ -z "$obfs" ]] && obfs="$(hyst_rand 18)"
-    fun_bar "hyst_install_binary" || {
-        pause
-        return
-    }
-    hyst_write_config "$port" "$rules" "$obfs" || {
-        echo -e "${RED}No se pudo sincronizar usuarios SSH para UDP CRIS.${NC}"
-        pause
-        return
-    }
+    [[ -z "$obfs" ]] && obfs="crisdev"
+    fun_bar "hyst_install_binary"
+    hyst_write_config "$port" "$rules" "$obfs"
     hyst_write_service
-    systemctl restart hysteria-server >/dev/null 2>&1
+    systemctl restart hysteria-server.service >/dev/null 2>&1 || systemctl restart hysteria-server >/dev/null 2>&1 || true
     echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
     echo -e "${GREEN}UDP CRIS (Hysteria v1.3.5) instalado y activo con éxito!${NC}"
     hyst_show_info
@@ -1815,7 +1966,7 @@ hyst_change_range() {
                     sleep 2
                     continue
                 fi
-                hyst_write_config "${HYST_PORT:-36712}" "$new_rules" "${HYST_OBFS:-$(hyst_rand 18)}"
+                hyst_write_config "${HYST_PORT:-36712}" "$new_rules" "${HYST_OBFS:-crisdev}"
                 systemctl restart hysteria-server >/dev/null 2>&1
                 ;;
             2)
@@ -1827,7 +1978,7 @@ hyst_change_range() {
                     sleep 2
                     continue
                 fi
-                hyst_write_config "${HYST_PORT:-36712}" "$new_rules" "${HYST_OBFS:-$(hyst_rand 18)}"
+                hyst_write_config "${HYST_PORT:-36712}" "$new_rules" "${HYST_OBFS:-crisdev}"
                 systemctl restart hysteria-server >/dev/null 2>&1
                 ;;
             0|00) return ;;
@@ -2006,8 +2157,12 @@ menu_protocolos() {
         fi
 
         # 7. BadVPN
-        if pgrep -f badvpn-udpgw >/dev/null 2>&1; then
-            echo -e "\033[1;32mSERVICIO: \033[1;33mBADVPN \033[1;32mPUERTO: \033[1;37m7300\033[0m"
+        if systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -f 'badvpn-udpgw|udpvpn' >/dev/null 2>&1; then
+            local _bad_p
+            _bad_p=$(ss -tulpn 2>/dev/null | grep -E 'badvpn-udpgw|udpvpn' | awk '{print $5}' | grep -oE '[0-9]+$' | sort -u | xargs || true)
+            [[ -z "$_bad_p" && -f /etc/systemd/system/badvpn-udpgw.service ]] && _bad_p=$(grep -oE '\-\-listen\-addr[[:space:]]+127\.0\.0\.1:[0-9]+' /etc/systemd/system/badvpn-udpgw.service 2>/dev/null | cut -d: -f2 | xargs || true)
+            [[ -z "$_bad_p" ]] && _bad_p="7300"
+            echo -e "\033[1;32mSERVICIO: \033[1;33mBADVPN \033[1;32mPUERTO: \033[1;37m$_bad_p\033[0m"
         fi
 
         # 8. Squid
@@ -2033,7 +2188,7 @@ menu_protocolos() {
         pgrep -f 'dnstt-server' >/dev/null 2>&1 && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
         (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1) && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
         pgrep -f 'trojan' >/dev/null 2>&1 && sts_trojan="\033[1;32mo\033[0m" || sts_trojan="\033[1;31mx\033[0m"
-        pgrep -f 'badvpn-udpgw' >/dev/null 2>&1 && sts_badvpn="\033[1;32mo\033[0m" || sts_badvpn="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -f 'badvpn-udpgw|udpvpn' >/dev/null 2>&1) && sts_badvpn="\033[1;32mo\033[0m" || sts_badvpn="\033[1;31mx\033[0m"
         pgrep -f 'openvpn' >/dev/null 2>&1 && sts_ovpn="\033[1;32mo\033[0m" || sts_ovpn="\033[1;31mx\033[0m"
         pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1 && sts_ws="\033[1;32mo\033[0m" || sts_ws="\033[1;31mx\033[0m"
         pgrep -f 'sslh' >/dev/null 2>&1 && sts_sslh="\033[1;32mo\033[0m" || sts_sslh="\033[1;31mx\033[0m"
