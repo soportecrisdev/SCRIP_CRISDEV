@@ -340,7 +340,37 @@ sshplus_compat_alias botteste testbot
 sshplus_compat_alias botteste.sh testbot.sh
 sshplus_compat_alias inst-botteste install-testbot
 
-echo -e "${GREEN}[✔]${NC} Comandos 'ssh-cris', 'cris', 'menu' y módulos registrados."
+# Configurar Banner Exclusivo de Login para HTTP Conexión / CRISDEV
+sed -i '/HTTP_CONEXION_BANNER_START/,/HTTP_CONEXION_BANNER_END/d' /root/.bashrc 2>/dev/null || true
+sed -i '/NOXURASSH_BANNER_START/,/NOXURASSH_BANNER_END/d' /root/.bashrc 2>/dev/null || true
+sed -i '/SSHPLUS_BANNER_START/,/SSHPLUS_BANNER_END/d' /root/.bashrc 2>/dev/null || true
+grep -v -E 'NoxuraSSH|by J DAVID AG|ALFAINTERNET|JDAVIDAG1' /root/.bashrc > /tmp/.bashrc.clean 2>/dev/null && mv -f /tmp/.bashrc.clean /root/.bashrc
+
+cat <<'BASHRC_BANNER' >>/root/.bashrc
+# HTTP_CONEXION_BANNER_START
+CYAN=$'\033[1;38;2;76;228;255m'
+NEON=$'\033[1;38;2;0;255;127m'
+GOLD=$'\033[1;38;2;255;179;71m'
+WHITE=$'\033[1;37m'
+GREEN=$'\033[0;32m'
+RESET=$'\033[0m'
+
+echo "clear" >/dev/null 2>&1
+echo -e "${CYAN}============================================================${RESET}"
+echo -e "${CYAN}                      ⚡ HTTP CONEXIÓN ⚡${RESET}"
+echo -e "${NEON}                     Master VPS by CRISDEV${RESET}"
+echo -e "${CYAN}============================================================${RESET}"
+echo -e "${GREEN}NOMBRE DEL SERVIDOR:${RESET} ${WHITE}$HOSTNAME${RESET}"
+echo -e "${GREEN}SERVIDOR EN MARCHA:${RESET}  ${WHITE}$(uptime -p 2>/dev/null || uptime | awk '{print $3,$4}' | tr -d ',')${RESET}"
+echo -e "${GREEN}FECHA:${RESET}               ${WHITE}$(date +'%d-%m-%Y')${RESET}"
+echo -e "${GREEN}HORA:${RESET}                ${WHITE}$(date +'%T')${RESET}"
+echo -e "${CYAN}============================================================${RESET}"
+echo -e "${NEON}ESCRIBA:${RESET} ${WHITE}menu${RESET}  ${CYAN}o${RESET}  ${WHITE}ssh-cris${RESET}"
+echo -e ""
+# HTTP_CONEXION_BANNER_END
+BASHRC_BANNER
+
+echo -e "${GREEN}[✔]${NC} Banner exclusivo de bienvenida HTTP Conexión configurado."
 
 echo -e "${YELLOW}[4/4]${NC} Optimizando puertos SSH base y firewall..."
 sed -i 's/#*AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config 2>/dev/null || true
@@ -350,7 +380,7 @@ systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${WHITE}  ⚡ ¡SUITE SSH-CRIS INSTALADA CON ÉXITO! ⚡${NC}"
+echo -e "${WHITE}  ⚡ ¡SUITE HTTP CONEXIÓN (CRISDEV) INSTALADA CON ÉXITO! ⚡${NC}"
 echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
 echo -e "${WHITE}Escribe ${CYAN}ssh-cris${WHITE}, ${CYAN}cris${WHITE} o ${CYAN}menu${WHITE} para abrir el panel.${NC}"
 echo ""

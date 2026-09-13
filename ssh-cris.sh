@@ -3259,7 +3259,7 @@ main_menu() {
         pgrep -f 'limiter' >/dev/null 2>&1 && stsl="\033[1;32mo\033[0m" || stsl="\033[1;31mx\033[0m"
 
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "                   ${BLUE}SSH-CRIS MASTER SUITE ${VERSION}${SCOLOR}"
+        echo -e "               ${BLUE}⚡ HTTP CONEXIÓN MASTER SUITE ⚡${SCOLOR}"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         printf " ${SSHPLUS_SECTION}SISTEMA               MEMORIA RAM           PROCESADOR${SCOLOR}\n"
         printf " ${WHITE}OS:   ${GREEN}%-14s ${WHITE}Total: ${GREEN}%-13s ${WHITE}Núcleos: ${GREEN}%s${NC}\n" "${os:0:14}" "${ram_total}MB" "$(nproc 2>/dev/null || echo 1)"
