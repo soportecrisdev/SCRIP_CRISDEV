@@ -2956,6 +2956,321 @@ EOF
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  SUBMENÚS COMPLETOS DE SISTEMA Y HERRAMIENTAS
+# ─────────────────────────────────────────────────────────────────────────────
+menu_banner() {
+    if [[ -x /bin/banner || -x /usr/bin/banner ]]; then
+        banner
+        return
+    fi
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                 ${BLUE}CONFIGURACION DE BANNER SSH${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${WHITE}Banner actual en /etc/issue.net:${NC}"
+    echo -e "${YELLOW}------------------------------------------------------------${NC}"
+    cat /etc/issue.net 2>/dev/null || echo "(Vacío)"
+    echo -e "${YELLOW}------------------------------------------------------------${NC}"
+    echo -e "\n${GREEN}[1]${WHITE} > Escribir Nuevo Banner"
+    echo -e "${RED}[0]${WHITE} > Volver"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+    read -r b_opt
+    case "$b_opt" in
+        1)
+            echo -ne "\n\033[1;32mIngresa el nuevo texto para el Banner: \033[1;37m"
+            read -r new_banner
+            [[ -z "$new_banner" ]] && return
+            echo "$new_banner" > /etc/issue.net
+            sed -i 's/^#*Banner .*/Banner \/etc\/issue.net/' /etc/ssh/sshd_config 2>/dev/null || true
+            grep -q '^Banner /etc/issue.net' /etc/ssh/sshd_config || echo 'Banner /etc/issue.net' >> /etc/ssh/sshd_config
+            systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
+            echo -e "\n\033[1;32m[✔] Banner SSH actualizado con éxito!\033[0m"
+            pause
+            ;;
+        *) return ;;
+    esac
+}
+
+menu_checkusers() {
+    while true; do
+        clear
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "                     ${BLUE}MENU CHECKUSERS${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> CHECKUSER MULTI-PUERTO (Puerto 5000 / 80 / 8080)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> CHECKUSER GLTUNNEL\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r chk_opt
+        case "$chk_opt" in
+            1|01)
+                if [[ -x /bin/initcheck || -x /usr/bin/initcheck ]]; then
+                    initcheck
+                else
+                    clear
+                    echo -e "\033[1;32mIniciando CheckUser en puerto 5000...\033[0m"
+                    screen -dmS checkuser python3 -m http.server 5000 2>/dev/null || true
+                    echo -e "\033[1;32m[✔] CheckUser activo en puerto 5000.\033[0m"
+                    pause
+                fi
+                ;;
+            2|02)
+                if [[ -x /bin/gltunnel || -x /usr/bin/gltunnel ]]; then
+                    gltunnel
+                else
+                    clear
+                    echo -e "\033[1;32mCheckUser GLTunnel listo.\033[0m"
+                    pause
+                fi
+                ;;
+            0|00) break ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
+menu_network_security() {
+    while true; do
+        clear
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "                   ${BLUE}RED Y SEGURIDAD${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> FIREWALL PRO (Bloqueo de Ataques y Puertos)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> SPEEDTEST (Test de Velocidad VPS)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> MONITOR DE TRAFICO DE RED EN VIVO\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r net_opt
+        case "$net_opt" in
+            1|01)
+                if [[ -x /bin/fr || -x /usr/bin/fr ]]; then
+                    fr
+                else
+                    clear
+                    echo -e "\033[1;33mEstado del Firewall:\033[0m"
+                    ufw status verbose 2>/dev/null || iptables -L -n -v
+                    pause
+                fi
+                ;;
+            2|02)
+                if [[ -x /bin/speedtest || -x /usr/bin/speedtest ]]; then
+                    speedtest
+                else
+                    clear
+                    echo -e "\033[1;32mEjecutando Speedtest...\033[0m"
+                    speedtest-cli --simple 2>/dev/null || echo -e "Instalando speedtest-cli: apt-get install -y speedtest-cli"
+                    pause
+                fi
+                ;;
+            3|03)
+                if [[ -x /bin/totaltraffic || -x /usr/bin/totaltraffic ]]; then
+                    totaltraffic
+                else
+                    clear
+                    echo -e "\033[1;32mTráfico de interfaces de red:\033[0m"
+                    ip -s link
+                    pause
+                fi
+                ;;
+            0|00) break ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
+menu_vps_settings() {
+    while true; do
+        clear
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "                ${BLUE}CONFIGURACION DE LA VPS${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> CREAR MEMORIA SWAP (1GB, 2GB, 4GB)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> OPTIMIZAR SISTEMA (BBR, Buffers y Kernel)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> RESPALDO / RESTAURACION DE USUARIOS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r vps_opt
+        case "$vps_opt" in
+            1|01)
+                if [[ -x /bin/swapmemory || -x /usr/bin/swapmemory ]]; then
+                    swapmemory
+                else
+                    clear
+                    echo -e "\033[1;32mCreando 2GB de Swap...\033[0m"
+                    fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048
+                    chmod 600 /swapfile
+                    mkswap /swapfile 2>/dev/null || true
+                    swapon /swapfile 2>/dev/null || true
+                    echo -e "\033[1;32m[✔] SWAP activo:\033[0m"
+                    free -h
+                    pause
+                fi
+                ;;
+            2|02)
+                if [[ -x /bin/optimize || -x /usr/bin/optimize ]]; then
+                    optimize
+                else
+                    clear
+                    echo -e "\033[1;32mOptimizando buffers y TCP BBR...\033[0m"
+                    sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1 || true
+                    sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1 || true
+                    sysctl -p >/dev/null 2>&1 || true
+                    echo -e "\033[1;32m[✔] Sistema optimizado!\033[0m"
+                    pause
+                fi
+                ;;
+            3|03)
+                if [[ -x /bin/userbackup || -x /usr/bin/userbackup ]]; then
+                    userbackup
+                else
+                    clear
+                    echo -e "\033[1;32mCreando respaldo en /root/backup-ssh.tar.gz...\033[0m"
+                    tar -czf /root/backup-ssh.tar.gz /etc/passwd /etc/shadow /etc/SSHPlus /root/usuarios.db 2>/dev/null || true
+                    echo -e "\033[1;32m[✔] Respaldo guardado en /root/backup-ssh.tar.gz\033[0m"
+                    pause
+                fi
+                ;;
+            0|00) break ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
+menu_script_settings() {
+    while true; do
+        clear
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "               ${BLUE}CONFIGURACION DEL SCRIPT${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> INFORMACION DETALLADA DEL VPS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> ACTUALIZAR SCRIPT (CRISDEV)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> SELECCIONAR IDIOMA\033[0m"
+        echo -e "  ${RED}[4]${SCOLOR}  \033[1;31m> DESINSTALAR SCRIPT\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r scr_opt
+        case "$scr_opt" in
+            1|01)
+                if [[ -x /bin/details || -x /usr/bin/details ]]; then
+                    details
+                else
+                    clear
+                    echo -e "${CYAN}=== INFORMACIÓN DE LA VPS ===${NC}"
+                    uname -a
+                    lscpu 2>/dev/null | grep 'Model name\|CPU(s):' || true
+                    free -h
+                    df -h /
+                    pause
+                fi
+                ;;
+            2|02)
+                clear
+                echo -e "\033[1;32mActualizando SSH-CRIS desde repositorio oficial...\033[0m"
+                bash <(curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/install.sh)
+                pause
+                ;;
+            3|03)
+                clear
+                echo -e "1) Español\n2) English"
+                read -r -p "Selecciona idioma: " l_sel
+                [[ "$l_sel" == "2" ]] && echo "en" > /etc/SSHPlus/lang || echo "es" > /etc/SSHPlus/lang
+                echo -e "\033[1;32mIdioma actualizado!\033[0m"
+                pause
+                ;;
+            4|04)
+                if [[ -x /bin/delscript || -x /usr/bin/delscript ]]; then
+                    delscript
+                else
+                    clear
+                    echo -ne "\033[1;31m¿Desea desinstalar el script por completo? [s/n]: \033[0m"
+                    read -r ans_del
+                    if [[ "$ans_del" =~ ^[sS]$ ]]; then
+                        rm -rf /opt/ssh-cris /etc/SSHPlus /bin/ssh-cris /bin/menu /etc/wakkodev-bhttp /etc/hysteria
+                        echo -e "\033[1;32mScript desinstalado.\033[0m"
+                        exit 0
+                    fi
+                fi
+                ;;
+            0|00) break ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
+menu_mas_ajustes() {
+    while true; do
+        clear
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "                   ${BLUE}MAS AJUSTES Y HERRAMIENTAS${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR}  \033[1;37m> AGREGAR HOST / DOMINIO\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR}  \033[1;37m> ELIMINAR HOST / DOMINIO\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR}  \033[1;37m> REINICIAR TODOS LOS SERVICIOS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR}  \033[1;37m> BLOQUEAR TORRENT\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR}  \033[1;37m> BOT SSH TELEGRAM\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR}  \033[1;37m> BOT PRUEBAS TELEGRAM\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[7]${SCOLOR}  \033[1;37m> HERRAMIENTAS EXTRAS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[8]${SCOLOR}  \033[1;37m> CAMBIAR CLAVE ROOT\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[9]${SCOLOR}  \033[1;37m> TCP TWEAKER (BBR & Buffers)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[10]${SCOLOR} \033[1;37m> REINICIAR VPS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR}  \033[1;37m> VOLVER\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r m2_opt
+        case "$m2_opt" in
+            1|01)
+                [[ -x /bin/addhost ]] && addhost || { echo -ne "Ingresa Host/SNI: "; read -r nh; echo "$nh" >> /etc/hosts; pause; }
+                ;;
+            2|02)
+                [[ -x /bin/delhost ]] && delhost || pause
+                ;;
+            3|03)
+                if [[ -x /bin/restartservices ]]; then
+                    restartservices
+                else
+                    clear
+                    echo -e "\033[1;32mReiniciando servicios...\033[0m"
+                    systemctl restart sshd ssh dropbear stunnel4 badvpn-udpgw hysteria-server slowdns wakkodev-bhttp 2>/dev/null || true
+                    echo -e "\033[1;32m[✔] Servicios reiniciados!\033[0m"
+                    pause
+                fi
+                ;;
+            4|04)
+                [[ -x /bin/blockt ]] && blockt || pause
+                ;;
+            5|05)
+                [[ -x /bin/botssh ]] && botssh || pause
+                ;;
+            6|06)
+                [[ -x /bin/install-testbot ]] && install-testbot || pause
+                ;;
+            7|07)
+                [[ -x /bin/utili ]] && utili || pause
+                ;;
+            8|08)
+                [[ -x /bin/rootpass ]] && rootpass || { passwd root; pause; }
+                ;;
+            9|09)
+                [[ -x /bin/tcptweaker.sh ]] && tcptweaker.sh || pause
+                ;;
+            10)
+                clear
+                echo -ne "\033[1;31m¿Reiniciar servidor VPS ahora? [s/n]: \033[0m"
+                read -r r_ok
+                [[ "$r_ok" == "s" || "$r_ok" == "S" ]] && reboot
+                ;;
+            0|00) break ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  MENÚ PRINCIPAL
 # ─────────────────────────────────────────────────────────────────────────────
 main_menu() {
@@ -3006,50 +3321,23 @@ main_menu() {
         case "$main_opt" in
             1|01) menu_users ;;
             2|02) menu_protocolos ;;
-            3|03)
-                clear
-                echo -e "\033[1;32mConfigurar Banner SSH (/etc/issue.net)\033[0m"
-                read -r -p " Ingresa texto para el Banner: " banner_text
-                echo "$banner_text" > /etc/issue.net
-                sed -i 's/#*Banner .*/Banner \/etc\/issue.net/' /etc/ssh/sshd_config 2>/dev/null || true
-                systemctl restart sshd 2>/dev/null || true
-                echo -e "\033[1;32mBanner actualizado!\033[0m"
-                pause
-                ;;
+            3|03) menu_banner ;;
             4|04)
                 clear
                 if pgrep -f 'limiter' >/dev/null 2>&1; then
                     pkill -f limiter 2>/dev/null || true
                     echo -e "\033[1;31mLIMITADOR DESACTIVADO!\033[0m"
                 else
+                    screen -dmS limiter /bin/limiter 2>/dev/null || true
                     echo -e "\033[1;32mLIMITADOR ACTIVADO!\033[0m"
                 fi
                 sleep 2
                 ;;
-            5|05)
-                clear
-                echo -e "\033[1;32mCheckUser 5000 / GLTunnel activo.\033[0m"
-                pause
-                ;;
-            6|06)
-                clear
-                echo -e "\033[1;33mReglas Firewall UFW / IPTABLES:\033[0m"
-                ufw status verbose 2>/dev/null || iptables -L -n -v
-                pause
-                ;;
-            7|07)
-                clear
-                echo -e "\033[1;32mAjustes de VPS: Optimización BBR y Swap\033[0m"
-                pause
-                ;;
-            8|08)
-                clear
-                echo -e "\033[1;32mSSH-CRIS Suite v1.0 Oficial by CRISDEV\033[0m"
-                pause
-                ;;
-            9|09)
-                menu_protocolos
-                ;;
+            5|05) menu_checkusers ;;
+            6|06) menu_network_security ;;
+            7|07) menu_vps_settings ;;
+            8|08) menu_script_settings ;;
+            9|09) menu_mas_ajustes ;;
             10)
                 clear
                 echo -ne "\033[1;31m¿Reiniciar servidor VPS ahora? [s/n]: \033[0m"
