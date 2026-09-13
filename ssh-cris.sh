@@ -3658,6 +3658,80 @@ menu_network_security() {
     done
 }
 
+ecualizar_horario() {
+    clear
+    local cur_tz
+    cur_tz=$(cat /etc/timezone 2>/dev/null || timedatectl 2>/dev/null | grep "Time zone" | awk '{print $3}' || echo "UTC")
+    local cur_time
+    cur_time=$(date '+%Y-%m-%d %H:%M:%S (%Z)')
+
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "        ${BLUE}⚡ ECUALIZAR HORARIO / ZONA HORARIA DE LA VPS ⚡${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "  ${WHITE}Hora Actual del Servidor : ${YELLOW}${cur_time}${NC}"
+    echo -e "  ${WHITE}Zona Horaria Actual      : ${GREEN}${cur_tz}${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR}  \033[1;37m> America/Bogota       (Colombia, Perú, Ecuador, Panamá - UTC-5)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR}  \033[1;37m> America/Mexico_City  (México Centro - UTC-6)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR}  \033[1;37m> America/Caracas      (Venezuela - UTC-4)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR}  \033[1;37m> America/Santiago     (Chile - UTC-3/UTC-4)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR}  \033[1;37m> America/Argentina/Buenos_Aires (Argentina - UTC-3)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR}  \033[1;37m> America/La_Paz       (Bolivia - UTC-4)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[7]${SCOLOR}  \033[1;37m> America/Lima         (Perú - UTC-5)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[8]${SCOLOR}  \033[1;37m> America/Santo_Domingo (Rep. Dominicana - UTC-4)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[9]${SCOLOR}  \033[1;37m> America/Guatemala    (Centroamérica - UTC-6)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[10]${SCOLOR} \033[1;37m> America/Sao_Paulo   (Brasil - UTC-3)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[11]${SCOLOR} \033[1;37m> Europe/Madrid       (España - UTC+1)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[12]${SCOLOR} \033[1;37m> America/New_York    (USA Este - UTC-5)\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[13]${SCOLOR} \033[1;37m> Mantener zona actual (${cur_tz})\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[14]${SCOLOR} \033[1;37m> Ingresar zona personalizada manualmente\033[0m"
+    echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR}  \033[1;37m> Volver\033[0m"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -ne "${SSHPLUS_CYAN}Selecciona opción [Enter = 1 (America/Bogota)]:${SCOLOR} "
+    read -r tz_opt
+
+    local target_tz="America/Bogota"
+    case "$tz_opt" in
+        1|"") target_tz="America/Bogota" ;;
+        2) target_tz="America/Mexico_City" ;;
+        3) target_tz="America/Caracas" ;;
+        4) target_tz="America/Santiago" ;;
+        5) target_tz="America/Argentina/Buenos_Aires" ;;
+        6) target_tz="America/La_Paz" ;;
+        7) target_tz="America/Lima" ;;
+        8) target_tz="America/Santo_Domingo" ;;
+        9) target_tz="America/Guatemala" ;;
+        10) target_tz="America/Sao_Paulo" ;;
+        11) target_tz="Europe/Madrid" ;;
+        12) target_tz="America/New_York" ;;
+        13) target_tz="$cur_tz" ;;
+        14)
+            echo -ne "\033[1;33mEscribe la zona horaria (ej: America/Cancun): \033[0m"
+            read -r manual_tz
+            [[ -n "$manual_tz" ]] && target_tz="$manual_tz" || target_tz="America/Bogota"
+            ;;
+        0|00) return ;;
+        *) target_tz="America/Bogota" ;;
+    esac
+
+    echo -e "\n\033[1;33mAplicando zona horaria ${target_tz} y sincronizando NTP...\033[0m"
+    echo "$target_tz" > /etc/timezone 2>/dev/null || true
+    if [[ -f "/usr/share/zoneinfo/$target_tz" ]]; then
+        ln -fs "/usr/share/zoneinfo/$target_tz" /etc/localtime 2>/dev/null || true
+    fi
+    if command -v timedatectl >/dev/null 2>&1; then
+        timedatectl set-timezone "$target_tz" 2>/dev/null || true
+        timedatectl set-ntp true 2>/dev/null || true
+    fi
+    if command -v dpkg-reconfigure >/dev/null 2>&1; then
+        dpkg-reconfigure --frontend noninteractive tzdata >/dev/null 2>&1 || true
+    fi
+
+    echo -e "\033[1;32m[✔] Horario sincronizado con éxito!\033[0m"
+    echo -e "\033[1;37mNueva hora del servidor: \033[1;32m$(date '+%Y-%m-%d %H:%M:%S (%Z)')\033[0m"
+    pause
+}
+
 menu_vps_settings() {
     while true; do
         clear
@@ -3667,6 +3741,7 @@ menu_vps_settings() {
         echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> CREAR MEMORIA SWAP (1GB, 2GB, 4GB)\033[0m"
         echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> OPTIMIZAR SISTEMA (BBR, Buffers y Kernel)\033[0m"
         echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> RESPALDO / RESTAURACION DE USUARIOS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> ECUALIZAR / CONFIGURAR ZONA HORARIA (HORARIO)\033[0m"
         echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
@@ -3710,6 +3785,9 @@ menu_vps_settings() {
                     echo -e "\033[1;32m[✔] Respaldo guardado en /root/backup-ssh.tar.gz\033[0m"
                     pause
                 fi
+                ;;
+            4|04)
+                ecualizar_horario
                 ;;
             0|00) break ;;
             *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;

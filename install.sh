@@ -28,6 +28,105 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
     exit 1
 fi
 
+mkdir -p /etc/SSHPlus /etc/ssh-cris /opt/ssh-cris
+
+# ── 1. SELECCIÓN DE IDIOMA ──
+choose_language() {
+    [[ -t 0 ]] || return 0
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${WHITE}             SELECCIONAR IDIOMA / SELECT LANGUAGE          ${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${GREEN}[1]${NC} \033[1;37m> Español (Spanish)${NC}"
+    echo -e "${GREEN}[2]${NC} \033[1;37m> English${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo -ne "\033[1;32mOpción / Option [Enter = 1]: ${NC}"
+    read -r lang_opt
+    local l_choice="es"
+    case "$lang_opt" in
+        2) l_choice="en" ;;
+        *) l_choice="es" ;;
+    esac
+    echo "$l_choice" > /etc/SSHPlus/lang
+    echo "$l_choice" > /etc/ssh-cris/lang
+}
+
+# ── 2. ECUALIZACIÓN / CONFIGURACIÓN DE ZONA HORARIA ──
+choose_timezone() {
+    [[ -t 0 ]] || return 0
+    local cur_tz
+    cur_tz=$(cat /etc/timezone 2>/dev/null || timedatectl 2>/dev/null | grep "Time zone" | awk '{print $3}' || echo "UTC")
+    local cur_time
+    cur_time=$(date '+%Y-%m-%d %H:%M:%S (%Z)')
+
+    echo ""
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${WHITE}        ⚡ ECUALIZAR HORARIO / CONFIGURAR ZONA HORARIA ⚡    ${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "  ${WHITE}Hora Actual del Servidor : ${YELLOW}${cur_time}${NC}"
+    echo -e "  ${WHITE}Zona Horaria Actual      : ${GREEN}${cur_tz}${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "  ${GREEN}[1]${NC}  \033[1;37m> America/Bogota       (Colombia, Perú, Ecuador, Panamá - UTC-5)${NC}"
+    echo -e "  ${GREEN}[2]${NC}  \033[1;37m> America/Mexico_City  (México Centro - UTC-6)${NC}"
+    echo -e "  ${GREEN}[3]${NC}  \033[1;37m> America/Caracas      (Venezuela - UTC-4)${NC}"
+    echo -e "  ${GREEN}[4]${NC}  \033[1;37m> America/Santiago     (Chile - UTC-3/UTC-4)${NC}"
+    echo -e "  ${GREEN}[5]${NC}  \033[1;37m> America/Argentina/Buenos_Aires (Argentina - UTC-3)${NC}"
+    echo -e "  ${GREEN}[6]${NC}  \033[1;37m> America/La_Paz       (Bolivia - UTC-4)${NC}"
+    echo -e "  ${GREEN}[7]${NC}  \033[1;37m> America/Lima         (Perú - UTC-5)${NC}"
+    echo -e "  ${GREEN}[8]${NC}  \033[1;37m> America/Santo_Domingo (Rep. Dominicana - UTC-4)${NC}"
+    echo -e "  ${GREEN}[9]${NC}  \033[1;37m> America/Guatemala    (Centroamérica - UTC-6)${NC}"
+    echo -e "  ${GREEN}[10]${NC} \033[1;37m> America/Sao_Paulo   (Brasil - UTC-3)${NC}"
+    echo -e "  ${GREEN}[11]${NC} \033[1;37m> Europe/Madrid       (España - UTC+1)${NC}"
+    echo -e "  ${GREEN}[12]${NC} \033[1;37m> America/New_York    (USA Este - UTC-5)${NC}"
+    echo -e "  ${GREEN}[13]${NC} \033[1;37m> Mantener zona actual del servidor (${cur_tz})${NC}"
+    echo -e "  ${GREEN}[14]${NC} \033[1;37m> Ingresar zona horaria personalizada${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    echo -ne "\033[1;32mSelecciona Zona Horaria [Enter = 1 (America/Bogota)]: ${NC}"
+    read -r tz_opt
+
+    local target_tz="America/Bogota"
+    case "$tz_opt" in
+        1|"") target_tz="America/Bogota" ;;
+        2) target_tz="America/Mexico_City" ;;
+        3) target_tz="America/Caracas" ;;
+        4) target_tz="America/Santiago" ;;
+        5) target_tz="America/Argentina/Buenos_Aires" ;;
+        6) target_tz="America/La_Paz" ;;
+        7) target_tz="America/Lima" ;;
+        8) target_tz="America/Santo_Domingo" ;;
+        9) target_tz="America/Guatemala" ;;
+        10) target_tz="America/Sao_Paulo" ;;
+        11) target_tz="Europe/Madrid" ;;
+        12) target_tz="America/New_York" ;;
+        13) target_tz="$cur_tz" ;;
+        14)
+            echo -ne "\033[1;33mEscribe la zona horaria (ej: America/Cancun): \033[0m"
+            read -r manual_tz
+            [[ -n "$manual_tz" ]] && target_tz="$manual_tz" || target_tz="America/Bogota"
+            ;;
+        *) target_tz="America/Bogota" ;;
+    esac
+
+    echo -e "\n\033[1;33mAplicando zona horaria: ${target_tz}...\033[0m"
+    echo "$target_tz" > /etc/timezone 2>/dev/null || true
+    if [[ -f "/usr/share/zoneinfo/$target_tz" ]]; then
+        ln -fs "/usr/share/zoneinfo/$target_tz" /etc/localtime 2>/dev/null || true
+    fi
+    if command -v timedatectl >/dev/null 2>&1; then
+        timedatectl set-timezone "$target_tz" 2>/dev/null || true
+        timedatectl set-ntp true 2>/dev/null || true
+    fi
+    if command -v dpkg-reconfigure >/dev/null 2>&1; then
+        dpkg-reconfigure --frontend noninteractive tzdata >/dev/null 2>&1 || true
+    fi
+    
+    echo -e "\033[1;32m[✔] Horario sincronizado con éxito!\033[0m"
+    echo -e "\033[1;37mNueva hora del servidor: \033[1;32m$(date '+%Y-%m-%d %H:%M:%S (%Z)')\033[0m\n"
+    sleep 1
+}
+
+choose_language
+choose_timezone
+
 echo -e "${YELLOW}[1/4]${NC} Actualizando repositorios e instalando paquetes base..."
 if command -v apt-get >/dev/null 2>&1; then
     DEBIAN_FRONTEND=noninteractive apt-get update -y -qq >/dev/null 2>&1 || true
