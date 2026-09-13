@@ -434,19 +434,21 @@ fun_socks() {
         echo -e "                   ${BLUE}CONFIGURAR PROXY SOCKS${SCOLOR}"
         sshplus_line
         local _socks_ports
-        _socks_ports=$(netstat -nplt 2>/dev/null | grep -E 'python3|/python' | awk '{print $4}' | cut -d: -f2 | sort -n -u | xargs || true)
+        _socks_ports=$(get_proc_ports 'proxy\.py|wsproxy\.py|/python')
         echo -e "${SSHPLUS_DARK_GREEN}PUERTOS:${SCOLOR} \033[1;32m${_socks_ports:-N/A}\033[0m"
         echo -e "\033[1;37m------------------------------------------------------------\033[0m"
 
-        local var_sks1 var_sks2
-        pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1 && var_sks1="\033[1;32mo\033[0m" || var_sks1="\033[1;31mx\033[0m"
+        local var_sks1 var_sks2 var_sks3
+        (pgrep -f 'proxy.py.*22' >/dev/null 2>&1 || (pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1 && ! pgrep -f '1194' >/dev/null 2>&1)) && var_sks1="\033[1;32mo\033[0m" || var_sks1="\033[1;31mx\033[0m"
         pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1 && var_sks2="\033[1;32mo\033[0m" || var_sks2="\033[1;31mx\033[0m"
+        pgrep -f 'proxy.py.*1194' >/dev/null 2>&1 && var_sks3="\033[1;32mo\033[0m" || var_sks3="\033[1;31mx\033[0m"
 
-        echo -e "${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> SOCKS SSH\033[0m            $var_sks1"
-        echo -e "${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> WEBSOCKET\033[0m            $var_sks2"
-        echo -e "${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> ABRIR PUERTO EXTRA SOCKS\033[0m"
-        echo -e "${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> MODIFICAR ESTADO SOCKS SSH\033[0m"
-        echo -e "${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> MODIFICAR ESTADO WEBSOCKET\033[0m"
+        echo -e "${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> SOCKS SSH\033[0m                 $var_sks1"
+        echo -e "${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> WEBSOCKET\033[0m                 $var_sks2"
+        echo -e "${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> SOCKS OPENVPN\033[0m             $var_sks3"
+        echo -e "${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> ABRIR PUERTO\033[0m"
+        echo -e "${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> MODIFICAR ESTADO SOCKS SSH\033[0m"
+        echo -e "${SSHPLUS_NUM}[6]${SCOLOR} \033[1;37m> MODIFICAR ESTADO DEL WEBSOCKET\033[0m"
         echo -e "${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
         sshplus_line
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
@@ -454,9 +456,9 @@ fun_socks() {
 
         case "$resposta" in
             1)
-                if pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1; then
+                if pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1 && ! pgrep -f 'proxy.py.*1194' >/dev/null 2>&1; then
                     clear
-                    echo -e "\E[41;1;37m             DESACTIVAR PROXY SOCKS             \E[0m\n"
+                    echo -e "\E[41;1;37m             DESACTIVAR SOCKS SSH             \E[0m\n"
                     fun_socksoff() {
                         for pidproxy in $(screen -ls 2>/dev/null | grep '\.proxy' | awk '{print $1}'); do
                             screen -r -S "$pidproxy" -X quit 2>/dev/null || true
@@ -466,32 +468,42 @@ fun_socks() {
                         done
                         screen -wipe >/dev/null 2>&1 || true
                     }
-                    echo -e "\033[1;32mDESACTIVANDO EL PROXY SOCKS...\033[0m"
+                    echo -e "\033[1;32mDESACTIVANDO EL PROXY SOCKS SSH...\033[0m"
                     fun_bar 'fun_socksoff'
-                    echo -e "\n\033[1;32mPROXY SOCKS DESACTIVADO CON ÉXITO!\033[0m"
+                    echo -e "\n\033[1;32mSOCKS SSH DESACTIVADO CON ÉXITO!\033[0m"
                     sleep 2
                 else
                     clear
                     fun_socks_prepare_activate
-                    echo -e "\E[44;1;37m             INICIAR PROXY SOCKS             \E[0m\n"
-                    echo -ne "\033[1;32m¿QUÉ PUERTO DESEA UTILIZAR ?\033[1;37m: "
+                    echo -e "\E[44;1;37m             INICIAR SOCKS SSH             \E[0m\n"
+                    echo -ne "\033[1;32m¿QUÉ PUERTO DESEA UTILIZAR ? (ej: 80 o 8080)\033[1;37m: "
                     read -r porta
                     [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=80
                     verif_ptrs_socks "$porta" || continue
+
+                    echo -ne "\033[1;32mPUERTO SSH LOCAL DESTINO (default 22)\033[1;37m: "
+                    read -r dst_port
+                    [[ -z "$dst_port" || ! "$dst_port" =~ ^[0-9]+$ ]] && dst_port=22
+
+                    echo -ne "\033[1;32mINFORME SU MENSAJE DE ESTADO (ej: HTTP CONEXION)\033[1;37m: "
+                    read -r msgg
+                    [[ -z "$msgg" ]] && msgg="HTTP CONEXION"
+                    sed -i "s/MSG = .*/MSG = '$msgg'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
+
                     mkdir -p /var/run/screen /run/screen 2>/dev/null || true
                     chmod 777 /var/run/screen /run/screen 2>/dev/null || true
                     fun_inisocks() {
                         screen -wipe >/dev/null 2>&1 || true
-                        screen -dmS proxy "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" 2>/dev/null || true
+                        screen -dmS proxy "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" 2>/dev/null || true
                         sleep 1
                         if ! pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1; then
-                            nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" >/dev/null 2>&1 &
+                            nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" >/dev/null 2>&1 &
                         fi
                     }
-                    echo -e "\n\033[1;32mINICIANDO EL PROXY SOCKS EN PUERTO $porta...\033[0m"
+                    echo -e "\n\033[1;32mINICIANDO EL PROXY SOCKS EN PUERTO $porta -> SSH $dst_port...\033[0m"
                     fun_bar 'fun_inisocks'
                     ufw allow "$porta"/tcp 2>/dev/null || true
-                    echo -e "\n\033[1;32mSOCKS ACTIVADO CON ÉXITO EN PUERTO $porta\033[0m"
+                    echo -e "\n\033[1;32mSOCKS SSH ACTIVADO CON ÉXITO EN PUERTO $porta (MSG: '$msgg')\033[0m"
                     sleep 2
                 fi
                 ;;
@@ -520,27 +532,95 @@ fun_socks() {
                     read -r porta
                     [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=80
                     verif_ptrs_socks "$porta" || continue
+
+                    echo -ne "\033[1;32mPUERTO SSH LOCAL DESTINO (default 22)\033[1;37m: "
+                    read -r dst_port
+                    [[ -z "$dst_port" || ! "$dst_port" =~ ^[0-9]+$ ]] && dst_port=22
+
+                    echo -ne "\033[1;32mINFORME SU MENSAJE WEBSOCKET (ej: HTTP CONEXION WS)\033[1;37m: "
+                    read -r msgg
+                    [[ -z "$msgg" ]] && msgg="HTTP CONEXION WS"
+                    sed -i "s/MSG = .*/MSG = '$msgg'/g" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+
                     mkdir -p /var/run/screen /run/screen 2>/dev/null || true
                     chmod 777 /var/run/screen /run/screen 2>/dev/null || true
                     fun_iniws() {
                         screen -wipe >/dev/null 2>&1 || true
-                        screen -dmS ws "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" 2>/dev/null || true
+                        screen -dmS ws "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:$dst_port" 2>/dev/null || true
                         sleep 1
                         if ! pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
-                            nohup "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" >/dev/null 2>&1 &
+                            nohup "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:$dst_port" >/dev/null 2>&1 &
                         fi
                     }
-                    echo -e "\n\033[1;32mINICIANDO WEBSOCKET EN PUERTO $porta...\033[0m"
+                    echo -e "\n\033[1;32mINICIANDO WEBSOCKET EN PUERTO $porta -> SSH $dst_port...\033[0m"
                     fun_bar 'fun_iniws'
                     ufw allow "$porta"/tcp 2>/dev/null || true
-                    echo -e "\n\033[1;32mWEBSOCKET ACTIVADO CON ÉXITO EN PUERTO $porta\033[0m"
+                    echo -e "\n\033[1;32mWEBSOCKET ACTIVADO CON ÉXITO EN PUERTO $porta (MSG: '$msgg')\033[0m"
                     sleep 2
                 fi
                 ;;
             3)
+                if pgrep -f 'proxy.py.*1194' >/dev/null 2>&1; then
+                    clear
+                    echo -e "\E[41;1;37m             DESACTIVAR SOCKS OPENVPN             \E[0m\n"
+                    fun_ovpnoff() {
+                        for pidproxy in $(screen -ls 2>/dev/null | grep '\.ovpnproxy' | awk '{print $1}'); do
+                            screen -r -S "$pidproxy" -X quit 2>/dev/null || true
+                        done
+                        for _k in $(pgrep -f 'proxy.py.*1194' 2>/dev/null); do
+                            kill -9 "$_k" 2>/dev/null || true
+                        done
+                        screen -wipe >/dev/null 2>&1 || true
+                    }
+                    echo -e "\033[1;32mDESACTIVANDO SOCKS OPENVPN...\033[0m"
+                    fun_bar 'fun_ovpnoff'
+                    echo -e "\n\033[1;32mSOCKS OPENVPN DESACTIVADO CON ÉXITO!\033[0m"
+                    sleep 2
+                else
+                    clear
+                    echo -e "\E[44;1;37m             INICIAR SOCKS OPENVPN             \E[0m\n"
+                    echo -ne "\033[1;32m¿QUÉ PUERTO DESEA UTILIZAR PARA OPENVPN ? (ej: 8080)\033[1;37m: "
+                    read -r porta
+                    [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=8080
+                    verif_ptrs_socks "$porta" || continue
+
+                    echo -ne "\033[1;32mPUERTO OPENVPN LOCAL DESTINO (default 1194)\033[1;37m: "
+                    read -r dst_port
+                    [[ -z "$dst_port" || ! "$dst_port" =~ ^[0-9]+$ ]] && dst_port=1194
+
+                    echo -ne "\033[1;32mINFORME SU MENSAJE DE ESTADO (ej: HTTP CONEXION OPENVPN)\033[1;37m: "
+                    read -r msgg
+                    [[ -z "$msgg" ]] && msgg="HTTP CONEXION OPENVPN"
+
+                    mkdir -p /var/run/screen /run/screen 2>/dev/null || true
+                    chmod 777 /var/run/screen /run/screen 2>/dev/null || true
+                    fun_iniovpn() {
+                        screen -wipe >/dev/null 2>&1 || true
+                        screen -dmS "ovpnproxy" "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" 2>/dev/null || true
+                        sleep 1
+                        if ! pgrep -f "proxy.py $porta 127.0.0.1:$dst_port" >/dev/null 2>&1; then
+                            nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" >/dev/null 2>&1 &
+                        fi
+                    }
+                    echo -e "\n\033[1;32mINICIANDO SOCKS OPENVPN EN PUERTO $porta -> OPENVPN $dst_port...\033[0m"
+                    fun_bar 'fun_iniovpn'
+                    ufw allow "$porta"/tcp 2>/dev/null || true
+                    echo -e "\n\033[1;32mSOCKS OPENVPN ACTIVADO CON ÉXITO EN PUERTO $porta!\033[0m"
+                    sleep 2
+                fi
+                ;;
+            4)
                 clear
-                echo -e "\E[44;1;37m          ABRIR PUERTO EXTRA SOCKS          \E[0m\n"
-                echo -ne "\033[1;32m¿QUÉ PUERTO EXTRA DESEA UTILIZAR ?\033[1;37m: "
+                echo -e "\E[44;1;37m               ABRIR PUERTO EXTRA               \E[0m\n"
+                echo -e "${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> SOCKS SSH (Destino 22)\033[0m"
+                echo -e "${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> WEBSOCKET (Destino 22)\033[0m"
+                echo -e "${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> SOCKS OPENVPN (Destino 1194)\033[0m"
+                echo -e "${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m\n"
+                echo -ne "\033[1;32mTipo de puerto a abrir\033[1;37m: "
+                read -r t_opt
+                [[ "$t_opt" == "0" || -z "$t_opt" ]] && continue
+
+                echo -ne "\033[1;32m¿QUÉ PUERTO EXTRA DESEA UTILIZAR ? (ej: 8888, 3128)\033[1;37m: "
                 read -r porta
                 [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && {
                     echo -e "\n\033[1;31mPuerto inválido!"
@@ -548,23 +628,59 @@ fun_socks() {
                     continue
                 }
                 verif_ptrs_socks "$porta" || continue
+
                 mkdir -p /var/run/screen /run/screen 2>/dev/null || true
                 chmod 777 /var/run/screen /run/screen 2>/dev/null || true
-                fun_extra_sks() {
-                    screen -wipe >/dev/null 2>&1 || true
-                    screen -dmS "proxy_$porta" "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" 2>/dev/null || true
-                    sleep 1
-                    if ! pgrep -f "/etc/SSHPlus/proxy.py $porta" >/dev/null 2>&1; then
-                        nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" >/dev/null 2>&1 &
-                    fi
-                }
-                echo -e "\n\033[1;32mINICIANDO PUERTO EXTRA $porta...\033[0m"
-                fun_bar 'fun_extra_sks'
-                ufw allow "$porta"/tcp 2>/dev/null || true
-                echo -e "\n\033[1;32mPUERTO EXTRA SOCKS $porta ACTIVADO!\033[0m"
-                sleep 2
+
+                case "$t_opt" in
+                    1)
+                        fun_extra_sks() {
+                            screen -wipe >/dev/null 2>&1 || true
+                            screen -dmS "proxy_$porta" "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:22" 2>/dev/null || true
+                            sleep 1
+                            if ! pgrep -f "/etc/SSHPlus/proxy.py $porta" >/dev/null 2>&1; then
+                                nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:22" >/dev/null 2>&1 &
+                            fi
+                        }
+                        echo -e "\n\033[1;32mINICIANDO PUERTO EXTRA SOCKS $porta...\033[0m"
+                        fun_bar 'fun_extra_sks'
+                        ufw allow "$porta"/tcp 2>/dev/null || true
+                        echo -e "\n\033[1;32mPUERTO EXTRA SOCKS $porta ACTIVADO!\033[0m"
+                        sleep 2
+                        ;;
+                    2)
+                        fun_extra_ws() {
+                            screen -wipe >/dev/null 2>&1 || true
+                            screen -dmS "ws_$porta" "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:22" 2>/dev/null || true
+                            sleep 1
+                            if ! pgrep -f "/etc/SSHPlus/wsproxy.py $porta" >/dev/null 2>&1; then
+                                nohup "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:22" >/dev/null 2>&1 &
+                            fi
+                        }
+                        echo -e "\n\033[1;32mINICIANDO PUERTO EXTRA WEBSOCKET $porta...\033[0m"
+                        fun_bar 'fun_extra_ws'
+                        ufw allow "$porta"/tcp 2>/dev/null || true
+                        echo -e "\n\033[1;32mPUERTO EXTRA WEBSOCKET $porta ACTIVADO!\033[0m"
+                        sleep 2
+                        ;;
+                    3)
+                        fun_extra_ovpn() {
+                            screen -wipe >/dev/null 2>&1 || true
+                            screen -dmS "ovpn_$porta" "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:1194" 2>/dev/null || true
+                            sleep 1
+                            if ! pgrep -f "proxy.py $porta 127.0.0.1:1194" >/dev/null 2>&1; then
+                                nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:1194" >/dev/null 2>&1 &
+                            fi
+                        }
+                        echo -e "\n\033[1;32mINICIANDO PUERTO EXTRA OPENVPN $porta...\033[0m"
+                        fun_bar 'fun_extra_ovpn'
+                        ufw allow "$porta"/tcp 2>/dev/null || true
+                        echo -e "\n\033[1;32mPUERTO EXTRA OPENVPN $porta ACTIVADO!\033[0m"
+                        sleep 2
+                        ;;
+                esac
                 ;;
-            4)
+            5)
                 if pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1; then
                     clear
                     echo -e "\E[44;1;37m         MODIFICAR ESTADO SOCKS SSH         \E[0m\n"
@@ -579,10 +695,10 @@ fun_socks() {
                     sleep 2
                 fi
                 ;;
-            5)
+            6)
                 if pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
                     clear
-                    echo -e "\E[44;1;37m         MODIFICAR ESTADO WEBSOCKET         \E[0m\n"
+                    echo -e "\E[44;1;37m         MODIFICAR ESTADO DEL WEBSOCKET     \E[0m\n"
                     echo -ne "\033[1;32mINFORME SU MENSAJE WEBSOCKET\033[1;31m:\033[1;37m "
                     read -r msgg
                     [[ -z "$msgg" ]] && msgg="HTTP CONEXION WS"
