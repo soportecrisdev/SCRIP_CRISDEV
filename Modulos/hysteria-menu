@@ -150,7 +150,7 @@ hyst_build_auth_list() {
 		done <"/etc/ssh-cris/users.db"
 	fi
 	if [[ "$found" != "1" ]]; then
-		printf '      %s\n' "$(hyst_json_quote "crisdev:crisdev")"
+		return 1
 	fi
 	return 0
 }

@@ -2681,10 +2681,10 @@ PY
 			}
 			local is_x_act=0
 			local is_v_act=0
-			if systemctl is-active xray >/dev/null 2>&1 || pgrep -x xray >/dev/null 2>&1 || pgrep -f '/xray' >/dev/null 2>&1 || netstat -tunlp 2>/dev/null | grep -q 'xray'; then
+			if systemctl is-active xray >/dev/null 2>&1 || pgrep -x xray >/dev/null 2>&1; then
 				is_x_act=1
 			fi
-			if systemctl is-active v2ray >/dev/null 2>&1 || pgrep -x v2ray >/dev/null 2>&1 || pgrep -f '/v2ray' >/dev/null 2>&1 || netstat -tunlp 2>/dev/null | grep -q 'v2ray'; then
+			if systemctl is-active v2ray >/dev/null 2>&1 || pgrep -x v2ray >/dev/null 2>&1; then
 				is_v_act=1
 			fi
 
@@ -2712,26 +2712,26 @@ PY
 			else
 				xv2ray="\033[1;31mx "
 			fi
-			[[ "$(systemctl is-active hysteria-server 2>/dev/null)" = "active" ]] && {
+			if systemctl is-active hysteria-server >/dev/null 2>&1 || pgrep -x hysteria1 >/dev/null 2>&1 || pgrep -x hysteria >/dev/null 2>&1; then
 				_hyst_pt=""
 				[[ -f /etc/hysteria/sshplus.env ]] && _hyst_pt="$(grep '^HYST_PORT=' /etc/hysteria/sshplus.env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
 				[[ -z "${_hyst_pt// }" && -f /etc/hysteria/config.json ]] && _hyst_pt="$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/hysteria/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
 				[[ -z "${_hyst_pt// }" ]] && _hyst_pt="$(ss -ulnp 2>/dev/null | grep 'hysteria' | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)"
-				echo -e "\033[1;32mSERVICIO: \033[1;33mHYSTERIA v1 \033[1;32mPUERTO: \033[1;37m${_hyst_pt:-N/A}"
+				[[ -n "${_hyst_pt// }" ]] && echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS \033[1;32mPUERTO: \033[1;37m${_hyst_pt}"
 				hysteriasts="\033[1;32mo "
-			} || {
+			else
 				hysteriasts="\033[1;31mx "
-			}
+			fi
 			pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1 && {
 				wssts="\033[1;32mo "
 			} || {
 				wssts="\033[1;31mx "
 			}
-			pgrep -f 'badvpn-udpgw|udpvpn' >/dev/null 2>&1 && {
+			if systemctl is-active badvpn-udpgw >/dev/null 2>&1 || pgrep -x badvpn-udpgw >/dev/null 2>&1 || pgrep -x udpvpn >/dev/null 2>&1; then
 				badsts="\033[1;32mo "
-			} || {
+			else
 				badsts="\033[1;31mx "
-			}
+			fi
 			sshplus_line
 			sshplus_opt_pair "1" "OPENSSH" "$sts6" "10" "OPENVPN" "$sts5"
 			sshplus_opt_pair "2" "PROXY SOCKS" "$sts4" "11" "WEBSOCKET-CORRECTOR" "$wssts"

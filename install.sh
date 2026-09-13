@@ -253,7 +253,7 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload >/dev/null 2>&1 || true
-systemctl enable --now badvpn-udpgw.service >/dev/null 2>&1 || true
+# BadVPN service installed (will start only when activated from menu)
 
 # Instalar Core UDP CRIS (Hysteria v1.3.5)
 echo -e "${YELLOW}[*]${NC} Descargando Core UDP CRIS (Hysteria v1.3.5)..."
@@ -370,101 +370,9 @@ fi
 EOF_BHTTP_CONN
 chmod 755 /usr/local/bin/bhttp-connect /bin/bhttp-connect 2>/dev/null || true
 
-# Configuración base inicial de Hysteria v1 para que arranque activo
+# Preparar directorio base para Hysteria (se configurará y activará desde el menú)
 mkdir -p /etc/hysteria
-if [[ ! -f /etc/hysteria/server.crt || ! -f /etc/hysteria/server.key ]]; then
-    openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
-        -keyout /etc/hysteria/server.key -out /etc/hysteria/server.crt -subj "/CN=crisdev.online" >/dev/null 2>&1 || true
-fi
-chmod 600 /etc/hysteria/server.key 2>/dev/null || true
-chmod 644 /etc/hysteria/server.crt 2>/dev/null || true
-
-if [[ ! -f /etc/hysteria/config.json ]]; then
-cat > /etc/hysteria/config.json << 'EOF'
-{
-  "listen": ":36712",
-  "cert": "/etc/hysteria/server.crt",
-  "key": "/etc/hysteria/server.key",
-  "obfs": "crisdev",
-  "auth": {
-    "mode": "passwords",
-    "config": [
-      "crisdev:crisdev"
-    ]
-  }
-}
-EOF
-fi
-
-cat > /etc/hysteria/sshplus.env << 'EOF'
-HYST_PORT="36712"
-HYST_RULES="20000:50000"
-HYST_OBFS="crisdev"
-EOF
-
-cat > /etc/hysteria/iptables.sh << 'EOF'
-#!/bin/bash
-ACTION="$1"
-ENV_FILE="/etc/hysteria/sshplus.env"
-CHAIN="SSHPLUS_HYSTERIA"
-[[ -f "$ENV_FILE" ]] && . "$ENV_FILE"
-clear_rules() {
-    while iptables -t nat -C PREROUTING -p udp -j "$CHAIN" >/dev/null 2>&1; do
-        iptables -t nat -D PREROUTING -p udp -j "$CHAIN" >/dev/null 2>&1 || break
-    done
-    iptables -t nat -F "$CHAIN" >/dev/null 2>&1 || true
-    iptables -t nat -X "$CHAIN" >/dev/null 2>&1 || true
-}
-apply_rules() {
-    clear_rules
-    iptables -I INPUT 1 -p udp --dport "${HYST_PORT:-36712}" -j ACCEPT >/dev/null 2>&1 || true
-    [[ -z "$HYST_RULES" || "$HYST_RULES" = "none" || "$HYST_RULES" = "0" ]] && return 0
-    iptables -t nat -N "$CHAIN" >/dev/null 2>&1 || true
-    iptables -t nat -I PREROUTING 1 -p udp -j "$CHAIN" >/dev/null 2>&1 || true
-    local clean="${HYST_RULES// /}" item
-    IFS=',' read -ra items <<<"$clean"
-    for item in "${items[@]}"; do
-        [[ -z "$item" || "$item" = "53" || "$item" = "5300" ]] && continue
-        iptables -t nat -A "$CHAIN" -p udp --dport "$item" -j REDIRECT --to-ports "$HYST_PORT" >/dev/null 2>&1 || true
-    done
-}
-case "$ACTION" in
-    apply) apply_rules ;;
-    clear) clear_rules ;;
-esac
-exit 0
-EOF
-chmod +x /etc/hysteria/iptables.sh 2>/dev/null || true
-
-cat > /etc/systemd/system/hysteria-server.service << 'EOF'
-[Unit]
-Description=CRISDEV UDP Hysteria v1.3.5 Server
-After=network.target network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-Environment=HYSTERIA_LOG_LEVEL=debug
-ExecStartPre=-/etc/hysteria/iptables.sh apply
-ExecStart=/usr/local/bin/hysteria1 -c /etc/hysteria/config.json server
-ExecStopPost=-/etc/hysteria/iptables.sh clear
-WorkingDirectory=/etc/hysteria
-Restart=always
-RestartSec=3
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    systemctl daemon-reload >/dev/null 2>&1 || true
-    systemctl unmask hysteria-server.service >/dev/null 2>&1 || true
-    systemctl unmask hysteria-server >/dev/null 2>&1 || true
-    systemctl enable --now hysteria-server.service >/dev/null 2>&1 || true
-    /etc/hysteria/iptables.sh apply >/dev/null 2>&1 || true
-    ufw allow 36712/udp >/dev/null 2>&1 || true
-    iptables -I INPUT 1 -p udp --dport 36712 -j ACCEPT 2>/dev/null || true
+systemctl daemon-reload >/dev/null 2>&1 || true
 
 # Preparar estructura de BHTTP y BHTTP-TLS
 mkdir -p /etc/bhttp /etc/bhttp/certs
