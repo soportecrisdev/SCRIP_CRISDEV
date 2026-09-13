@@ -426,6 +426,170 @@ ensure_proxy_scripts() {
     chmod +x /etc/SSHPlus/wsproxy.py 2>/dev/null || true
 }
 
+fun_ws_pick_redirect() {
+    local porta_ws="$1"
+    local _lbl=() _prt=()
+
+    _ws_append() {
+        local l="$1" p="$2"
+        [[ -z "$p" || ! "$p" =~ ^[0-9]+$ ]] && return
+        for ep in "${_prt[@]:-}"; do
+            [[ "$ep" == "$p" ]] && return
+        done
+        _lbl+=("$l")
+        _prt+=("$p")
+    }
+
+    local ssh_p; ssh_p=$(grep '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | xargs || true)
+    [[ -z "$ssh_p" ]] && ssh_p="22"
+    _ws_append "openssh" "$ssh_p"
+
+    local drp; drp=$(netstat -nplt 2>/dev/null | grep dropbear | awk '{print $4}' | awk -F: '{print $NF}' | head -1 || true)
+    _ws_append "dropbear" "$drp"
+
+    local ovp; ovp=$(netstat -nplt 2>/dev/null | grep openvpn | awk '{print $4}' | awk -F: '{print $NF}' | head -1 || true)
+    _ws_append "openvpn" "$ovp"
+
+    local n=${#_prt[@]}
+    WS_REDIR_PORT=""
+    while true; do
+        clear
+        sshplus_line
+        echo -e "${SSHPLUS_CYAN}              CONFIGURAR WEBSOCKET (REDIRECCION)${SCOLOR}"
+        sshplus_line
+        echo -e "${SSHPLUS_DARK_GREEN}PUERTO WEBSOCKET (escucha):${SCOLOR} \033[1;37m${porta_ws}${SCOLOR}"
+        sshplus_line
+        echo -e "\033[1;37m        ¿A QUÉ PUERTO DESEA REDIRIGIR EL TRÁFICO?${SCOLOR}"
+        sshplus_line
+        if [[ "$n" -eq 0 ]]; then
+            echo -e "\033[1;37mNo se detectaron listeners locales (sshd, dropbear, openvpn)${SCOLOR}"
+            echo -e "\033[1;37mUse [5] para escribir el puerto destino (127.0.0.1).${SCOLOR}"
+        else
+            for ((i = 0; i < n; i++)); do
+                local left="[$((i + 1))] > ${_lbl[i]} "
+                local pad=$((40 - ${#left} - ${#_prt[i]}))
+                ((pad < 2)) && pad=2
+                local d; d=$(printf "%*s" "$pad" "" | tr " " ".")
+                echo -e "${SSHPLUS_NUM}[$((i + 1))]${SCOLOR} \033[1;37m> ${_lbl[i]} \033[1;33m${d}\033[1;37m${_prt[i]}${SCOLOR}"
+            done
+        fi
+        sshplus_line
+        echo -e "${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> CANCELAR${SCOLOR}    ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> INGRESAR MANUALMENTE${SCOLOR}"
+        sshplus_line
+        echo ""
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r ch
+        case "$ch" in
+            0) return 1 ;;
+            5)
+                echo -ne "${SSHPLUS_CYAN}PUERTO DESTINO (127.0.0.1):${SCOLOR} \033[1;37m"
+                read -r manualp
+                [[ -z "$manualp" ]] && continue
+                if [[ ! "$manualp" =~ ^[0-9]+$ ]]; then
+                    echo -e "\033[1;31mPuerto inválido\033[0m"
+                    sleep 2
+                    continue
+                fi
+                WS_REDIR_PORT="$manualp"
+                break
+                ;;
+            *)
+                if [[ "$ch" =~ ^[0-9]+$ ]] && [[ "$ch" -ge 1 && "$ch" -le "$n" ]]; then
+                    WS_REDIR_PORT="${_prt[$((ch - 1))]}"
+                    break
+                fi
+                echo -e "\033[1;33mOpción inválida\033[0m"
+                sleep 1
+                ;;
+        esac
+    done
+    [[ ! "$WS_REDIR_PORT" =~ ^[0-9]+$ ]] && return 1
+    return 0
+}
+
+fun_ws_apply_py_config() {
+    local _redir="$1" _http="$2" _msg="$3" _post="$4"
+    export WS_PATCH_REDIR="$_redir" WS_PATCH_HTTP="$_http"
+    WS_PATCH_MSG_B64=$(printf '%s' "$_msg" | base64 2>/dev/null | tr -d '\n\r')
+    WS_PATCH_POST_B64=$(printf '%s' "$_post" | base64 2>/dev/null | tr -d '\n\r')
+    export WS_PATCH_MSG_B64 WS_PATCH_POST_B64
+    "${SSHPLUS_PY}" <<'PATCHWS' 2>/dev/null || return 1
+import base64
+import os
+import pathlib
+import re
+import sys
+
+path = pathlib.Path("/etc/SSHPlus/wsproxy.py")
+if not path.is_file():
+    sys.exit(1)
+text = path.read_text(encoding="utf-8", errors="replace")
+redir = os.environ.get("WS_PATCH_REDIR", "22")
+http = os.environ.get("WS_PATCH_HTTP", "200")
+msg = base64.b64decode(os.environ.get("WS_PATCH_MSG_B64", "")).decode("utf-8", errors="replace")
+post = base64.b64decode(os.environ.get("WS_PATCH_POST_B64", "")).decode("latin1", errors="replace")
+
+def rep_line(t, name, rhs):
+    pat = r"^" + re.escape(name) + r" = .*$"
+    if not re.search(pat, t, flags=re.MULTILINE):
+        return None
+    return re.sub(pat, name + " = " + rhs, t, count=1, flags=re.MULTILINE)
+
+n = repr(f"127.0.0.1:{redir}")
+t2 = rep_line(text, "DEFAULT_HOST", n)
+if t2 is not None:
+    text = t2
+for _name, _rhs in (
+    ("HTTP_STATUS", repr(http)),
+    ("MSG", repr(msg)),
+    ("POST_HEADER_RAW", repr(post)),
+):
+    _t = rep_line(text, _name, _rhs)
+    if _t is not None:
+        text = _t
+path.write_text(text, encoding="utf-8")
+PATCHWS
+}
+
+fun_ws_config_wizard() {
+    local porta_ws="$1" redir="$2"
+    local ws_http_code ws_encab ws_mini ws_post_final
+    clear
+    echo -e "\033[1;33m════════════════════════════════════════════\033[0m"
+    echo -e "\033[1;33m   CONFIGURAR WEBSOCKET (RESPUESTA HTTP)\033[0m"
+    echo -e "\033[1;33m════════════════════════════════════════════\033[0m"
+    echo ""
+    echo -e "\033[1;33mEnter aplica configuración predeterminada (200 OK)\033[0m"
+    echo -e "\033[1;33m101 Para Switching Protocols (WebSocket)\033[0m"
+    echo ""
+    echo -ne "\033[1;37mINGRESA UN ESTADO DE RESPUESTA (default 200): \033[0m"
+    read -r ws_http_code
+    [[ -z "$ws_http_code" ]] && ws_http_code="200"
+    if [[ ! "$ws_http_code" =~ ^[0-9]{3}$ ]]; then
+        echo -e "\033[1;33mValor no válido; se usa 200\033[0m"
+        ws_http_code="200"
+        sleep 1
+    fi
+    echo -e "\033[1;37mRESPUESTA: \033[1;32m${ws_http_code}\033[0m"
+    echo ""
+    echo -e "\033[1;33mEj:\033[1;37m \\r\\nContent-length: 0\\r\\n\\r\\nHTTP/1.1 200 Connection Established\\r\\n\\r\\n\033[0m"
+    echo ""
+    echo -ne "\033[1;37mENCABEZADO PERSONALIZADO (Enter = Default): \033[0m"
+    read -r ws_encab
+    ws_post_final="${ws_encab:-}"
+    if [[ -z "$ws_encab" ]]; then
+        echo -e "\033[1;37mENCABEZADO: \033[1;32mDEFAULT\033[0m"
+    else
+        echo -e "\033[1;37mENCABEZADO: \033[1;32m(personalizado)\033[0m"
+    fi
+    echo ""
+    echo -ne "\033[1;37mINGRESA TU MINIBANNER (ej: HTTP CONEXION WS): \033[0m"
+    read -r ws_mini
+    [[ -z "$ws_mini" ]] && ws_mini="HTTP CONEXION WS"
+    fun_ws_apply_py_config "$redir" "$ws_http_code" "$ws_mini" "$ws_post_final" || return 1
+    return 0
+}
+
 fun_socks() {
     ensure_proxy_scripts
     while true; do
@@ -458,20 +622,32 @@ fun_socks() {
             1)
                 if pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1 && ! pgrep -f 'proxy.py.*1194' >/dev/null 2>&1; then
                     clear
-                    echo -e "\E[41;1;37m             DESACTIVAR SOCKS SSH             \E[0m\n"
-                    fun_socksoff() {
-                        for pidproxy in $(screen -ls 2>/dev/null | grep '\.proxy' | awk '{print $1}'); do
-                            screen -r -S "$pidproxy" -X quit 2>/dev/null || true
-                        done
-                        for _k in $(pgrep -f '/etc/SSHPlus/proxy.py' 2>/dev/null); do
-                            kill -9 "$_k" 2>/dev/null || true
-                        done
-                        screen -wipe >/dev/null 2>&1 || true
-                    }
-                    echo -e "\033[1;32mDESACTIVANDO EL PROXY SOCKS SSH...\033[0m"
-                    fun_bar 'fun_socksoff'
-                    echo -e "\n\033[1;32mSOCKS SSH DESACTIVADO CON ÉXITO!\033[0m"
-                    sleep 2
+                    echo -e "\E[44;1;37m          SOCKS SSH — YA ESTÁ ACTIVO           \E[0m\n"
+                    echo -e "\033[1;32mEl proxy SOCKS SSH sigue en marcha.\033[0m"
+                    echo ""
+                    local _cur_pts; _cur_pts=$(ps x 2>/dev/null | grep '[S]SHPlus/proxy.py' | head -1 | awk '{print $NF}')
+                    [[ "$_cur_pts" =~ ^[0-9]+$ ]] && echo -e "\033[1;33mPuerto SOCKS SSH: \033[1;32m$_cur_pts\033[0m\n" || echo -e "\033[1;33mSOCKS SSH en ejecución\033[0m\n"
+                    echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;33mDESACTIVAR SOCKS SSH\033[0m"
+                    echo -e "\033[1;31m[\033[1;36m0\033[1;31m] \033[1;33mVOLVER (mantener activo)\033[0m\n"
+                    echo -ne "\033[1;32m¿QUÉ DESEA HACER ? \033[1;37m"
+                    read -r _socks_on_choice
+                    if [[ "$_socks_on_choice" == "1" ]]; then
+                        clear
+                        echo -e "\E[41;1;37m             DESACTIVAR SOCKS SSH             \E[0m\n"
+                        fun_socksoff() {
+                            for pidproxy in $(screen -ls 2>/dev/null | grep '\.proxy' | awk '{print $1}'); do
+                                screen -r -S "$pidproxy" -X quit 2>/dev/null || true
+                            done
+                            for _k in $(pgrep -f '/etc/SSHPlus/proxy.py' 2>/dev/null); do
+                                kill -9 "$_k" 2>/dev/null || true
+                            done
+                            screen -wipe >/dev/null 2>&1 || true
+                        }
+                        echo -e "\033[1;32mDESACTIVANDO EL PROXY SOCKS SSH...\033[0m"
+                        fun_bar 'fun_socksoff'
+                        echo -e "\n\033[1;32mSOCKS SSH DESACTIVADO CON ÉXITO!\033[0m"
+                        sleep 2
+                    fi
                 else
                     clear
                     fun_socks_prepare_activate
@@ -510,20 +686,32 @@ fun_socks() {
             2)
                 if pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
                     clear
-                    echo -e "\E[41;1;37m             DESACTIVAR WEBSOCKET             \E[0m\n"
-                    fun_wssoff() {
-                        for pidproxy in $(screen -ls 2>/dev/null | grep '\.ws' | awk '{print $1}'); do
-                            screen -r -S "$pidproxy" -X quit 2>/dev/null || true
-                        done
-                        for _k in $(pgrep -f '/etc/SSHPlus/wsproxy.py' 2>/dev/null); do
-                            kill -9 "$_k" 2>/dev/null || true
-                        done
-                        screen -wipe >/dev/null 2>&1 || true
-                    }
-                    echo -e "\033[1;32mDESACTIVANDO WEBSOCKET...\033[0m"
-                    fun_bar 'fun_wssoff'
-                    echo -e "\n\033[1;32mWEBSOCKET DESACTIVADO CON ÉXITO!\033[0m"
-                    sleep 2
+                    echo -e "\E[44;1;37m         WEBSOCKET — YA ESTÁ ACTIVO          \E[0m\n"
+                    echo -e "\033[1;32mEl WebSocket sigue en marcha.\033[0m"
+                    echo ""
+                    local _cur_wsp; _cur_wsp=$(ps x 2>/dev/null | grep '[S]SHPlus/wsproxy.py' | head -1 | awk '{print $NF}')
+                    [[ "$_cur_wsp" =~ ^[0-9]+$ ]] && echo -e "\033[1;33mPuerto WebSocket: \033[1;32m$_cur_wsp\033[0m\n" || echo -e "\033[1;33mWebSocket en ejecución\033[0m\n"
+                    echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;33mDESACTIVAR WEBSOCKET\033[0m"
+                    echo -e "\033[1;31m[\033[1;36m0\033[1;31m] \033[1;33mVOLVER (mantener activo)\033[0m\n"
+                    echo -ne "\033[1;32m¿QUÉ DESEA HACER ? \033[1;37m"
+                    read -r _ws_on_choice
+                    if [[ "$_ws_on_choice" == "1" ]]; then
+                        clear
+                        echo -e "\E[41;1;37m             DESACTIVAR WEBSOCKET             \E[0m\n"
+                        fun_wssoff() {
+                            for pidproxy in $(screen -ls 2>/dev/null | grep '\.ws' | awk '{print $1}'); do
+                                screen -r -S "$pidproxy" -X quit 2>/dev/null || true
+                            done
+                            for _k in $(pgrep -f '/etc/SSHPlus/wsproxy.py' 2>/dev/null); do
+                                kill -9 "$_k" 2>/dev/null || true
+                            done
+                            screen -wipe >/dev/null 2>&1 || true
+                        }
+                        echo -e "\033[1;32mDESACTIVANDO WEBSOCKET...\033[0m"
+                        fun_bar 'fun_wssoff'
+                        echo -e "\n\033[1;32mWEBSOCKET DESACTIVADO CON ÉXITO!\033[0m"
+                        sleep 2
+                    fi
                 else
                     clear
                     fun_ws_prepare_activate
@@ -533,30 +721,31 @@ fun_socks() {
                     [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=80
                     verif_ptrs_socks "$porta" || continue
 
-                    echo -ne "\033[1;32mPUERTO SSH LOCAL DESTINO (default 22)\033[1;37m: "
-                    read -r dst_port
-                    [[ -z "$dst_port" || ! "$dst_port" =~ ^[0-9]+$ ]] && dst_port=22
+                    local WS_REDIR_PORT=""
+                    if ! fun_ws_pick_redirect "$porta"; then
+                        continue
+                    fi
 
-                    echo -ne "\033[1;32mINFORME SU MENSAJE WEBSOCKET (ej: HTTP CONEXION WS)\033[1;37m: "
-                    read -r msgg
-                    [[ -z "$msgg" ]] && msgg="HTTP CONEXION WS"
-                    sed -i "s/MSG = .*/MSG = '$msgg'/g" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
-
-                    mkdir -p /var/run/screen /run/screen 2>/dev/null || true
-                    chmod 777 /var/run/screen /run/screen 2>/dev/null || true
-                    fun_iniws() {
-                        screen -wipe >/dev/null 2>&1 || true
-                        screen -dmS ws "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:$dst_port" 2>/dev/null || true
-                        sleep 1
-                        if ! pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
-                            nohup "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:$dst_port" >/dev/null 2>&1 &
-                        fi
-                    }
-                    echo -e "\n\033[1;32mINICIANDO WEBSOCKET EN PUERTO $porta -> SSH $dst_port...\033[0m"
-                    fun_bar 'fun_iniws'
-                    ufw allow "$porta"/tcp 2>/dev/null || true
-                    echo -e "\n\033[1;32mWEBSOCKET ACTIVADO CON ÉXITO EN PUERTO $porta (MSG: '$msgg')\033[0m"
-                    sleep 2
+                    if fun_ws_config_wizard "$porta" "$WS_REDIR_PORT"; then
+                        mkdir -p /var/run/screen /run/screen 2>/dev/null || true
+                        chmod 777 /var/run/screen /run/screen 2>/dev/null || true
+                        fun_iniws() {
+                            screen -wipe >/dev/null 2>&1 || true
+                            screen -dmS ws "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:$WS_REDIR_PORT" 2>/dev/null || true
+                            sleep 1
+                            if ! pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
+                                nohup "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:$WS_REDIR_PORT" >/dev/null 2>&1 &
+                            fi
+                        }
+                        echo -e "\n\033[1;32mINICIANDO WEBSOCKET EN PUERTO $porta -> DESTINO $WS_REDIR_PORT...\033[0m"
+                        fun_bar 'fun_iniws'
+                        ufw allow "$porta"/tcp 2>/dev/null || true
+                        echo -e "\n\033[1;32mWEBSOCKET ACTIVADO CON ÉXITO EN PUERTO $porta!\033[0m"
+                        sleep 2
+                    else
+                        echo -e "\n\033[1;31mNo se pudo configurar WebSocket.\033[0m"
+                        sleep 2
+                    fi
                 fi
                 ;;
             3)
@@ -683,12 +872,58 @@ fun_socks() {
             5)
                 if pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1; then
                     clear
-                    echo -e "\E[44;1;37m         MODIFICAR ESTADO SOCKS SSH         \E[0m\n"
-                    echo -ne "\033[1;32mINFORME SU MENSAJE DE ESTADO (ej: HTTP CONEXION ONLINE)\033[1;31m:\033[1;37m "
+                    local msgsocks; msgsocks=$(cat /etc/SSHPlus/proxy.py 2>/dev/null | grep -E "MSG =" | awk -F = '{print $2}' | tr -d " '\"")
+                    echo -e "\E[44;1;37m             PROXY SOCKS              \E[0m\n"
+                    echo -e "\033[1;33mSTATUS ACTUAL: \033[1;32m${msgsocks:-HTTP CONEXION}\033[0m\n"
+                    echo -ne "\033[1;32mINFORME SU NUEVO MENSAJE DE ESTADO\033[1;31m:\033[1;37m "
                     read -r msgg
                     [[ -z "$msgg" ]] && msgg="HTTP CONEXION"
+
+                    echo -e "\n\033[1;31m[\033[1;36m01\033[1;31m]\033[1;33m AZUL"
+                    echo -e "\033[1;31m[\033[1;36m02\033[1;31m]\033[1;33m VERDE"
+                    echo -e "\033[1;31m[\033[1;36m03\033[1;31m]\033[1;33m ROJO"
+                    echo -e "\033[1;31m[\033[1;36m04\033[1;31m]\033[1;33m AMARILLO"
+                    echo -e "\033[1;31m[\033[1;36m05\033[1;31m]\033[1;33m ROSA"
+                    echo -e "\033[1;31m[\033[1;36m06\033[1;31m]\033[1;33m CYAN"
+                    echo -e "\033[1;31m[\033[1;36m07\033[1;31m]\033[1;33m NARANJA"
+                    echo -e "\033[1;31m[\033[1;36m08\033[1;31m]\033[1;33m PÚRPURA"
+                    echo -e "\033[1;31m[\033[1;36m09\033[1;31m]\033[1;33m NEGRO"
+                    echo -e "\033[1;31m[\033[1;36m10\033[1;31m]\033[1;33m SIN COLOR"
+                    echo ""
+                    echo -ne "\033[1;32m¿QUÉ COLOR DESEA ?\033[1;37m: "
+                    read -r sts_cor
+                    local cor_sts
+                    case "$sts_cor" in
+                        1|01) cor_sts="blue" ;;
+                        2|02) cor_sts="green" ;;
+                        3|03) cor_sts="red" ;;
+                        4|04) cor_sts="yellow" ;;
+                        5|05) cor_sts="#F535AA" ;;
+                        6|06) cor_sts="cyan" ;;
+                        7|07) cor_sts="#FF7F00" ;;
+                        8|08) cor_sts="#9932CD" ;;
+                        9|09) cor_sts="black" ;;
+                        10) cor_sts="null" ;;
+                        *) cor_sts="green" ;;
+                    esac
+
                     sed -i "s/MSG = .*/MSG = '$msgg'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
-                    echo -e "\n\033[1;32mMENSAJE ACTUALIZADO A: '$msgg'\033[0m"
+                    sed -i "s/COR = .*/COR = '<font color=\"$cor_sts\">'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
+
+                    fun_restart_sks() {
+                        local _old_p; _old_p=$(get_proc_ports 'proxy\.py')
+                        for pidproxy in $(screen -ls 2>/dev/null | grep '\.proxy' | awk '{print $1}'); do
+                            screen -r -S "$pidproxy" -X quit 2>/dev/null || true
+                        done
+                        screen -wipe >/dev/null 2>&1 || true
+                        sleep 1
+                        for p in $_old_p; do
+                            [[ "$p" =~ ^[0-9]+$ ]] && screen -dmS "proxy" "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$p" 2>/dev/null || true
+                        done
+                    }
+                    echo -e "\n\033[1;32mAPLICANDO NUEVO ESTADO AL PROXY SOCKS...\033[0m"
+                    fun_bar 'fun_restart_sks'
+                    echo -e "\n\033[1;32mMENSAJE ACTUALIZADO A: '$msgg' (Color: $cor_sts)\033[0m"
                     sleep 2
                 else
                     echo -e "\n\033[1;31mActive SOCKS SSH primero."
@@ -698,12 +933,58 @@ fun_socks() {
             6)
                 if pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
                     clear
+                    local msgws; msgws=$(cat /etc/SSHPlus/wsproxy.py 2>/dev/null | grep -E "MSG =" | awk -F = '{print $2}' | tr -d " '\"")
                     echo -e "\E[44;1;37m         MODIFICAR ESTADO DEL WEBSOCKET     \E[0m\n"
-                    echo -ne "\033[1;32mINFORME SU MENSAJE WEBSOCKET\033[1;31m:\033[1;37m "
+                    echo -e "\033[1;33mSTATUS ACTUAL: \033[1;32m${msgws:-HTTP CONEXION WS}\033[0m\n"
+                    echo -ne "\033[1;32mINFORME SU NUEVO MENSAJE WEBSOCKET\033[1;31m:\033[1;37m "
                     read -r msgg
                     [[ -z "$msgg" ]] && msgg="HTTP CONEXION WS"
+
+                    echo -e "\n\033[1;31m[\033[1;36m01\033[1;31m]\033[1;33m AZUL"
+                    echo -e "\033[1;31m[\033[1;36m02\033[1;31m]\033[1;33m VERDE"
+                    echo -e "\033[1;31m[\033[1;36m03\033[1;31m]\033[1;33m ROJO"
+                    echo -e "\033[1;31m[\033[1;36m04\033[1;31m]\033[1;33m AMARILLO"
+                    echo -e "\033[1;31m[\033[1;36m05\033[1;31m]\033[1;33m ROSA"
+                    echo -e "\033[1;31m[\033[1;36m06\033[1;31m]\033[1;33m CYAN"
+                    echo -e "\033[1;31m[\033[1;36m07\033[1;31m]\033[1;33m NARANJA"
+                    echo -e "\033[1;31m[\033[1;36m08\033[1;31m]\033[1;33m PÚRPURA"
+                    echo -e "\033[1;31m[\033[1;36m09\033[1;31m]\033[1;33m NEGRO"
+                    echo -e "\033[1;31m[\033[1;36m10\033[1;31m]\033[1;33m SIN COLOR"
+                    echo ""
+                    echo -ne "\033[1;32m¿QUÉ COLOR DESEA ?\033[1;37m: "
+                    read -r sts_cor
+                    local cor_sts
+                    case "$sts_cor" in
+                        1|01) cor_sts="blue" ;;
+                        2|02) cor_sts="green" ;;
+                        3|03) cor_sts="red" ;;
+                        4|04) cor_sts="yellow" ;;
+                        5|05) cor_sts="#F535AA" ;;
+                        6|06) cor_sts="cyan" ;;
+                        7|07) cor_sts="#FF7F00" ;;
+                        8|08) cor_sts="#9932CD" ;;
+                        9|09) cor_sts="black" ;;
+                        10) cor_sts="null" ;;
+                        *) cor_sts="green" ;;
+                    esac
+
                     sed -i "s/MSG = .*/MSG = '$msgg'/g" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
-                    echo -e "\n\033[1;32mMENSAJE ACTUALIZADO A: '$msgg'\033[0m"
+                    sed -i "s/COR = .*/COR = '<font color=\"$cor_sts\">'/g" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+
+                    fun_restart_ws() {
+                        local _old_p; _old_p=$(get_proc_ports 'wsproxy\.py')
+                        for pidproxy in $(screen -ls 2>/dev/null | grep '\.ws' | awk '{print $1}'); do
+                            screen -r -S "$pidproxy" -X quit 2>/dev/null || true
+                        done
+                        screen -wipe >/dev/null 2>&1 || true
+                        sleep 1
+                        for p in $_old_p; do
+                            [[ "$p" =~ ^[0-9]+$ ]] && screen -dmS "ws" "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$p" 2>/dev/null || true
+                        done
+                    }
+                    echo -e "\n\033[1;32mAPLICANDO NUEVO ESTADO AL WEBSOCKET...\033[0m"
+                    fun_bar 'fun_restart_ws'
+                    echo -e "\n\033[1;32mMENSAJE ACTUALIZADO A: '$msgg' (Color: $cor_sts)\033[0m"
                     sleep 2
                 else
                     echo -e "\n\033[1;31mActive WebSocket primero."
