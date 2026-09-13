@@ -1748,6 +1748,15 @@ menu_bhttp() {
                 read -r bport
                 [[ -z "$bport" || ! "$bport" =~ ^[0-9]+$ ]] && bport="$def_p"
 
+                local cur_b_use
+                cur_b_use=$(ss -tlpn 2>/dev/null | grep -E "[:\s]${bport}\s" | awk '{print $NF}' | head -1)
+                if [[ -n "$cur_b_use" ]] && ! grep -q -E "bhttp-server|bhttp" <<< "$cur_b_use"; then
+                    echo -e "\n\033[1;31m[ERROR] El puerto ${bport} YA ESTÁ EN USO por: ${cur_b_use}\033[0m"
+                    echo -e "\033[1;33mPor favor elija otro puerto libre (ej: 8080, 8088, 8888) o detenga el servicio en conflicto.\033[0m"
+                    pause
+                    continue
+                fi
+
                 echo -ne "${WHITE}Puerto SSH destino Backend [Enter = 22]: ${NC}"
                 read -r backend_port
                 [[ -z "$backend_port" || ! "$backend_port" =~ ^[0-9]+$ ]] && backend_port="22"
@@ -1788,10 +1797,12 @@ EOF
                 iptables -I INPUT -p tcp --dport "$bport" -j ACCEPT 2>/dev/null || true
                 ufw allow "$bport"/tcp 2>/dev/null || true
 
+                sleep 1
                 if systemctl is-active --quiet bhttp.service 2>/dev/null; then
                     echo -e "\n\033[1;32m⚡ BHTTP Relay activo y funcionando en el puerto TCP ${bport} -> SSH ${backend_port}! ⚡\033[0m"
                 else
-                    echo -e "\n\033[1;31mError al iniciar BHTTP Relay. Verifique con: systemctl status bhttp\033[0m"
+                    echo -e "\n\033[1;31mError al iniciar BHTTP Relay. Registro del servicio:\033[0m"
+                    journalctl -u bhttp.service -n 10 --no-pager 2>/dev/null || systemctl status bhttp.service --no-pager 2>/dev/null || true
                 fi
                 pause
                 ;;
@@ -1801,7 +1812,6 @@ EOF
                 echo -e "             ${BLUE}CONFIGURAR BHTTP TLS (XHTTP / SSL)${SCOLOR}"
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 install_xhttp_binary
-                ensure_bhttp_tls_cert "crisdev.online"
                 ensure_bhttp_connect
 
                 if [[ ! -x /usr/local/bin/xhttp-server && ! -x /bin/xhttp-server ]]; then
@@ -1818,6 +1828,15 @@ EOF
                 echo -ne "${WHITE}Ingresa puerto para BHTTP TLS [Enter = ${def_tls}]: ${NC}"
                 read -r new_tls
                 [[ -z "$new_tls" || ! "$new_tls" =~ ^[0-9]+$ ]] && new_tls="$def_tls"
+
+                local cur_tls_use
+                cur_tls_use=$(ss -tlpn 2>/dev/null | grep -E "[:\s]${new_tls}\s" | awk '{print $NF}' | head -1)
+                if [[ -n "$cur_tls_use" ]] && ! grep -q -E "xhttp-server|bhttp-tls" <<< "$cur_tls_use"; then
+                    echo -e "\n\033[1;31m[ERROR] El puerto ${new_tls} YA ESTÁ EN USO por: ${cur_tls_use}\033[0m"
+                    echo -e "\033[1;33mPor favor elija otro puerto libre (ej: 8443, 7443, 443) o detenga el servicio en conflicto.\033[0m"
+                    pause
+                    continue
+                fi
 
                 echo -ne "${WHITE}Puerto SSH destino Backend [Enter = 22]: ${NC}"
                 read -r tls_backend
@@ -1840,7 +1859,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/xhttp-server --listen 0.0.0.0:$new_tls --target 127.0.0.1:$tls_backend --tls-cert /etc/bhttp/server.crt --tls-key /etc/bhttp/server.key --session-timeout 2m
+ExecStart=/usr/local/bin/xhttp-server -listen 0.0.0.0:$new_tls -target 127.0.0.1:$tls_backend -tls-cert /etc/bhttp/server.crt -tls-key /etc/bhttp/server.key -session-timeout 2m
 Restart=always
 RestartSec=1
 LimitNOFILE=524288
@@ -1855,10 +1874,12 @@ EOF
                 iptables -I INPUT -p tcp --dport "$new_tls" -j ACCEPT 2>/dev/null || true
                 ufw allow "$new_tls"/tcp 2>/dev/null || true
 
+                sleep 1
                 if systemctl is-active --quiet bhttp-tls.service 2>/dev/null; then
                     echo -e "\n\033[1;32m⚡ BHTTP TLS (XHTTP) activo y escuchando en el puerto TCP ${new_tls} (SSL/TLS) -> SSH ${tls_backend}! ⚡\033[0m"
                 else
-                    echo -e "\n\033[1;31mError al iniciar BHTTP TLS. Verifique con: systemctl status bhttp-tls\033[0m"
+                    echo -e "\n\033[1;31mError al iniciar BHTTP TLS. Registro del servicio:\033[0m"
+                    journalctl -u bhttp-tls.service -n 10 --no-pager 2>/dev/null || systemctl status bhttp-tls.service --no-pager 2>/dev/null || true
                 fi
                 pause
                 ;;
@@ -2917,13 +2938,6 @@ menu_protocolos() {
         drp_p=$(get_proc_ports 'dropbear')
         if [[ -n "$drp_p" ]]; then
             echo -e "\033[1;32mSERVICIO: \033[1;33mDROPBEAR \033[1;32mPUERTO: \033[1;37m$drp_p\033[0m"
-        fi
-
-        # 5. BHTTP Multi-Puerto
-        local bhttp_p
-        bhttp_p=$(scan_bhttp_ports)
-        if [[ -n "$bhttp_p" ]]; then
-            echo -e "\033[1;32mSERVICIO: \033[1;33mBHTTP RELAY \033[1;32mPUERTO: \033[1;37m$bhttp_p\033[0m"
         fi
 
         # 6. UDP CRIS / HYSTERIA
