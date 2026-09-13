@@ -1,21 +1,26 @@
 #!/bin/bash
 clear
-echo -e "\033[1;33mINICIANDO ACTUALIZACIÓN NoxuraSSH \033[0m"
-sleep 2s
-# Mismo repo que Install/list (edita en Install/list o exporta aqui):
+echo -e "\033[1;36m============================================================\033[0m"
+echo -e "       \033[1;33m⚡ ACTUALIZACIÓN SSH-CRIS / HTTP CONEXIÓN ⚡\033[0m"
+echo -e "\033[1;36m============================================================\033[0m"
+echo -e "\033[1;32m[+] Conservando idioma, zona horaria y configuraciones...\033[0m"
+sleep 1s
+
 SSHPLUS_GH_USER_REPO="${SSHPLUS_GH_USER_REPO:-soportecrisdev/SCRIP_CRISDEV}"
 case "${SSHPLUS_GH_USER_REPO}" in
-usuario/tu-repo|tu_usuario/tu_repo) SSHPLUS_GH_USER_REPO="soportecrisdev/SCRIP_CRISDEV" ;;
+    usuario/tu-repo|tu_usuario/tu_repo) SSHPLUS_GH_USER_REPO="soportecrisdev/SCRIP_CRISDEV" ;;
 esac
 SSHPLUS_GH_BRANCH="${SSHPLUS_GH_BRANCH:-main}"
 SSHPLUS_RAW="https://raw.githubusercontent.com/${SSHPLUS_GH_USER_REPO}/${SSHPLUS_GH_BRANCH}"
+
 tmp=$(mktemp)
-if wget -qO "$tmp" "${SSHPLUS_RAW}/script/install"; then
+if curl -fsSL "${SSHPLUS_RAW}/install.sh" -o "$tmp" 2>/dev/null || wget -qO "$tmp" "${SSHPLUS_RAW}/install.sh" 2>/dev/null || wget -qO "$tmp" "${SSHPLUS_RAW}/script/install" 2>/dev/null; then
 	chmod +x "$tmp"
-	bash "$tmp"
+	bash "$tmp" --update
 	rm -f "$tmp"
 else
-	echo -e "\033[1;31mFallo al descargar script/install. Revise SSHPLUS_GH_USER_REPO / rama en GitHub.\033[0m"
+	echo -e "\033[1;31m[ERROR] Fallo al descargar el instalador de actualización.\033[0m"
+	echo -e "\033[1;33mRevise la conexión o el repositorio en GitHub (${SSHPLUS_GH_USER_REPO}).\033[0m"
 	rm -f "$tmp"
 	exit 1
 fi

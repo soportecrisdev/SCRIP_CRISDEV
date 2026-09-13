@@ -2732,6 +2732,26 @@ PY
 			else
 				badsts="\033[1;31mx "
 			fi
+			local _hcr_pts=""
+			if [[ -f /etc/hcr-server/ports.conf ]]; then
+				_hcr_pts="$(awk -F'|' '{print $1}' /etc/hcr-server/ports.conf 2>/dev/null | xargs)"
+			fi
+			if pgrep -f 'hcr-server' >/dev/null 2>&1 || [[ -n "${_hcr_pts// }" ]]; then
+				echo -e "\033[1;32mSERVICIO: \033[1;33mHCR RELAY \033[1;32mPUERTO: \033[1;37m${_hcr_pts:-N/A}"
+				hcrsts="\033[1;32mo "
+			else
+				hcrsts="\033[1;31mx "
+			fi
+			local _udpc_pt=""
+			if [[ -f /opt/udp-custom/config.json ]]; then
+				_udpc_pt="$(grep -oE '"bind"[[:space:]]*:[[:space:]]*"[^"]+"' /opt/udp-custom/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+			fi
+			if systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1 || [[ -n "${_udpc_pt// }" ]]; then
+				echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CUSTOM \033[1;32mPUERTO: \033[1;37m${_udpc_pt:-7100}/udp"
+				udpcsts="\033[1;32mo "
+			else
+				udpcsts="\033[1;31mx "
+			fi
 			sshplus_line
 			sshplus_opt_pair "1" "OPENSSH" "$sts6" "10" "OPENVPN" "$sts5"
 			sshplus_opt_pair "2" "PROXY SOCKS" "$sts4" "11" "WEBSOCKET-CORRECTOR" "$wssts"
@@ -2740,8 +2760,9 @@ PY
 			sshplus_opt_pair "5" "V2RAY" "$xv2ray" "14" "CHISEL" "$sts8"
 			sshplus_opt_pair "6" "SLOWDNS" "$sts9" "15" "PANEL WEB V2RAY" ""
 			sshplus_opt_pair "7" "HYSTERIA v1" "$hysteriasts" "16" "LIMPIAR V2RAY" ""
-			sshplus_opt_pair "8" "TROJAN-GO" "$trojansts" "17" "MENU APACHE" ""
-			sshplus_opt_pair "9" "BADVPN" "$badsts" "0" "VOLVER" ""
+			sshplus_opt_pair "8" "TROJAN-GO" "$trojansts" "17" "GESTOR HCR" "$hcrsts"
+			sshplus_opt_pair "9" "BADVPN" "$badsts" "18" "UDP CUSTOM" "$udpcsts"
+			sshplus_opt "0" "VOLVER"
 			sshplus_line
 			tput civis
 			echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} ";
@@ -2804,8 +2825,30 @@ PY
 			echo -ne "\n\033[1;31mENTER \033[1;33mpara volver al \033[1;32mMENU\033[0m"; read
 			;;
 			17 | 17)
-			clear
-			apache2menu
+			if [[ -x /bin/hcr-manager || -x /usr/bin/hcr-manager ]]; then
+				hcr-manager
+			elif [[ -f /opt/ssh-cris/Modulos/hcr-manager ]]; then
+				bash /opt/ssh-cris/Modulos/hcr-manager
+			else
+				clear
+				echo -e "\033[1;32mDescargando e iniciando HCR Manager...\033[0m"
+				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager -o /bin/hcr-manager 2>/dev/null
+				chmod +x /bin/hcr-manager 2>/dev/null || true
+				hcr-manager
+			fi
+			;;
+			18 | 18)
+			if [[ -x /bin/udp-custom-manager || -x /usr/bin/udp-custom-manager ]]; then
+				udp-custom-manager
+			elif [[ -f /opt/ssh-cris/Modulos/udp-custom-manager ]]; then
+				bash /opt/ssh-cris/Modulos/udp-custom-manager
+			else
+				clear
+				echo -e "\033[1;32mDescargando e iniciando UDP Custom Manager...\033[0m"
+				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager -o /bin/udp-custom-manager 2>/dev/null
+				chmod +x /bin/udp-custom-manager 2>/dev/null || true
+				udp-custom-manager
+			fi
 			;;
 			0 | 00)
 			printf '\033c\033[3J\033[H\033[2J'

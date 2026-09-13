@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+# ==============================================================================
+#  UDP CUSTOM MANAGER — Servidor UDP Custom para SSH-CRIS / HTTP Conexión
+# ==============================================================================
+set -e
+
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[1;34m'
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+SCOLOR='\033[0m'
+SSHPLUS_NUM=$'\033[1;38;2;0;255;127m'
+SSHPLUS_CYAN=$'\033[1;38;2;76;228;255m'
+SSHPLUS_DARK_GREEN=$'\033[0;32m'
+
+INSTALL_DIR="/opt/udp-custom"
+CONFIG_FILE="${INSTALL_DIR}/config.json"
+BINARY_PATH="/usr/local/bin/udp-custom"
+SERVICE_NAME="udp-custom.service"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
+
+udp_resize() {
+    SSHPLUS_COLS="$(tput cols 2>/dev/null || echo 80)"
+    [[ ! "$SSHPLUS_COLS" =~ ^[0-9]+$ ]] && SSHPLUS_COLS=80
+    SSHPLUS_IW=60
+    [[ "$SSHPLUS_COLS" -lt 62 ]] && SSHPLUS_IW=$(( SSHPLUS_COLS - 2 ))
+    [[ "$SSHPLUS_IW" -lt 42 ]] && SSHPLUS_IW=42
+}
+
+udp_line() {
+    local i
+    udp_resize
+    printf '%b' "$SSHPLUS_CYAN"
+    for ((i=0;i<SSHPLUS_IW;i++)); do printf '='; done
+    printf '\033[0m\n'
+}
+
+udp_title() {
+    local title="$1" pad
+    udp_resize
+    udp_line
+    pad=$(( (SSHPLUS_IW - ${#title}) / 2 ))
+    [[ "$pad" -lt 0 ]] && pad=0
+    printf '%*s%b%s\033[0m\n' "$pad" "" "$SSHPLUS_CYAN" "$title"
+    udp_line
+}
+
+udp_opt() {
+    local n="${1#0}"
+    [[ -z "$n" ]] && n="0"
+    printf '%b[%s]\033[0m \033[1;37m>\033[0m \033[1;37m%s\033[0m %b\n' "$SSHPLUS_NUM" "$n" "$2" "$3"
+}
+
+pause_udp() {
+    echo ""
+    echo -e "\033[1;37m* \033[1;33mPresione Enter para continuar...\033[0m"
+    read -r _
+}
+
+ensure_dirs() {
+    mkdir -p "${INSTALL_DIR}"
+}
+
+ensure_binary() {
+    if [[ -x "$BINARY_PATH" ]]; then
+        return 0
+    fi
+    if [[ -x "${INSTALL_DIR}/server" ]]; then
+        ln -sfn "${INSTALL_DIR}/server" "$BINARY_PATH"
+        return 0
+    fi
+    if [[ -x "/bin/udp-custom" ]]; then
+        ln -sfn /bin/udp-custom "$BINARY_PATH"
+        return 0
+    fi
+    if [[ -f "/opt/ssh-cris/udp-custom" ]]; then
+        cp -f "/opt/ssh-cris/udp-custom" "$BINARY_PATH"
+        chmod +x "$BINARY_PATH"
+        return 0
+    fi
+
+    echo -e "${YELLOW}[*] Descargando binario oficial UDP-Custom...${NC}"
+    local arch; arch=$(uname -m)
+    case "$arch" in
+        x86_64) arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        armv7l|armhf) arch="armv7" ;;
+        *) arch="amd64" ;;
+    esac
+
+    local url1="https://raw.githubusercontent.com/karl1999x/PandaScript/main/BINARIOS/udp-amd64.bin"
+    local url2="https://github.com/AmnesiaPod/UDPCustom/releases/latest/download/udp-custom-linux-${arch}"
+    local url3="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/udp-custom"
+
+    curl -fsSL "$url1" -o "$BINARY_PATH" 2>/dev/null || \
+    curl -fsSL "$url2" -o "$BINARY_PATH" 2>/dev/null || \
+    wget -q "$url3" -O "$BINARY_PATH" 2>/dev/null || true
+
+    chmod 755 "$BINARY_PATH" 2>/dev/null || true
+    ln -sfn "$BINARY_PATH" /bin/udp-custom 2>/dev/null || true
+    ln -sfn "$BINARY_PATH" /usr/bin/udp-custom 2>/dev/null || true
+    ln -sfn "$BINARY_PATH" "${INSTALL_DIR}/server" 2>/dev/null || true
+    [[ -x "$BINARY_PATH" ]]
+}
+
+is_running() {
+    systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1
+}
+
+get_current_port() {
+    local port="7100"
+    if [[ -f "$CONFIG_FILE" ]]; then
+        port=$(grep -oE '"bind"[[:space:]]*:[[:space:]]*"[^"]+"' "$CONFIG_FILE" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+    fi
+    if [[ -z "$port" ]]; then
+        port=$(ss -ulnp 2>/dev/null | grep -E "udp-custom|server" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)
+    fi
+    echo "${port:-7100}"
+}
+
+get_congestion_setting() {
+    local cc="bbr"
+    if [[ -f "$CONFIG_FILE" ]]; then
+        cc=$(grep -oE '"conn_congestion_control"[[:space:]]*:[[:space:]]*"[^"]+"' "$CONFIG_FILE" 2>/dev/null | cut -d: -f2 | tr -d ' "' | head -1)
+    fi
+    echo "${cc:-bbr}"
+}
+
+create_config() {
+    local port="${1:-7100}"
+    local stream_buf="${2:-2048}"
+    local core_buf="${3:-1024}"
+    local max_stream="${4:-4096}"
+    local max_conn="${5:-10240}"
+    local cc="${6:-bbr}"
+
+    ensure_dirs
+    cat > "$CONFIG_FILE" <<EOF
+{
+  "bind": "0.0.0.0:${port}",
+  "stream_buffer_size": ${stream_buf},
+  "core_buffer_size": ${core_buf},
+  "max_open_stream": ${max_stream},
+  "max_open_conn": ${max_conn},
+  "stream_congestion_control": "${cc}",
+  "conn_congestion_control": "${cc}",
+  "enable_metrics": false
+}
+EOF
+    chmod 644 "$CONFIG_FILE"
+}
+
+create_service() {
+    cat > "$SERVICE_FILE" <<EOF
+[Unit]
+Description=UDP Custom Server - HTTP Conexión
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=${BINARY_PATH} -c ${CONFIG_FILE}
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 644 "$SERVICE_FILE"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+start_service() {
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+}
+
+stop_service() {
+    systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+    systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+    pkill -9 -f 'udp-custom' >/dev/null 2>&1 || true
+}
+
+restart_service() {
+    systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+}
+
+open_firewall_port() {
+    local port="$1"
+    iptables -I INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null || true
+    ufw allow "${port}/udp" 2>/dev/null || true
+}
+
+menu_activar_cambiar_puerto() {
+    clear
+    udp_title "CONFIGURAR PUERTO UDP-CUSTOM"
+    ensure_dirs
+    ensure_binary || {
+        echo -e "${RED}[ERROR] No se pudo instalar el binario udp-custom.${NC}"
+        pause_udp
+        return
+    }
+
+    local cur_p; cur_p=$(get_current_port)
+    echo -e "${WHITE}Puertos recomendados para UDP Custom:${NC}"
+    echo -e "  • \033[1;33m7100\033[0m (Estándar UDP Custom / VPN)"
+    echo -e "  • \033[1;33m7200\033[0m, \033[1;33m7300\033[0m, \033[1;33m7400\033[0m (Alternativos)"
+    echo -e "  • \033[1;33m53\033[0m / \033[1;33m5300\033[0m (DNS bypass operadores)"
+    echo ""
+    echo -ne "${SSHPLUS_DARK_GREEN}Ingrese el puerto a configurar [Enter = ${cur_p}]:${SCOLOR} "
+    read -r in_port
+    [[ -z "$in_port" ]] && in_port="$cur_p"
+
+    if ! [[ "$in_port" =~ ^[0-9]+$ ]] || (( in_port < 1 || in_port > 65535 )); then
+        echo -e "\033[1;31mPuerto no válido (1-65535).\033[0m"
+        pause_udp
+        return
+    fi
+
+    echo ""
+    echo -e "${WHITE}Seleccione modo de control de congestión:${NC}"
+    echo -e "  ${GREEN}[1]${NC} \033[1;37m> BBR (Alta velocidad y baja latencia) - Recomendado${NC}"
+    echo -e "  ${GREEN}[2]${NC} \033[1;37m> CUBIC (Estándar TCP/UDP)${NC}"
+    echo -ne "${SSHPLUS_DARK_GREEN}Opción [Enter = 1]:${SCOLOR} "
+    read -r cc_opt
+    local cc="bbr"
+    [[ "$cc_opt" == "2" ]] && cc="cubic"
+
+    echo ""
+    echo -e "${WHITE}Seleccione tamaño de buffer:${NC}"
+    echo -e "  ${GREEN}[1]${NC} \033[1;37m> Estándar (Stream: 2048 KB, Core: 1024 KB) - Recomendado${NC}"
+    echo -e "  ${GREEN}[2]${NC} \033[1;37m> Alto Rendimiento (Stream: 4096 KB, Core: 2048 KB)${NC}"
+    echo -ne "${SSHPLUS_DARK_GREEN}Opción [Enter = 1]:${SCOLOR} "
+    read -r buf_opt
+    local s_buf="2048" c_buf="1024"
+    [[ "$buf_opt" == "2" ]] && { s_buf="4096"; c_buf="2048"; }
+
+    create_config "$in_port" "$s_buf" "$c_buf" 4096 10240 "$cc"
+    create_service
+    start_service
+    open_firewall_port "$in_port"
+
+    sleep 1
+    echo ""
+    udp_line
+    if is_running; then
+        echo -e "\033[1;32m✔ Servidor UDP-Custom activo y funcionando en el puerto UDP ${in_port}! ⚡\033[0m"
+        echo -e "${WHITE}Congestión:${NC} \033[1;33m${cc^^}\033[0m | ${WHITE}Buffer:${NC} \033[1;37m${s_buf}KB\033[0m"
+    else
+        echo -e "\033[1;31m✗ No se pudo iniciar el servicio en el puerto ${in_port}.\033[0m"
+        echo -e "${YELLOW}Registro de error:${NC}"
+        journalctl -u "$SERVICE_NAME" -n 6 --no-pager 2>/dev/null || true
+    fi
+    udp_line
+    pause_udp
+}
+
+menu_desinstalar_udp() {
+    clear
+    udp_title "DESINSTALAR UDP-CUSTOM"
+    echo -ne "${RED}¿Está seguro de detener y desinstalar UDP-Custom? [s/N]: ${NC}"
+    read -r conf
+    if [[ ! "$conf" =~ ^[sS]$ ]]; then
+        return
+    fi
+    stop_service
+    rm -f "$SERVICE_FILE"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    rm -rf "${INSTALL_DIR}"
+    rm -f "$BINARY_PATH" /bin/udp-custom /usr/bin/udp-custom
+    echo -e "\n\033[1;32m✔ UDP-Custom ha sido desinstalado completamente del servidor.\033[0m"
+    pause_udp
+}
+
+ver_logs_udp() {
+    clear
+    udp_title "REGISTRO DE CONEXIONES UDP-CUSTOM"
+    echo -e "${YELLOW}Últimos eventos del servicio:${NC}\n"
+    journalctl -u "$SERVICE_NAME" -n 25 --no-pager 2>/dev/null || systemctl status "$SERVICE_NAME" --no-pager 2>/dev/null || echo "Sin registros disponibles."
+    echo ""
+    udp_line
+    pause_udp
+}
+
+fun_udpcustom_manager() {
+    ensure_dirs
+    while true; do
+        clear
+        local running_sts="${RED}DETENIDO [x]${NC}"
+        local cur_port; cur_port=$(get_current_port)
+        local cur_cc; cur_cc=$(get_congestion_setting)
+
+        if is_running; then
+            running_sts="${GREEN}ACTIVO [o]${NC}"
+        fi
+
+        udp_title "GESTOR UDP CUSTOM — HTTP CONEXIÓN"
+        echo -e "  ${WHITE}ESTADO DEL SERVICIO  : ${running_sts}"
+        echo -e "  ${WHITE}PUERTO UDP EN USO    : ${YELLOW}${cur_port}/udp${NC}"
+        echo -e "  ${WHITE}CONTROL CONGESTIÓN   : ${GREEN}${cur_cc^^}${NC}"
+        echo -e "  ${WHITE}UBICACIÓN CONFIG     : ${CYAN}${CONFIG_FILE}${NC}"
+        udp_line
+        udp_opt "1" "ACTIVAR / CAMBIAR PUERTO UDP"
+        if is_running; then
+            udp_opt "2" "DETENER SERVICIO UDP-CUSTOM"
+            udp_opt "3" "REINICIAR SERVICIO UDP-CUSTOM"
+        else
+            udp_opt "2" "INICIAR SERVICIO UDP-CUSTOM"
+        fi
+        udp_opt "4" "VER REGISTRO / LOGS EN VIVO"
+        udp_opt "5" "DESINSTALAR UDP-CUSTOM"
+        udp_opt "0" "VOLVER"
+        udp_line
+        echo -ne "${SSHPLUS_CYAN}Opción:${SCOLOR} "
+        read -r opc
+        case "$opc" in
+            1|01) menu_activar_cambiar_puerto ;;
+            2|02)
+                if is_running; then
+                    stop_service
+                    echo -e "\n\033[1;33mServicio UDP-Custom detenido.\033[0m"
+                else
+                    ensure_binary
+                    start_service
+                    echo -e "\n\033[1;32mServicio UDP-Custom iniciado.\033[0m"
+                fi
+                pause_udp
+                ;;
+            3|03)
+                if is_running; then
+                    restart_service
+                    echo -e "\n\033[1;32mServicio UDP-Custom reiniciado.\033[0m"
+                    pause_udp
+                fi
+                ;;
+            4|04) ver_logs_udp ;;
+            5|05) menu_desinstalar_udp ;;
+            0|00) exit 0 ;;
+            *)
+                echo -e "\033[1;31mOpción no válida!\033[0m"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+fun_udpcustom_manager

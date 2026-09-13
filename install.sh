@@ -30,8 +30,24 @@ fi
 
 mkdir -p /etc/SSHPlus /etc/ssh-cris /opt/ssh-cris
 
+IS_UPDATE=0
+if [[ "$1" == "--update" || "$1" == "-u" || "$1" == "update" ]]; then
+    IS_UPDATE=1
+elif [[ -f "/opt/ssh-cris/ssh-cris.sh" || -f "/etc/ssh-cris/lang" || -f "/etc/SSHPlus/lang" ]]; then
+    IS_UPDATE=1
+fi
+
 # ── 1. SELECCIÓN DE IDIOMA ──
 choose_language() {
+    if [[ $IS_UPDATE -eq 1 ]]; then
+        local prev_lang="es"
+        [[ -f /etc/ssh-cris/lang ]] && prev_lang=$(cat /etc/ssh-cris/lang 2>/dev/null)
+        [[ -f /etc/SSHPlus/lang && -z "$prev_lang" ]] && prev_lang=$(cat /etc/SSHPlus/lang 2>/dev/null)
+        [[ -z "$prev_lang" ]] && prev_lang="es"
+        echo "$prev_lang" > /etc/SSHPlus/lang
+        echo "$prev_lang" > /etc/ssh-cris/lang
+        return 0
+    fi
     [[ -t 0 ]] || return 0
     echo -e "${CYAN}============================================================${NC}"
     echo -e "${WHITE}             SELECCIONAR IDIOMA / SELECT LANGUAGE          ${NC}"
@@ -52,6 +68,9 @@ choose_language() {
 
 # ── 2. ECUALIZACIÓN / CONFIGURACIÓN DE ZONA HORARIA ──
 choose_timezone() {
+    if [[ $IS_UPDATE -eq 1 ]]; then
+        return 0
+    fi
     [[ -t 0 ]] || return 0
     local cur_tz
     cur_tz=$(cat /etc/timezone 2>/dev/null || timedatectl 2>/dev/null | grep "Time zone" | awk '{print $3}' || echo "UTC")
@@ -378,6 +397,33 @@ systemctl daemon-reload >/dev/null 2>&1 || true
 mkdir -p /etc/bhttp /etc/bhttp/certs
 touch /etc/bhttp/config 2>/dev/null || true
 
+# Instalar Core HCR Relay (HTTP Custom Relay)
+echo -e "${YELLOW}[*]${NC} Descargando Core HCR Relay (hcr-server)..."
+mkdir -p /etc/hcr-server
+touch /etc/hcr-server/ports.conf 2>/dev/null || true
+chmod 600 /etc/hcr-server/ports.conf 2>/dev/null || true
+if [[ ! -x /usr/local/bin/hcr-server && ! -x /bin/hcr-server ]]; then
+    curl -fsSL "https://raw.githubusercontent.com/karl1999x/PandaScript/main/BINARIOS/hcr-server" -o /usr/local/bin/hcr-server 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/karl1999x/PandaScript/main/BINARIOS/hcr-server" -O /usr/local/bin/hcr-server 2>/dev/null || \
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hcr-server" -o /usr/local/bin/hcr-server 2>/dev/null || true
+fi
+chmod 755 /usr/local/bin/hcr-server 2>/dev/null || true
+ln -sfn /usr/local/bin/hcr-server /usr/bin/hcr-server 2>/dev/null || true
+ln -sfn /usr/local/bin/hcr-server /bin/hcr-server 2>/dev/null || true
+# Instalar Core UDP-Custom
+echo -e "${YELLOW}[*]${NC} Descargando Core UDP-Custom (udp-custom)..."
+mkdir -p /opt/udp-custom
+if [[ ! -x /usr/local/bin/udp-custom && ! -x /bin/udp-custom ]]; then
+    curl -fsSL "https://raw.githubusercontent.com/karl1999x/PandaScript/main/BINARIOS/udp-amd64.bin" -o /usr/local/bin/udp-custom 2>/dev/null || \
+    curl -fsSL "https://github.com/AmnesiaPod/UDPCustom/releases/latest/download/udp-custom-linux-amd64" -o /usr/local/bin/udp-custom 2>/dev/null || \
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/udp-custom" -o /usr/local/bin/udp-custom 2>/dev/null || true
+fi
+chmod 755 /usr/local/bin/udp-custom 2>/dev/null || true
+ln -sfn /usr/local/bin/udp-custom /usr/bin/udp-custom 2>/dev/null || true
+ln -sfn /usr/local/bin/udp-custom /bin/udp-custom 2>/dev/null || true
+ln -sfn /usr/local/bin/udp-custom /opt/udp-custom/server 2>/dev/null || true
+chmod 755 /bin/udp-custom 2>/dev/null || true
+
 echo -e "${GREEN}[✔]${NC} Módulos y servicios instalados correctamente."
 
 echo -e "${YELLOW}[3/4]${NC} Creando accesos directos y enlaces globales..."
@@ -401,6 +447,10 @@ sshplus_compat_alias() {
     chmod +x "/bin/$old" 2>/dev/null || true
 }
 sshplus_compat_alias conexao connection
+sshplus_compat_alias bbr bbr-manager
+sshplus_compat_alias tcptweaker tcptweaker.sh
+sshplus_compat_alias udpcustom udp-custom-manager
+sshplus_compat_alias udp-custom udp-custom-manager
 sshplus_compat_alias criarusuario createuser
 sshplus_compat_alias criarteste createtest
 sshplus_compat_alias remover removeuser

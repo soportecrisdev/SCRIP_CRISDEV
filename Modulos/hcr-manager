@@ -1,0 +1,427 @@
+#!/usr/bin/env bash
+# ==============================================================================
+#  HCR MANAGER — HTTP Custom Relay / BHTTP Manager para SSH-CRIS / SSH-PLUS
+# ==============================================================================
+set -e
+
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[1;34m'
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+SCOLOR='\033[0m'
+SSHPLUS_NUM=$'\033[1;38;2;0;255;127m'
+SSHPLUS_CYAN=$'\033[1;38;2;76;228;255m'
+SSHPLUS_DARK_GREEN=$'\033[0;32m'
+
+INSTALL_DIR="/etc/hcr-server"
+BINARY_PATH="/usr/local/bin/hcr-server"
+PORTS_FILE="${INSTALL_DIR}/ports.conf"
+DEFAULT_TARGET="127.0.0.1:22"
+DEFAULT_TRANSPORT="plain"
+DEFAULT_MAX_FRAME="16384"
+MAX_FRAME_LIMIT=16384
+DEFAULT_POLL_SECONDS="6"
+SERVICE_PREFIX="hcr"
+
+hcr_resize() {
+    SSHPLUS_COLS="$(tput cols 2>/dev/null || echo 80)"
+    [[ ! "$SSHPLUS_COLS" =~ ^[0-9]+$ ]] && SSHPLUS_COLS=80
+    SSHPLUS_IW=60
+    [[ "$SSHPLUS_COLS" -lt 62 ]] && SSHPLUS_IW=$(( SSHPLUS_COLS - 2 ))
+    [[ "$SSHPLUS_IW" -lt 42 ]] && SSHPLUS_IW=42
+}
+
+hcr_line() {
+    local i
+    hcr_resize
+    printf '%b' "$SSHPLUS_CYAN"
+    for ((i=0;i<SSHPLUS_IW;i++)); do printf '='; done
+    printf '\033[0m\n'
+}
+
+hcr_title() {
+    local title="$1" pad
+    hcr_resize
+    hcr_line
+    pad=$(( (SSHPLUS_IW - ${#title}) / 2 ))
+    [[ "$pad" -lt 0 ]] && pad=0
+    printf '%*s%b%s\033[0m\n' "$pad" "" "$SSHPLUS_CYAN" "$title"
+    hcr_line
+}
+
+hcr_opt() {
+    local n="${1#0}"
+    [[ -z "$n" ]] && n="0"
+    printf '%b[%s]\033[0m \033[1;37m>\033[0m \033[1;37m%s\033[0m %b\n' "$SSHPLUS_NUM" "$n" "$2" "$3"
+}
+
+pause_hcr() {
+    echo ""
+    echo -e "\033[1;37m* \033[1;33mPresione Enter para continuar...\033[0m"
+    read -r _
+}
+
+ensure_dirs() {
+    mkdir -p "${INSTALL_DIR}"
+    touch "${PORTS_FILE}"
+    chmod 600 "${PORTS_FILE}" 2>/dev/null || true
+    reconcile_ports
+}
+
+ensure_binary() {
+    if [[ -x "$BINARY_PATH" ]]; then
+        return 0
+    fi
+    if [[ -x "/bin/hcr-server" ]]; then
+        ln -sfn /bin/hcr-server "$BINARY_PATH"
+        return 0
+    fi
+    if [[ -f "/opt/ssh-cris/hcr-server" ]]; then
+        cp -f "/opt/ssh-cris/hcr-server" "$BINARY_PATH"
+        chmod +x "$BINARY_PATH"
+        return 0
+    fi
+    echo -e "${YELLOW}[*] Descargando binario hcr-server...${NC}"
+    local url="https://raw.githubusercontent.com/karl1999x/PandaScript/main/BINARIOS/hcr-server"
+    curl -fsSL "$url" -o "$BINARY_PATH" 2>/dev/null || \
+    wget -q "$url" -O "$BINARY_PATH" 2>/dev/null || true
+    chmod 755 "$BINARY_PATH" 2>/dev/null || true
+    ln -sfn "$BINARY_PATH" /bin/hcr-server 2>/dev/null || true
+    ln -sfn "$BINARY_PATH" /usr/bin/hcr-server 2>/dev/null || true
+    [[ -x "$BINARY_PATH" ]]
+}
+
+service_name() { echo "${SERVICE_PREFIX}-${1}.service"; }
+unit_path()    { echo "/etc/systemd/system/$(service_name "$1")"; }
+
+port_exists() {
+    grep -q "^${1}|" "${PORTS_FILE}" 2>/dev/null
+}
+
+add_port_config() {
+    local port="$1" transport="${2:-$DEFAULT_TRANSPORT}" target="${3:-$DEFAULT_TARGET}"
+    local frame="${4:-$DEFAULT_MAX_FRAME}" poll="${5:-$DEFAULT_POLL_SECONDS}"
+    sed -i "/^${port}|/d" "${PORTS_FILE}" 2>/dev/null || true
+    echo "${port}|${transport}|${target}|${frame}|${poll}" >> "${PORTS_FILE}"
+}
+
+remove_port_config() {
+    sed -i "/^${1}|/d" "${PORTS_FILE}" 2>/dev/null || true
+}
+
+list_ports() {
+    [[ ! -s "${PORTS_FILE}" ]] && return
+    while IFS='|' read -r port transport target frame poll; do
+        [[ -z "$port" ]] && continue
+        echo "$port"
+    done < "${PORTS_FILE}"
+}
+
+is_port_running() {
+    systemctl is-active --quiet "$(service_name "$1")" 2>/dev/null
+}
+
+reconcile_ports() {
+    local unit_file port execstart target transport frame poll
+    for unit_file in /etc/systemd/system/${SERVICE_PREFIX}-*.service; do
+        [[ -e "$unit_file" ]] || continue
+        port=$(basename "$unit_file" .service)
+        port="${port#${SERVICE_PREFIX}-}"
+        [[ "$port" =~ ^[0-9]+$ ]] || continue
+        port_exists "$port" && continue
+
+        execstart=$(grep -m1 '^ExecStart=' "$unit_file" 2>/dev/null) || true
+        [[ -z "$execstart" ]] && continue
+
+        target=$(grep -oE -- '--target [^ ]+' <<< "$execstart" | awk '{print $2}') || true
+        transport=$(grep -oE -- '--transport [^ ]+' <<< "$execstart" | awk '{print $2}') || true
+        frame=$(grep -oE -- '--max-download-frame [^ ]+' <<< "$execstart" | awk '{print $2}') || true
+        poll=$(grep -oE -- '--download-poll-timeout [^ ]+' <<< "$execstart" | awk '{print $2}') || true
+        poll="${poll%s}"
+
+        target="${target:-$DEFAULT_TARGET}"
+        transport="${transport:-$DEFAULT_TRANSPORT}"
+        frame="${frame:-$DEFAULT_MAX_FRAME}"
+        poll="${poll:-$DEFAULT_POLL_SECONDS}"
+
+        add_port_config "$port" "$transport" "$target" "$frame" "$poll"
+    done
+}
+
+create_unit() {
+    local port="$1" transport="$2" target="$3" frame="$4" poll_num="$5"
+    local unit="$(unit_path "$port")"
+    local tls_args=""
+    local poll="${poll_num}s"
+
+    if [[ "$transport" == "tls" || "$transport" == "auto" ]]; then
+        if [[ -f "${INSTALL_DIR}/fullchain.pem" && -f "${INSTALL_DIR}/privkey.pem" ]]; then
+            tls_args=" --tls-cert ${INSTALL_DIR}/fullchain.pem --tls-key ${INSTALL_DIR}/privkey.pem"
+        elif [[ -f "/etc/bhttp/server.crt" && -f "/etc/bhttp/server.key" ]]; then
+            tls_args=" --tls-cert /etc/bhttp/server.crt --tls-key /etc/bhttp/server.key"
+        else
+            transport="plain"
+        fi
+    fi
+
+    cat > "${unit}" <<EOF
+[Unit]
+Description=HCR Relay on port ${port}
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=${BINARY_PATH} --listen :${port} --target ${target} --transport ${transport}${tls_args} --max-download-frame ${frame} --download-poll-timeout ${poll}
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 644 "${unit}"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+start_port() {
+    local p="$1"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable --now "$(service_name "$p")" >/dev/null 2>&1 || true
+}
+
+stop_port() {
+    local p="$1"
+    systemctl stop "$(service_name "$p")" >/dev/null 2>&1 || true
+    systemctl disable "$(service_name "$p")" >/dev/null 2>&1 || true
+}
+
+remove_port() {
+    local p="$1"
+    stop_port "$p"
+    rm -f "$(unit_path "$p")"
+    remove_port_config "$p"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+hcr_status_summary() {
+    local ports total=0 up=0 p status
+    ports=$(list_ports)
+    if [[ -z "$ports" ]]; then
+        echo -e "  \033[1;30m(No hay puertos configurados. Use la opción 1 para agregar)\033[0m"
+        return
+    fi
+    local line=""
+    for p in $ports; do
+        if is_port_running "$p"; then
+            status="\033[1;32m[ACTIVO]\033[0m"
+            up=$((up + 1))
+        else
+            status="\033[1;31m[INACTIVO]\033[0m"
+        fi
+        line+="  \033[1;33mPUERTO $p:\033[0m $status  "
+        total=$((total + 1))
+        if (( total % 2 == 0 )); then
+            echo -e "$line"
+            line=""
+        fi
+    done
+    [[ -n "$line" ]] && echo -e "$line"
+}
+
+menu_agregar_puerto() {
+    clear
+    hcr_title "AGREGAR PUERTO HCR RELAY"
+    ensure_dirs
+    ensure_binary || {
+        echo -e "${RED}[ERROR] No se pudo instalar el binario hcr-server.${NC}"
+        pause_hcr
+        return
+    }
+
+    echo -ne "${SSHPLUS_DARK_GREEN}Indique el puerto para HCR [8080]:${SCOLOR} "
+    read -r port
+    [[ -z "$port" ]] && port="8080"
+
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+        echo -e "\033[1;31mPuerto no válido (1-65535).\033[0m"
+        pause_hcr
+        return
+    fi
+
+    if ss -tln 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}\$"; then
+        echo -e "\033[1;31mEl puerto $port ya está en uso en el sistema.\033[0m"
+        pause_hcr
+        return
+    fi
+
+    echo ""
+    echo -e "${WHITE}Seleccione modo de transporte:${NC}"
+    echo -e "  ${GREEN}[1]${NC} \033[1;37m> Plain (HTTP Plano / BHP1) - Recomendado${NC}"
+    echo -e "  ${GREEN}[2]${NC} \033[1;37m> TLS (Cifrado HTTPS con Certificado)${NC}"
+    echo -ne "${SSHPLUS_DARK_GREEN}Opción [Enter = 1]:${SCOLOR} "
+    read -r t_opt
+    local transport="plain"
+    [[ "$t_opt" == "2" ]] && transport="tls"
+
+    echo ""
+    echo -e "${WHITE}Seleccione preset de velocidad / buffer:${NC}"
+    echo -e "  ${GREEN}[1]${NC} \033[1;37m> Rápido (Frame: 2000, Poll: 4s)${NC}"
+    echo -e "  ${GREEN}[2]${NC} \033[1;37m> Balanceado (Frame: 4000, Poll: 5s) - Recomendado${NC}"
+    echo -e "  ${GREEN}[3]${NC} \033[1;37m> Estable / Alto Rendimiento (Frame: 16384, Poll: 6s)${NC}"
+    echo -ne "${SSHPLUS_DARK_GREEN}Opción [Enter = 2]:${SCOLOR} "
+    read -r pr_opt
+    local frame="4000" poll="5"
+    case "$pr_opt" in
+        1) frame="2000"; poll="4" ;;
+        3) frame="16384"; poll="6" ;;
+        *) frame="4000"; poll="5" ;;
+    esac
+
+    create_unit "$port" "$transport" "$DEFAULT_TARGET" "$frame" "$poll"
+    add_port_config "$port" "$transport" "$DEFAULT_TARGET" "$frame" "$poll"
+    start_port "$port"
+
+    echo ""
+    hcr_line
+    if is_port_running "$port"; then
+        echo -e "\033[1;32m✔ Puerto HCR $port ($transport) activado correctamente.\033[0m"
+        echo -e "${WHITE}Destino SSH:${NC} \033[1;33m$DEFAULT_TARGET\033[0m | ${WHITE}Frame:${NC} \033[1;37m${frame}B\033[0m"
+    else
+        echo -e "\033[1;31m✗ No se pudo iniciar el servicio en el puerto $port.\033[0m"
+    fi
+    hcr_line
+    pause_hcr
+}
+
+menu_eliminar_puerto() {
+    clear
+    hcr_title "ELIMINAR PUERTO HCR"
+    ensure_dirs
+    local ports
+    ports=$(list_ports)
+    if [[ -z "$ports" ]]; then
+        echo -e "${YELLOW}No hay puertos HCR configurados.${NC}"
+        pause_hcr
+        return
+    fi
+
+    echo -e "${WHITE}Puertos registrados:${NC}"
+    local p
+    for p in $ports; do
+        echo -e "  • \033[1;33mPuerto $p\033[0m"
+    done
+    echo ""
+    echo -ne "${SSHPLUS_DARK_GREEN}Ingrese el puerto a eliminar:${SCOLOR} "
+    read -r del_p
+    if port_exists "$del_p"; then
+        remove_port "$del_p"
+        echo -e "\033[1;32m✔ Puerto $del_p eliminado y detenido correctamente.\033[0m"
+    else
+        echo -e "\033[1;31mEl puerto $del_p no está registrado.\033[0m"
+    fi
+    pause_hcr
+}
+
+menu_control_puerto() {
+    clear
+    hcr_title "INICIAR / DETENER PUERTOS HCR"
+    ensure_dirs
+    local ports
+    ports=$(list_ports)
+    if [[ -z "$ports" ]]; then
+        echo -e "${YELLOW}No hay puertos HCR configurados.${NC}"
+        pause_hcr
+        return
+    fi
+
+    echo -e "${WHITE}Puertos registrados:${NC}"
+    for p in $ports; do
+        if is_port_running "$p"; then
+            echo -e "  • \033[1;33mPuerto $p:\033[0m \033[1;32mACTIVO\033[0m"
+        else
+            echo -e "  • \033[1;33mPuerto $p:\033[0m \033[1;31mDETENIDO\033[0m"
+        fi
+    done
+    echo ""
+    echo -ne "${SSHPLUS_DARK_GREEN}Ingrese el puerto a cambiar de estado:${SCOLOR} "
+    read -r c_p
+    if port_exists "$c_p"; then
+        if is_port_running "$c_p"; then
+            stop_port "$c_p"
+            echo -e "\033[1;33mPuerto $c_p detenido.\033[0m"
+        else
+            start_port "$c_p"
+            echo -e "\033[1;32mPuerto $c_p iniciado.\033[0m"
+        fi
+    else
+        echo -e "\033[1;31mEl puerto $c_p no está registrado.\033[0m"
+    fi
+    pause_hcr
+}
+
+desinstalar_hcr_total() {
+    clear
+    hcr_title "DESINSTALAR HCR-SERVER"
+    echo -ne "${RED}¿Está seguro de desinstalar HCR y eliminar todos los puertos? [s/N]: ${NC}"
+    read -r conf
+    if [[ ! "$conf" =~ ^[sS]$ ]]; then
+        return
+    fi
+    local p
+    for p in $(list_ports); do
+        remove_port "$p" 2>/dev/null || true
+    done
+    systemctl stop 'hcr-*' 2>/dev/null || true
+    pkill -9 -x hcr-server 2>/dev/null || true
+    rm -f /etc/systemd/system/hcr-*.service
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    rm -rf "${INSTALL_DIR}"
+    rm -f "$BINARY_PATH" /bin/hcr-server /usr/bin/hcr-server
+    echo -e "\n\033[1;32m✔ HCR-SERVER ha sido desinstalado completamente.\033[0m"
+    pause_hcr
+}
+
+fun_hcrmanager() {
+    ensure_dirs
+    while true; do
+        clear
+        hcr_title "GESTOR HCR RELAY (HTTP CUSTOM / BHTTP)"
+        hcr_status_summary
+        hcr_line
+        hcr_opt "1" "AGREGAR NUEVO PUERTO HCR"
+        hcr_opt "2" "INICIAR / DETENER PUERTO HCR"
+        hcr_opt "3" "ELIMINAR PUERTO HCR"
+        hcr_opt "4" "REINICIAR TODOS LOS PUERTOS HCR"
+        hcr_opt "5" "DESINSTALAR HCR-SERVER"
+        hcr_opt "0" "VOLVER"
+        hcr_line
+        echo -ne "${SSHPLUS_CYAN}Opción:${SCOLOR} "
+        read -r opc
+        case "$opc" in
+            1|01) menu_agregar_puerto ;;
+            2|02) menu_control_puerto ;;
+            3|03) menu_eliminar_puerto ;;
+            4|04)
+                for p in $(list_ports); do
+                    systemctl restart "$(service_name "$p")" >/dev/null 2>&1 || true
+                done
+                echo -e "\033[1;32mTodos los puertos HCR han sido reiniciados.\033[0m"
+                pause_hcr
+                ;;
+            5|05) desinstalar_hcr_total ;;
+            0|00) exit 0 ;;
+            *)
+                echo -e "\033[1;31mOpción no válida!\033[0m"
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+fun_hcrmanager
