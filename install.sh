@@ -139,14 +139,35 @@ echo -e "${YELLOW}[*]${NC} Descargando Core UDP CRIS (Hysteria v1.3.5)..."
 ARCH=$(uname -m)
 if [[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]]; then
     curl -fsSL "https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-amd64" -o /usr/local/bin/hysteria1 2>/dev/null || \
-    wget -q "https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-amd64" -O /usr/local/bin/hysteria1 2>/dev/null || true
+    wget -q "https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-amd64" -O /usr/local/bin/hysteria1 2>/dev/null || \
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hysteria1-amd64" -o /usr/local/bin/hysteria1 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hysteria1-amd64" -O /usr/local/bin/hysteria1 2>/dev/null || true
 elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
     curl -fsSL "https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-arm64" -o /usr/local/bin/hysteria1 2>/dev/null || \
-    wget -q "https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-arm64" -O /usr/local/bin/hysteria1 2>/dev/null || true
+    wget -q "https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-arm64" -O /usr/local/bin/hysteria1 2>/dev/null || \
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hysteria1-arm64" -o /usr/local/bin/hysteria1 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hysteria1-arm64" -O /usr/local/bin/hysteria1 2>/dev/null || true
 fi
 chmod 755 /usr/local/bin/hysteria1 2>/dev/null || true
 ln -sfn /usr/local/bin/hysteria1 /usr/local/bin/hysteria 2>/dev/null || true
-chmod 755 /usr/local/bin/hysteria 2>/dev/null || true
+ln -sfn /usr/local/bin/hysteria1 /bin/hysteria1 2>/dev/null || true
+ln -sfn /usr/local/bin/hysteria1 /bin/hysteria 2>/dev/null || true
+chmod 755 /usr/local/bin/hysteria /bin/hysteria1 /bin/hysteria 2>/dev/null || true
+
+# Instalar Core SlowDNS (dnstt-server)
+echo -e "${YELLOW}[*]${NC} Descargando Core SlowDNS (dnstt-server)..."
+if [[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]]; then
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/dnstt-server-amd64" -o /usr/local/bin/dnstt-server 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/dnstt-server-amd64" -O /usr/local/bin/dnstt-server 2>/dev/null || \
+    curl -fsSL "https://dnstt.network/dnstt-server-linux-amd64" -o /usr/local/bin/dnstt-server 2>/dev/null || true
+elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/dnstt-server-arm64" -o /usr/local/bin/dnstt-server 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/dnstt-server-arm64" -O /usr/local/bin/dnstt-server 2>/dev/null || \
+    curl -fsSL "https://dnstt.network/dnstt-server-linux-arm64" -o /usr/local/bin/dnstt-server 2>/dev/null || true
+fi
+chmod 755 /usr/local/bin/dnstt-server 2>/dev/null || true
+ln -sfn /usr/local/bin/dnstt-server /bin/dnstt-server 2>/dev/null || true
+chmod 755 /bin/dnstt-server 2>/dev/null || true
 
 # Configuración base inicial de Hysteria v1 para que arranque activo
 mkdir -p /etc/hysteria

@@ -84,13 +84,26 @@ slow_download_bin() {
 		echo -e "${RED}Arquitectura no soportada: $(uname -m)${NC}"
 		return 1
 	}
+	if [[ -s "$SLOW_BIN" && -x "$SLOW_BIN" ]]; then
+		return 0
+	fi
+	if [[ -s "/bin/dnstt-server" && -x "/bin/dnstt-server" ]]; then
+		cp -f /bin/dnstt-server "$SLOW_BIN" 2>/dev/null || true
+		chmod +x "$SLOW_BIN" 2>/dev/null || true
+		return 0
+	fi
 	url="https://dnstt.network/dnstt-server-linux-${arch}"
 	tmp="/tmp/dnstt-server.$$"
 	if command -v curl >/dev/null 2>&1; then
-		curl -fsSL -o "$tmp" "$url" || true
+		curl -fL --retry 3 --connect-timeout 10 -o "$tmp" "$url" 2>/dev/null || true
 	fi
 	if [[ ! -s "$tmp" ]] && command -v wget >/dev/null 2>&1; then
-		wget -qO "$tmp" "$url" || true
+		wget -t 3 -T 10 -qO "$tmp" "$url" 2>/dev/null || true
+	fi
+	if [[ ! -s "$tmp" ]]; then
+		local url2="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/dnstt-server-${arch}"
+		curl -fL --retry 3 --connect-timeout 10 -o "$tmp" "$url2" 2>/dev/null || \
+		wget -t 3 -T 10 -qO "$tmp" "$url2" 2>/dev/null || true
 	fi
 	[[ -s "$tmp" ]] || {
 		echo -e "${RED}No se pudo descargar dnstt-server.${NC}"
@@ -105,8 +118,9 @@ slow_generate_keys() {
 	mkdir -p "$SLOW_DIR"
 	[[ -x "$SLOW_BIN" ]] || slow_download_bin || return 1
 	"$SLOW_BIN" -gen-key -privkey-file "$SLOW_KEY" -pubkey-file "$SLOW_PUB" >/dev/null 2>&1
-	chmod 600 "$SLOW_KEY"
-	chmod 644 "$SLOW_PUB"
+	[[ -f "$SLOW_KEY" ]] && chmod 600 "$SLOW_KEY" 2>/dev/null || true
+	[[ -f "$SLOW_PUB" ]] && chmod 644 "$SLOW_PUB" 2>/dev/null || true
+	[[ -f "$SLOW_KEY" && -f "$SLOW_PUB" ]]
 }
 
 SLOW_IPTABLES="${SLOW_DIR}/iptables.sh"
