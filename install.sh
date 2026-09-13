@@ -212,16 +212,7 @@ cat > /etc/hysteria/config.json << 'EOF'
     "config": [
       "crisdev:crisdev"
     ]
-  },
-  "alpn": "h3",
-  "recv_window_conn": 15728640,
-  "recv_window": 67108864,
-  "max_conn_client": 0,
-  "idle_timeout": 60,
-  "up_mbps": 100,
-  "down_mbps": 100,
-  "disable_mtu_discovery": false,
-  "resolver": "8.8.8.8:53"
+  }
 }
 EOF
 fi
