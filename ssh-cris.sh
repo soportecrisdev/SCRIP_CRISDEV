@@ -2936,38 +2936,29 @@ menu_protocolos() {
         fi
 
         # 5. V2Ray / Xray
-        local is_xray_active=0
-        local is_v2ray_active=0
-        if systemctl is-active --quiet xray 2>/dev/null || systemctl is-active --quiet xray-server 2>/dev/null || pgrep -x xray >/dev/null 2>&1 || pgrep -f '/xray' >/dev/null 2>&1 || ss -tlpn 2>/dev/null | grep -q 'xray' || netstat -tunlp 2>/dev/null | grep -q 'xray'; then
-            is_xray_active=1
-        fi
-        if systemctl is-active --quiet v2ray 2>/dev/null || systemctl is-active --quiet v2ray-server 2>/dev/null || pgrep -x v2ray >/dev/null 2>&1 || pgrep -f '/v2ray' >/dev/null 2>&1 || ss -tlpn 2>/dev/null | grep -q 'v2ray' || netstat -tunlp 2>/dev/null | grep -q 'v2ray'; then
-            is_v2ray_active=1
-        fi
-
-        if [[ $is_xray_active -eq 1 ]]; then
-            local _xray_pt=""
+        local is_v2_active=0
+        local v2_engine=""
+        local v2_ports=""
+        if systemctl is-active --quiet xray 2>/dev/null || pgrep -x xray >/dev/null 2>&1; then
+            is_v2_active=1
+            v2_engine="XRAY"
             if command -v jq >/dev/null 2>&1 && [[ -f /usr/local/etc/xray/config.json ]]; then
-                _xray_pt="$(jq -r '[.inbounds[]?.port] | map(select(. != null)) | unique | join(" ")' /usr/local/etc/xray/config.json 2>/dev/null)"
+                v2_ports="$(jq -r '[.inbounds[]?.port] | map(select(. != null)) | unique | join(" ")' /usr/local/etc/xray/config.json 2>/dev/null)"
             elif command -v jq >/dev/null 2>&1 && [[ -f /etc/xray/config.json ]]; then
-                _xray_pt="$(jq -r '[.inbounds[]?.port] | map(select(. != null)) | unique | join(" ")' /etc/xray/config.json 2>/dev/null)"
+                v2_ports="$(jq -r '[.inbounds[]?.port] | map(select(. != null)) | unique | join(" ")' /etc/xray/config.json 2>/dev/null)"
             fi
-            [[ -z "${_xray_pt// }" && -f /usr/local/etc/xray/config.json ]] && _xray_pt="$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' /usr/local/etc/xray/config.json 2>/dev/null | grep -oE '[0-9]+' | sort -n | uniq | xargs)"
-            [[ -z "${_xray_pt// }" && -f /etc/xray/config.json ]] && _xray_pt="$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' /etc/xray/config.json 2>/dev/null | grep -oE '[0-9]+' | sort -n | uniq | xargs)"
-            [[ -z "${_xray_pt// }" ]] && _xray_pt="$(ss -tlpn 2>/dev/null | grep 'xray' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs)"
-            [[ -z "${_xray_pt// }" ]] && _xray_pt="$(netstat -tunlp 2>/dev/null | grep 'xray' | awk '{print $4}' | cut -d: -f2 | sort -un | xargs)"
-            echo -e "\033[1;32mSERVICIO: \033[1;33mXRAY \033[1;32mPUERTO: \033[1;37m${_xray_pt:-N/A}\033[0m"
+            [[ -z "${v2_ports// }" ]] && v2_ports="$(ss -tlpn 2>/dev/null | grep -w 'xray' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs)"
+        elif systemctl is-active --quiet v2ray 2>/dev/null || pgrep -x v2ray >/dev/null 2>&1; then
+            is_v2_active=1
+            v2_engine="V2RAY"
+            if command -v jq >/dev/null 2>&1 && [[ -f /etc/v2ray/config.json ]]; then
+                v2_ports="$(jq -r '[.inbounds[]?.port] | map(select(. != null)) | unique | join(" ")' /etc/v2ray/config.json 2>/dev/null)"
+            fi
+            [[ -z "${v2_ports// }" ]] && v2_ports="$(ss -tlpn 2>/dev/null | grep -w 'v2ray' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs)"
         fi
 
-        if [[ $is_v2ray_active -eq 1 ]]; then
-            local _v2_pt=""
-            if command -v jq >/dev/null 2>&1 && [[ -f /etc/v2ray/config.json ]]; then
-                _v2_pt="$(jq -r '[.inbounds[]?.port] | map(select(. != null)) | unique | join(" ")' /etc/v2ray/config.json 2>/dev/null)"
-            fi
-            [[ -z "${_v2_pt// }" && -f /etc/v2ray/config.json ]] && _v2_pt="$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' /etc/v2ray/config.json 2>/dev/null | grep -oE '[0-9]+' | sort -n | uniq | xargs)"
-            [[ -z "${_v2_pt// }" ]] && _v2_pt="$(ss -tlpn 2>/dev/null | grep 'v2ray' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs)"
-            [[ -z "${_v2_pt// }" ]] && _v2_pt="$(netstat -tunlp 2>/dev/null | grep 'v2ray' | awk '{print $4}' | cut -d: -f2 | sort -un | xargs)"
-            echo -e "\033[1;32mSERVICIO: \033[1;33mV2RAY \033[1;32mPUERTO: \033[1;37m${_v2_pt:-N/A}\033[0m"
+        if [[ $is_v2_active -eq 1 ]]; then
+            echo -e "\033[1;32mSERVICIO: \033[1;33m${v2_engine} \033[1;32mPUERTO: \033[1;37m${v2_ports:-N/A}\033[0m"
         fi
 
         # 6. UDP CRIS / HYSTERIA

@@ -389,14 +389,39 @@ v2ray_ensure_legacy_config "$config_v2ray"
     fun_v2raymanager
     }
     unistallv2 () {
-    source <(curl -sL https://multi.netlify.app/v2ray.sh) --remove > /dev/null 2>&1
-    systemctl stop xray >/dev/null 2>&1
-    systemctl disable xray >/dev/null 2>&1
-    rm -f /etc/systemd/system/xray.service /usr/local/bin/xray /usr/bin/xray /bin/xray >/dev/null 2>&1
-    rm -rf /usr/local/etc/xray /etc/xray /var/log/xray >/dev/null 2>&1
-    systemctl daemon-reload >/dev/null 2>&1
-    rm -rf /etc/SSHPlus/RegV2ray > /dev/null 2>&1
-    echo -e "\n\033[1;32mV2RAY ELIMINADO CORRECTAMENTE.\033[0m"
+    clear
+    v2ray_title "DESINSTALACION COMPLETA DE V2RAY / XRAY"
+    echo -e "${YELLOW}[*] Deteniendo y deshabilitando todos los servicios V2Ray / Xray...${NC}"
+    systemctl stop v2ray 2>/dev/null || true
+    systemctl stop xray 2>/dev/null || true
+    systemctl stop v2ray-server 2>/dev/null || true
+    systemctl stop xray-server 2>/dev/null || true
+    systemctl disable v2ray 2>/dev/null || true
+    systemctl disable xray 2>/dev/null || true
+    systemctl disable v2ray-server 2>/dev/null || true
+    systemctl disable xray-server 2>/dev/null || true
+    
+    echo -e "${YELLOW}[*] Forzando detencion de procesos residuales...${NC}"
+    pkill -9 -x v2ray 2>/dev/null || true
+    pkill -9 -x xray 2>/dev/null || true
+    pkill -9 -f '/v2ray' 2>/dev/null || true
+    pkill -9 -f '/xray' 2>/dev/null || true
+    
+    echo -e "${YELLOW}[*] Eliminando servicios systemd...${NC}"
+    rm -f /etc/systemd/system/v2ray* /etc/systemd/system/xray* /lib/systemd/system/v2ray* /lib/systemd/system/xray* 2>/dev/null || true
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    
+    echo -e "${YELLOW}[*] Eliminando binarios y componentes...${NC}"
+    rm -f /usr/local/bin/v2ray /usr/local/bin/xray /usr/bin/v2ray /usr/bin/xray /bin/v2ray /bin/xray /usr/bin/v2.sh 2>/dev/null || true
+    rm -rf /usr/bin/v2ray /usr/local/share/v2ray /usr/local/share/xray /usr/share/v2ray /usr/share/xray 2>/dev/null || true
+    
+    echo -e "${YELLOW}[*] Eliminando configuraciones y registros de usuarios...${NC}"
+    rm -rf /etc/v2ray /etc/xray /usr/local/etc/v2ray /usr/local/etc/xray /var/log/v2ray /var/log/xray 2>/dev/null || true
+    rm -rf /etc/SSHPlus/RegV2ray /etc/SSHPlus/v2ray 2>/dev/null || true
+    sed -i '/alias v2=/d' ~/.bashrc 2>/dev/null || true
+    unalias v2 2>/dev/null || true
+    
+    echo -e "\n\033[1;32mV2RAY Y XRAY ELIMINADOS Y PURGADOS COMPLETAMENTE.\033[0m"
     echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
     echo -e "\033[1;37m* \033[1;33mEnter para continuar\033[1;31m" && read enter
     fun_v2raymanager
