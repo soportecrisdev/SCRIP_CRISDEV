@@ -82,6 +82,28 @@ else
 fi
 chmod +x /bin/* 2>/dev/null || true
 
+# Copiar o descargar herramientas de Install/
+_inst_files=(
+    "EasyRSA-3.0.1.tgz" "ShellBot.sh" "botssh" "cert" "instsqd" "key" "list"
+    "resolved.conf" "slowdns" "squid3" "sshd_config" "stunnel" "stunnel.pem"
+    "tcptweaker.sh" "udp" "version"
+)
+if [[ -d "./Install" ]]; then
+    cp -rf ./Install/* /etc/SSHPlus/ 2>/dev/null || true
+    cp -af ./Install/udp /bin/udp 2>/dev/null || true
+    cp -af ./Install/instsqd /bin/instsqd 2>/dev/null || true
+    cp -af ./Install/slowdns /bin/slowdns 2>/dev/null || true
+else
+    for _if in "${_inst_files[@]}"; do
+        curl -fsSL "$REPO_RAW/Install/$_if" -o "/etc/SSHPlus/$_if" 2>/dev/null || \
+        wget -q "$REPO_RAW/Install/$_if" -O "/etc/SSHPlus/$_if" 2>/dev/null || true
+    done
+    cp -af /etc/SSHPlus/udp /bin/udp 2>/dev/null || true
+    cp -af /etc/SSHPlus/instsqd /bin/instsqd 2>/dev/null || true
+    cp -af /etc/SSHPlus/slowdns /bin/slowdns 2>/dev/null || true
+fi
+chmod +x /bin/udp /bin/instsqd /bin/slowdns 2>/dev/null || true
+
 # Colocar scripts python y bots en /etc/SSHPlus/
 for _f in cabecalho bot open.py proxy.py wsproxy.py ShellBot.sh botssh; do
     if [[ -f "/bin/$_f" ]]; then
@@ -255,7 +277,7 @@ Type=simple
 User=root
 Environment=HYSTERIA_LOG_LEVEL=debug
 ExecStartPre=-/etc/hysteria/iptables.sh apply
-ExecStart=/usr/local/bin/hysteria server -c /etc/hysteria/config.json
+ExecStart=/usr/local/bin/hysteria1 -c /etc/hysteria/config.json server
 ExecStopPost=-/etc/hysteria/iptables.sh clear
 WorkingDirectory=/etc/hysteria
 Restart=always

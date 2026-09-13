@@ -1917,7 +1917,7 @@ Type=simple
 User=root
 Environment=HYSTERIA_LOG_LEVEL=debug
 ExecStartPre=-${HYST_IPTABLES} apply
-ExecStart=/usr/local/bin/hysteria server -c ${HYST_CONF}
+ExecStart=/usr/local/bin/hysteria1 -c ${HYST_CONF} server
 ExecStopPost=-${HYST_IPTABLES} clear
 WorkingDirectory=${HYST_DIR}
 Restart=always
@@ -2305,7 +2305,7 @@ EOF
     
     sleep 1
     if ! systemctl is-active --quiet hysteria-server 2>/dev/null; then
-        nohup /usr/local/bin/hysteria -c /etc/hysteria/config.json server >/dev/null 2>&1 &
+        nohup /usr/local/bin/hysteria1 -c /etc/hysteria/config.json server >/dev/null 2>&1 &
     fi
     
     local ip; ip=$(get_public_ip)
