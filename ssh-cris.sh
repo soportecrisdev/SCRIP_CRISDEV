@@ -1711,16 +1711,11 @@ menu_bhttp() {
         echo -e "  ${WHITE}BHTTP TLS (HTTP/2 XHTTP): ${tls_status}"
         echo -e "  ${WHITE}BACKEND SSH DESTINO   : ${GREEN}127.0.0.1:22${NC}"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> CONFIGURAR PUERTO PRINCIPAL BHTTP (ej: 80 / 8080)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> ACTIVAR / CONFIGURAR BHTTP TLS (XHTTP / SSL 443)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> ABRIR PUERTO ADICIONAL BHTTP (Multi-puerto: 8081, 8888...)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> LISTAR TODOS LOS PUERTOS BHTTP ACTIVOS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> ELIMINAR UN PUERTO O DETENER BHTTP TLS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR} \033[1;37m> GESTIONAR CERTIFICADO SSL/TLS PARA BHTTP\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[7]${SCOLOR} \033[1;37m> VER DATOS DE CONEXIÓN Y CONFIGURACIÓN (App & GEN)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[8]${SCOLOR} \033[1;37m> PROBAR CONECTIVIDAD (Socket & Backend SSH Test)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[9]${SCOLOR} \033[1;37m> DETENER TODOS LOS SERVICIOS BHTTP\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER A PROTOCOLOS\033[0m"
+        printf "  %b[1]%b > PUERTO PRINCIPAL      %b[6]%b > CERTIFICADOS SSL\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[2]%b > ACTIVAR / AJUSTAR TLS %b[7]%b > DATOS DE CONEXION\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[3]%b > ABRIR PUERTO EXTRA    %b[8]%b > TEST DE CONEXION\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[4]%b > LISTAR PUERTOS        %b[9]%b > DETENER BHTTP\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[5]%b > ELIMINAR PUERTO       %b[0]%b > VOLVER A PROTOCOLOS\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
         read -r b_opt
@@ -3860,11 +3855,31 @@ main_menu() {
         clear
         local ip; ip=$(get_public_ip)
         local os; os=$(lsb_release -sd 2>/dev/null || cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"' || echo 'Linux')
-        local ram_used; ram_used=$(free -m 2>/dev/null | awk '/Mem:/ {print $3}' || echo "0")
-        local ram_total; ram_total=$(free -m 2>/dev/null | awk '/Mem:/ {print $2}' || echo "0")
+        
+        # Cálculo robusto de Memoria RAM (independiente de idioma/locale)
+        local ram_total=0 ram_used=0
+        if [[ -f /proc/meminfo ]]; then
+            local kb_tot kb_avail
+            kb_tot=$(grep -i '^MemTotal:' /proc/meminfo 2>/dev/null | awk '{print $2}')
+            kb_avail=$(grep -i '^MemAvailable:' /proc/meminfo 2>/dev/null | awk '{print $2}')
+            [[ -z "$kb_avail" ]] && kb_avail=$(grep -i '^MemFree:' /proc/meminfo 2>/dev/null | awk '{print $2}')
+            [[ -n "$kb_tot" && "$kb_tot" -gt 0 ]] && ram_total=$(( kb_tot / 1024 ))
+            [[ -n "$kb_tot" && -n "$kb_avail" && "$kb_tot" -ge "$kb_avail" ]] && ram_used=$(( (kb_tot - kb_avail) / 1024 ))
+        fi
+        if [[ $ram_total -eq 0 ]]; then
+            read -r ram_total ram_used <<< "$(LC_ALL=C free -m 2>/dev/null | awk 'NR==2 {print $2, $3}')"
+        fi
+        ram_total=${ram_total:-0}
+        ram_used=${ram_used:-0}
         local ram_pct=0
         [[ $ram_total -gt 0 ]] && ram_pct=$(( ram_used * 100 / ram_total ))
-        local cpu_load; cpu_load=$(top -bn1 2>/dev/null | grep "Cpu(s)" | awk '{print $2 + $4"%"}' || echo "N/A")
+
+        # Cálculo de CPU
+        local cpu_load
+        cpu_load=$(LC_ALL=C top -bn1 2>/dev/null | grep -i "cpu(s)" | head -1 | awk -F, '{for(i=1;i<=NF;i++) if($i ~ /id/) {gsub(/[^0-9.]/,"",$i); print int(100 - $i)"%"}}')
+        [[ -z "$cpu_load" ]] && cpu_load=$(top -bn1 2>/dev/null | grep -i "cpu" | head -1 | awk '{print $2"%"}' || echo "0%")
+        [[ -z "$cpu_load" || "$cpu_load" == "%" ]] && cpu_load="0%"
+
         local hora; hora=$(date '+%H:%M:%S')
 
         local stats_str; stats_str=$(get_users_stats)
@@ -3879,23 +3894,18 @@ main_menu() {
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -e "               ${BLUE}⚡ HTTP CONEXIÓN MASTER SUITE ⚡${SCOLOR}"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        printf " ${SSHPLUS_SECTION}SISTEMA               MEMORIA RAM           PROCESADOR${SCOLOR}\n"
-        printf " ${WHITE}OS:   ${GREEN}%-14s ${WHITE}Total: ${GREEN}%-13s ${WHITE}Núcleos: ${GREEN}%s${NC}\n" "${os:0:14}" "${ram_total}MB" "$(nproc 2>/dev/null || echo 1)"
-        printf " ${WHITE}Hora: ${GREEN}%-14s ${WHITE}RAM:   ${GREEN}%-13s ${WHITE}CPU:     ${GREEN}%s${NC}\n" "$hora" "${ram_used}MB (${ram_pct}%)" "$cpu_load"
+        printf " ${SSHPLUS_SECTION}%-21s %-21s %-16s${SCOLOR}\n" "SISTEMA" "MEMORIA RAM" "PROCESADOR"
+        printf " ${WHITE}OS:   ${GREEN}%-15s ${WHITE}Total: ${GREEN}%-14s ${WHITE}Núcleos: ${GREEN}%s${NC}\n" "${os:0:15}" "${ram_total} MB" "$(nproc 2>/dev/null || echo 1)"
+        printf " ${WHITE}Hora: ${GREEN}%-15s ${WHITE}RAM:   ${GREEN}%-14s ${WHITE}CPU:     ${GREEN}%s${NC}\n" "$hora" "${ram_used} MB (${ram_pct}%)" "$cpu_load"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         printf " ${SSHPLUS_COUNTER}Conectados: %-8s  Caducados: %-8s  Total: %s${SCOLOR}\n" "$u_online" "$u_expired" "$u_total"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR}  \033[1;37m> ADMINISTRAR USUARIOS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR}  \033[1;37m> CONFIGURACION DE PROTOCOLOS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR}  \033[1;37m> CONFIGURACION DE BANNER\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR}  \033[1;37m> ACTIVAR LIMITADOR\033[0m          $stsl"
-        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR}  \033[1;37m> CHECKUSERS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR}  \033[1;37m> RED Y SEGURIDAD\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[7]${SCOLOR}  \033[1;37m> CONFIGURACION DE LA VPS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[8]${SCOLOR}  \033[1;37m> CONFIGURACION DEL SCRIPT\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[9]${SCOLOR}  \033[1;37m> MAS AJUSTES >>>\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[10]${SCOLOR} \033[1;37m> REINICIAR VPS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR}  \033[1;37m> SALIR\033[0m"
+        printf "  %b[1]%b  > USUARIOS                %b[6]%b  > RED Y SEGURIDAD\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[2]%b  > PROTOCOLOS DE TUNEL     %b[7]%b  > GESTION DE LA VPS\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[3]%b  > BANNER DE CONEXION      %b[8]%b  > AJUSTES DEL SCRIPT\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[4]%b  > LIMITADOR DE USUARIOS %b %b[9]%b  > HERRAMIENTAS EXTRA\n" "$SSHPLUS_NUM" "$SCOLOR" "$stsl" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[5]%b  > CHECKUSERS BOT          %b[10]%b > REINICIAR VPS\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[0]%b  > SALIR DEL SCRIPT\n" "$SSHPLUS_NUM" "$SCOLOR"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
         read -r main_opt
