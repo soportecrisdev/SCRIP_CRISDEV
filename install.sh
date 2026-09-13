@@ -4,7 +4,6 @@
 #  Ejecución en VPS (Debian / Ubuntu):
 #    bash <(curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/install.sh)
 # ==============================================================================
-set -Euo pipefail
 
 REPO_RAW="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main"
 INSTALL_DIR="/opt/ssh-cris"

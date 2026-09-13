@@ -4,7 +4,6 @@
 #  Autor: CRISDEV / HTTP Conexión
 #  Base: SSH-Plus / NoxuraSSH Architecture + BHTTP + UDP CRIS + HTTP Conexión
 # ==============================================================================
-set -Euo pipefail
 
 export LC_ALL=C
 export LANG=C
@@ -146,31 +145,49 @@ scan_bhttp_ports() {
             [[ "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
         done
     fi
-    echo "${ports[@]:-}"
+    echo "${ports[*]:-}"
+}
+
+get_proc_ports() {
+    local pattern="$1"
+    local ports=()
+    if command -v ss >/dev/null 2>&1; then
+        while read -r p; do
+            [[ -n "$p" && "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
+        done < <(ss -tlpn 2>/dev/null | grep -E "$pattern" | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u)
+    fi
+    if [[ ${#ports[@]} -eq 0 ]] && command -v netstat >/dev/null 2>&1; then
+        while read -r p; do
+            [[ -n "$p" && "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
+        done < <(netstat -tlpn 2>/dev/null | grep -E "$pattern" | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u)
+    fi
+    echo "${ports[*]:-}"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  HELPER DE USUARIOS (LECTURA NATIVA DESDE LINUX + SSHPLUS + CRIS.DB)
+#  HELPER DE USUARIOS
 # ─────────────────────────────────────────────────────────────────────────────
 get_user_list() {
-    local -A seen
+    local -A seen=()
     local u_list=()
 
     # 1. Usuarios Linux reales UID >= 1000
-    while IFS=: read -r u _ uid _ _ _ _; do
-        [[ -z "$u" || "$u" =~ ^(nobody|systemd-|polkitd|messagebus|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|gnats|_apt)$ ]] && continue
-        if [[ "$uid" -ge 1000 && -z "${seen[$u]:-}" ]]; then
-            seen[$u]=1
-            u_list+=("$u")
-        fi
-    done < /etc/passwd
+    if [[ -f /etc/passwd ]]; then
+        while IFS=: read -r u _ uid _ _ _ _; do
+            [[ -z "$u" || "$u" =~ ^(nobody|systemd-|polkitd|messagebus|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|gnats|_apt|sshd|statd|mysql|postfix|dovecot|redis|mongodb)$ ]] && continue
+            if [[ "$uid" =~ ^[0-9]+$ ]] && [[ "$uid" -ge 1000 && -z "${seen[$u]:-}" ]]; then
+                seen[$u]=1
+                u_list+=("$u")
+            fi
+        done < /etc/passwd
+    fi
 
     # 2. Usuarios en /etc/SSHPlus/senha/
     if [[ -d /etc/SSHPlus/senha ]]; then
         for f in /etc/SSHPlus/senha/*; do
-            [[ -f "$f" ]] || continue
+            [[ ! -f "$f" ]] && continue
             local u; u=$(basename "$f")
-            if [[ -z "${seen[$u]:-}" ]]; then
+            if [[ -n "$u" && -z "${seen[$u]:-}" ]]; then
                 seen[$u]=1
                 u_list+=("$u")
             fi
@@ -199,7 +216,9 @@ get_user_list() {
         done < "$USER_DATABASE"
     fi
 
-    printf '%s\n' "${u_list[@]:-}" | sort -u
+    for u in "${u_list[@]}"; do
+        [[ -n "$u" ]] && echo "$u"
+    done | sort -u
 }
 
 get_user_password() {
@@ -257,30 +276,49 @@ get_users_stats() {
     local total=0
     local active=0
     local expired=0
-    local all_users
-    mapfile -t all_users < <(get_user_list)
+    local all_users=()
 
-    total=${#all_users[@]}
-    for u in "${all_users[@]}"; do
+    while IFS= read -r u; do
         [[ -z "$u" ]] && continue
-        local st; st=$(get_user_days_remaining "$u")
+        all_users+=("$u")
+        ((total++))
+        local st
+        st=$(get_user_days_remaining "$u" 2>/dev/null || echo "S/R")
         if [[ "$st" == "Vencido" ]]; then
             ((expired++))
         else
             ((active++))
         fi
-    done
+    done < <(get_user_list 2>/dev/null || true)
 
-    local ons; ons=$(ps -x 2>/dev/null | grep sshd | grep -v root | grep priv | wc -l || echo 0)
+    local ons=0
+    local raw_ons
+    raw_ons=$(ps -x 2>/dev/null | grep sshd | grep -v root | grep priv | wc -l || echo 0)
+    ons=$(echo "$raw_ons" | tr -dc '0-9')
+    [[ -z "$ons" ]] && ons=0
+
     local onop=0
-    [[ -e /etc/openvpn/openvpn-status.log ]] && onop=$(grep -c "10.8.0" /etc/openvpn/openvpn-status.log 2>/dev/null || echo 0)
-    local drp=0 ondrp=0
-    if [[ -e /etc/default/dropbear ]]; then
-        drp=$(ps aux 2>/dev/null | grep dropbear | grep -v grep | wc -l || echo 0)
-        ondrp=$(( drp > 0 ? drp - 1 : 0 ))
+    if [[ -f /etc/openvpn/openvpn-status.log ]]; then
+        local raw_onop
+        raw_onop=$(grep -c "10.8.0" /etc/openvpn/openvpn-status.log 2>/dev/null || echo 0)
+        onop=$(echo "$raw_onop" | tr -dc '0-9')
     fi
+    [[ -z "$onop" ]] && onop=0
+
+    local ondrp=0
+    if [[ -f /etc/default/dropbear ]]; then
+        local raw_drp
+        raw_drp=$(ps aux 2>/dev/null | grep dropbear | grep -v grep | wc -l || echo 0)
+        local drp
+        drp=$(echo "$raw_drp" | tr -dc '0-9')
+        if [[ -n "$drp" && "$drp" -gt 1 ]]; then
+            ondrp=$(( drp - 1 ))
+        fi
+    fi
+    [[ -z "$ondrp" ]] && ondrp=0
+
     local online=$(( ons + onop + ondrp ))
-    echo "$total:$active:$expired:$online"
+    echo "${total}:${active}:${expired}:${online}"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -372,8 +410,8 @@ ensure_proxy_scripts() {
             curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy.py" -o /etc/SSHPlus/proxy.py 2>/dev/null || \
             wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy.py" -O /etc/SSHPlus/proxy.py 2>/dev/null || true
         fi
-        chmod +x /etc/SSHPlus/proxy.py 2>/dev/null || true
     fi
+    chmod +x /etc/SSHPlus/proxy.py 2>/dev/null || true
 
     if [[ ! -f /etc/SSHPlus/wsproxy.py ]]; then
         if [[ -f "./wsproxy.py" ]]; then
@@ -384,8 +422,8 @@ ensure_proxy_scripts() {
             curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/wsproxy.py" -o /etc/SSHPlus/wsproxy.py 2>/dev/null || \
             wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/wsproxy.py" -O /etc/SSHPlus/wsproxy.py 2>/dev/null || true
         fi
-        chmod +x /etc/SSHPlus/wsproxy.py 2>/dev/null || true
     fi
+    chmod +x /etc/SSHPlus/wsproxy.py 2>/dev/null || true
 }
 
 fun_socks() {
@@ -440,8 +478,15 @@ fun_socks() {
                     read -r porta
                     [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=80
                     verif_ptrs_socks "$porta" || continue
+                    mkdir -p /var/run/screen /run/screen 2>/dev/null || true
+                    chmod 777 /var/run/screen /run/screen 2>/dev/null || true
                     fun_inisocks() {
-                        screen -dmS proxy "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta"
+                        screen -wipe >/dev/null 2>&1 || true
+                        screen -dmS proxy "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" 2>/dev/null || true
+                        sleep 1
+                        if ! pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1; then
+                            nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" >/dev/null 2>&1 &
+                        fi
                     }
                     echo -e "\n\033[1;32mINICIANDO EL PROXY SOCKS EN PUERTO $porta...\033[0m"
                     fun_bar 'fun_inisocks'
@@ -475,8 +520,15 @@ fun_socks() {
                     read -r porta
                     [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=80
                     verif_ptrs_socks "$porta" || continue
+                    mkdir -p /var/run/screen /run/screen 2>/dev/null || true
+                    chmod 777 /var/run/screen /run/screen 2>/dev/null || true
                     fun_iniws() {
-                        screen -dmS ws "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta"
+                        screen -wipe >/dev/null 2>&1 || true
+                        screen -dmS ws "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" 2>/dev/null || true
+                        sleep 1
+                        if ! pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
+                            nohup "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" >/dev/null 2>&1 &
+                        fi
                     }
                     echo -e "\n\033[1;32mINICIANDO WEBSOCKET EN PUERTO $porta...\033[0m"
                     fun_bar 'fun_iniws'
@@ -496,8 +548,15 @@ fun_socks() {
                     continue
                 }
                 verif_ptrs_socks "$porta" || continue
+                mkdir -p /var/run/screen /run/screen 2>/dev/null || true
+                chmod 777 /var/run/screen /run/screen 2>/dev/null || true
                 fun_extra_sks() {
-                    screen -dmS "proxy_$porta" "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta"
+                    screen -wipe >/dev/null 2>&1 || true
+                    screen -dmS "proxy_$porta" "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" 2>/dev/null || true
+                    sleep 1
+                    if ! pgrep -f "/etc/SSHPlus/proxy.py $porta" >/dev/null 2>&1; then
+                        nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" >/dev/null 2>&1 &
+                    fi
                 }
                 echo -e "\n\033[1;32mINICIANDO PUERTO EXTRA $porta...\033[0m"
                 fun_bar 'fun_extra_sks'
@@ -998,6 +1057,103 @@ EOF
 }
 
 # 9. UDP CRIS (HYSTERIA V1.3.5 OFICIAL + BADVPN 7300 ENGINE)
+execute_install_udp_cris() {
+    local uport="${1:-36712}"
+    local obfs_pass="${2:-crisdev}"
+    local auth_pass="${3:-crisdev}"
+
+    mkdir -p /etc/hysteria /usr/local/bin
+    local arch; arch=$(uname -m)
+    local h_url="$HYSTERIA_V1_AMD64"
+    [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && h_url="$HYSTERIA_V1_ARM64"
+
+    systemctl stop hysteria-server.service 2>/dev/null || true
+    pkill -f hysteria 2>/dev/null || true
+
+    # 1. Descargar binario Hysteria v1.3.5
+    curl -fL --retry 5 "$h_url" -o /usr/local/bin/hysteria 2>/dev/null || \
+    wget -q "$h_url" -O /usr/local/bin/hysteria 2>/dev/null || true
+    chmod 755 /usr/local/bin/hysteria 2>/dev/null || true
+
+    # 2. Generar Certificado SSL
+    openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
+        -subj "/C=US/ST=CRIS/L=CRIS/O=CRISDEV/CN=crisdev.online" \
+        -keyout /etc/hysteria/server.key -out /etc/hysteria/server.crt >/dev/null 2>&1 || true
+
+    # 3. Configuración JSON Hysteria v1 para Android libfarikudp.so / UDPCris.java
+    cat > /etc/hysteria/config.json << EOF
+{
+  "listen": ":$uport",
+  "protocol": "udp",
+  "cert": "/etc/hysteria/server.crt",
+  "key": "/etc/hysteria/server.key",
+  "obfs": "$obfs_pass",
+  "auth": {
+    "mode": "password",
+    "config": {
+      "password": "$auth_pass"
+    }
+  },
+  "alpn": "h3",
+  "recv_window_conn": 15728640,
+  "recv_window": 67108864,
+  "max_conn_client": 0,
+  "idle_timeout": 60,
+  "up_mbps": 100,
+  "down_mbps": 100,
+  "disable_mtu_discovery": false,
+  "resolver": "8.8.8.8:53"
+}
+EOF
+
+    # 4. Parámetros del Kernel
+    sysctl -w net.core.rmem_max=67108864 >/dev/null 2>&1 || true
+    sysctl -w net.core.wmem_max=67108864 >/dev/null 2>&1 || true
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+
+    # 5. Servicio Systemd
+    cat > /etc/systemd/system/hysteria-server.service << EOF
+[Unit]
+Description=CRISDEV UDP Hysteria Server v1.3.5
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/hysteria
+ExecStart=/usr/local/bin/hysteria -c /etc/hysteria/config.json server
+Restart=always
+RestartSec=2
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable hysteria-server.service 2>/dev/null || true
+    systemctl restart hysteria-server.service 2>/dev/null || true
+
+    # 6. BadVPN UDPGW 7300
+    if [[ ! -f /usr/local/bin/badvpn-udpgw ]]; then
+        wget -q -O /usr/local/bin/badvpn-udpgw "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/UDP_CRIS/badvpn-udpgw" 2>/dev/null || true
+        chmod 755 /usr/local/bin/badvpn-udpgw 2>/dev/null || true
+    fi
+    if [[ -x /usr/local/bin/badvpn-udpgw ]]; then
+        pkill -f badvpn-udpgw 2>/dev/null || true
+        screen -dmS badvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000 2>/dev/null || \
+        nohup /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000 >/dev/null 2>&1 &
+    fi
+
+    # 7. Port Hopping 6000:50000
+    iptables -t nat -D PREROUTING -p udp --dport 6000:50000 -j REDIRECT --to-ports "$uport" 2>/dev/null || true
+    iptables -t nat -A PREROUTING -p udp --dport 6000:50000 -j REDIRECT --to-ports "$uport" 2>/dev/null || true
+    ufw allow "$uport"/udp 2>/dev/null || true
+    ufw allow 6000:50000/udp 2>/dev/null || true
+    ufw allow 7300/tcp 2>/dev/null || true
+    ufw allow 7300/udp 2>/dev/null || true
+}
+
 menu_udp() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -1024,88 +1180,8 @@ menu_udp() {
             read -r auth_pass
             [[ -z "$auth_pass" ]] && auth_pass="crisdev"
 
-            fun_inst_udp_cris() {
-                mkdir -p /etc/hysteria /usr/local/bin
-                local arch; arch=$(uname -m)
-                local h_url="$HYSTERIA_V1_AMD64"
-                [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && h_url="$HYSTERIA_V1_ARM64"
-
-                curl -fL --retry 5 "$h_url" -o /usr/local/bin/hysteria 2>/dev/null || \
-                wget -q "$h_url" -O /usr/local/bin/hysteria 2>/dev/null || true
-                chmod +x /usr/local/bin/hysteria 2>/dev/null || true
-
-                # Certificado SSL autogenerado
-                openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
-                    -subj "/C=US/ST=CRIS/L=CRIS/O=CRISDEV/CN=crisdev.online" \
-                    -keyout /etc/hysteria/server.key -out /etc/hysteria/server.crt >/dev/null 2>&1
-
-                # Configuración optimizada compatible 100% con UDPTunnel.java / libfarikudp.so
-                cat > /etc/hysteria/config.json << EOF
-{
-  "listen": ":$uport",
-  "protocol": "udp",
-  "cert": "/etc/hysteria/server.crt",
-  "key": "/etc/hysteria/server.key",
-  "obfs": "$obfs_pass",
-  "auth": {
-    "mode": "password",
-    "config": {
-      "password": "$auth_pass"
-    }
-  },
-  "alpn": "h3",
-  "recv_window_conn": 15728640,
-  "recv_window": 67108864,
-  "max_conn_client": 0,
-  "idle_timeout": 60,
-  "up_mbps": 100,
-  "down_mbps": 100,
-  "disable_mtu_discovery": false,
-  "resolver": "8.8.8.8:53"
-}
-EOF
-
-                # Optimización del Kernel para UDP de alta velocidad
-                sysctl -w net.core.rmem_max=67108864 >/dev/null 2>&1 || true
-                sysctl -w net.core.wmem_max=67108864 >/dev/null 2>&1 || true
-                sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
-
-                # Servicio systemd
-                cat > /etc/systemd/system/hysteria-server.service << EOF
-[Unit]
-Description=CRISDEV UDP Hysteria Server v1.3.5
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/hysteria -c /etc/hysteria/config.json server
-Restart=always
-RestartSec=2
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOF
-                systemctl daemon-reload
-                systemctl enable --now hysteria-server.service 2>/dev/null || true
-
-                # BadVPN UDPGW 7300
-                if [[ ! -f /usr/local/bin/badvpn-udpgw ]]; then
-                    wget -q -O /usr/local/bin/badvpn-udpgw "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/UDP_CRIS/badvpn-udpgw" 2>/dev/null || true
-                    chmod +x /usr/local/bin/badvpn-udpgw 2>/dev/null || true
-                fi
-                if [[ -x /usr/local/bin/badvpn-udpgw ]]; then
-                    screen -dmS badvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000 2>/dev/null || true
-                fi
-
-                # Port Hopping 6000:50000
-                iptables -t nat -A PREROUTING -p udp --dport 6000:50000 -j REDIRECT --to-ports "$uport" 2>/dev/null || true
-                ufw allow "$uport"/udp 2>/dev/null || true
-                ufw allow 6000:50000/udp 2>/dev/null || true
-            }
-
             echo -e "\n\033[1;32mINSTALANDO Y CONFIGURANDO UDP CRIS (HYSTERIA v1.3.5)...\033[0m"
-            fun_bar 'fun_inst_udp_cris'
+            fun_bar "execute_install_udp_cris '$uport' '$obfs_pass' '$auth_pass'"
             echo -e "\n\033[1;32m[✔] UDP CRIS ACTIVO EN PUERTO UDP $uport (OBFS: $obfs_pass | Auth: $auth_pass)\033[0m"
             echo -e "\033[1;32m[✔] Port Hopping UDP 6000-50000 -> $uport configurado.\033[0m"
             pause
@@ -1159,21 +1235,21 @@ menu_protocolos() {
 
         # 2. Proxy Socks
         local sks_p
-        sks_p=$(netstat -nplt 2>/dev/null | grep -E 'python3|/python' | awk '{print $4}' | cut -d: -f2 | sort -n -u | xargs || true)
+        sks_p=$(get_proc_ports 'proxy\.py|wsproxy\.py|/python')
         if [[ -n "$sks_p" ]]; then
             echo -e "\033[1;32mSERVICIO: \033[1;33mPROXY SOCKS \033[1;32mPUERTO: \033[1;37m$sks_p\033[0m"
         fi
 
         # 3. SSL Tunnel
         local ssl_p
-        ssl_p=$(netstat -nplt 2>/dev/null | grep -E 'stunnel|stunnel4' | awk '{print $4}' | cut -d: -f2 | sort -n -u | xargs || true)
+        ssl_p=$(get_proc_ports 'stunnel|stunnel4')
         if [[ -n "$ssl_p" ]]; then
             echo -e "\033[1;32mSERVICIO: \033[1;33mSSL TUNNEL \033[1;32mPUERTO: \033[1;37m$ssl_p\033[0m"
         fi
 
         # 4. Dropbear
         local drp_p
-        drp_p=$(netstat -nplt 2>/dev/null | grep 'dropbear' | awk '{print $4}' | cut -d: -f2 | sort -n -u | xargs || true)
+        drp_p=$(get_proc_ports 'dropbear')
         if [[ -n "$drp_p" ]]; then
             echo -e "\033[1;32mSERVICIO: \033[1;33mDROPBEAR \033[1;32mPUERTO: \033[1;37m$drp_p\033[0m"
         fi
@@ -1199,7 +1275,7 @@ menu_protocolos() {
 
         # 8. Squid
         local sqd_p
-        sqd_p=$(netstat -nplt 2>/dev/null | grep 'squid' | awk '{print $4}' | cut -d: -f2 | sort -n -u | xargs || true)
+        sqd_p=$(get_proc_ports 'squid')
         if [[ -n "$sqd_p" ]]; then
             echo -e "\033[1;32mSERVICIO: \033[1;33mSQUID \033[1;32mPUERTO: \033[1;37m$sqd_p\033[0m"
         fi
@@ -1213,9 +1289,9 @@ menu_protocolos() {
 
         local sts_ssh sts_socks sts_ssl sts_drop sts_v2ray sts_slow sts_hyst sts_trojan sts_badvpn sts_ovpn sts_ws sts_sslh sts_squid sts_chisel sts_bhttp
         sts_ssh="\033[1;32mo\033[0m"
-        [[ -n "$sks_p" ]] && sts_socks="\033[1;32mo\033[0m" || sts_socks="\033[1;31mx\033[0m"
-        [[ -n "$ssl_p" ]] && sts_ssl="\033[1;32mo\033[0m" || sts_ssl="\033[1;31mx\033[0m"
-        [[ -n "$drp_p" ]] && sts_drop="\033[1;32mo\033[0m" || sts_drop="\033[1;31mx\033[0m"
+        (pgrep -f 'proxy.py' >/dev/null 2>&1 || [[ -n "$sks_p" ]]) && sts_socks="\033[1;32mo\033[0m" || sts_socks="\033[1;31mx\033[0m"
+        (pgrep -f 'stunnel' >/dev/null 2>&1 || [[ -n "$ssl_p" ]]) && sts_ssl="\033[1;32mo\033[0m" || sts_ssl="\033[1;31mx\033[0m"
+        (pgrep -f 'dropbear' >/dev/null 2>&1 || [[ -n "$drp_p" ]]) && sts_drop="\033[1;32mo\033[0m" || sts_drop="\033[1;31mx\033[0m"
         pgrep -f 'xray|v2ray' >/dev/null 2>&1 && sts_v2ray="\033[1;32mo\033[0m" || sts_v2ray="\033[1;31mx\033[0m"
         pgrep -f 'dnstt-server' >/dev/null 2>&1 && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
         (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f hysteria >/dev/null 2>&1) && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
@@ -1224,7 +1300,7 @@ menu_protocolos() {
         pgrep -f 'openvpn' >/dev/null 2>&1 && sts_ovpn="\033[1;32mo\033[0m" || sts_ovpn="\033[1;31mx\033[0m"
         pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1 && sts_ws="\033[1;32mo\033[0m" || sts_ws="\033[1;31mx\033[0m"
         pgrep -f 'sslh' >/dev/null 2>&1 && sts_sslh="\033[1;32mo\033[0m" || sts_sslh="\033[1;31mx\033[0m"
-        [[ -n "$sqd_p" ]] && sts_squid="\033[1;32mo\033[0m" || sts_squid="\033[1;31mx\033[0m"
+        (pgrep -f 'squid' >/dev/null 2>&1 || [[ -n "$sqd_p" ]]) && sts_squid="\033[1;32mo\033[0m" || sts_squid="\033[1;31mx\033[0m"
         pgrep -f 'chisel' >/dev/null 2>&1 && sts_chisel="\033[1;32mo\033[0m" || sts_chisel="\033[1;31mx\033[0m"
         [[ -n "$bhttp_p" ]] && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
 
@@ -1537,7 +1613,7 @@ listar_usuarios() {
     echo -e "                   ${BLUE}INFORME DE USUARIOS${SCOLOR}"
     echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
     
-    local all_users
+    local all_users=()
     mapfile -t all_users < <(get_user_list)
     local total=${#all_users[@]}
     local stats_str; stats_str=$(get_users_stats)
@@ -1573,7 +1649,7 @@ eliminar_caducados() {
     echo -e "                   ${BLUE}ELIMINAR USUARIOS CADUCADOS${SCOLOR}"
     echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
     local count=0
-    local all_users
+    local all_users=()
     mapfile -t all_users < <(get_user_list)
 
     for u in "${all_users[@]}"; do
