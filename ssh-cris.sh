@@ -1080,12 +1080,12 @@ EOF
 
 # 4. DROPBEAR
 fun_drop() {
-    if netstat -nltp 2>/dev/null | grep -q 'dropbear'; then
+    if pgrep -f 'dropbear' >/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q 'dropbear' || systemctl is-active --quiet dropbear 2>/dev/null; then
         local dpbr
-        dpbr=$(netstat -nplt 2>/dev/null | grep 'dropbear' | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u | xargs || echo "110")
+        dpbr=$(ss -tlnp 2>/dev/null | grep 'dropbear' | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u | xargs || netstat -nplt 2>/dev/null | grep 'dropbear' | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u | xargs || echo "110")
         clear
         echo -e "\E[44;1;37m              GESTIONAR DROPBEAR               \E[0m"
-        echo -e "\n\033[1;33mPUERTOS EN USO\033[1;37m: \033[1;32m$dpbr\033[0m\n"
+        echo -e "\n\033[1;33mPUERTOS EN USO\033[1;37m: \033[1;32m${dpbr:-110}\033[0m\n"
         echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;37m> \033[1;33mMODIFICAR PUERTOS DROPBEAR\033[0m"
         echo -e "\033[1;31m[\033[1;36m2\033[1;31m] \033[1;37m> \033[1;33mELIMINAR / DETENER DROPBEAR\033[0m"
         echo -e "\033[1;31m[\033[1;36m0\033[1;31m] \033[1;37m> \033[1;33mVOLVER\033[0m"
@@ -1096,17 +1096,32 @@ fun_drop() {
             echo -ne "\n\033[1;32mPUERTOS SEPARADOS POR ESPACIO (ej: 110 442 8888)\033[1;37m: "
             read -r dp_pts
             [[ -z "$dp_pts" ]] && dp_pts="110 442 8888"
+            
+            local main_port="${dp_pts%% *}"
+            local rest_ports=""
+            [[ "$dp_pts" == *" "* ]] && rest_ports="${dp_pts#* }"
             local extra_args=""
-            for p in $dp_pts; do extra_args="$extra_args -p $p"; done
+            for p in $rest_ports; do [[ -n "$p" ]] && extra_args="$extra_args -p $p"; done
+
             cat > /etc/default/dropbear << EOF
 NO_START=0
-DROPBEAR_PORT=
+DROPBEAR_PORT=$main_port
 DROPBEAR_EXTRA_ARGS="$extra_args"
 DROPBEAR_BANNER=""
 DROPBEAR_RECEIVE_WINDOW=65536
 EOF
-            systemctl restart dropbear 2>/dev/null || service dropbear restart 2>/dev/null
-            for p in $dp_pts; do ufw allow "$p"/tcp 2>/dev/null || true; done
+            sed -i 's/NO_START=1/NO_START=0/' /etc/default/dropbear 2>/dev/null || true
+            systemctl unmask dropbear >/dev/null 2>&1 || true
+            systemctl stop dropbear.socket >/dev/null 2>&1 || true
+            systemctl disable dropbear.socket >/dev/null 2>&1 || true
+            systemctl daemon-reload >/dev/null 2>&1 || true
+            systemctl enable dropbear >/dev/null 2>&1 || true
+            systemctl restart dropbear 2>/dev/null || service dropbear restart 2>/dev/null || /etc/init.d/dropbear restart 2>/dev/null || true
+
+            for p in $dp_pts; do
+                ufw allow "$p"/tcp >/dev/null 2>&1 || true
+                iptables -I INPUT 1 -p tcp --dport "$p" -j ACCEPT >/dev/null 2>&1 || true
+            done
             echo -e "\n\033[1;32mPUERTOS DROPBEAR ACTUALIZADOS: $dp_pts\033[0m"
             sleep 2
         elif [[ "$resposta" == '2' ]]; then
@@ -1128,20 +1143,33 @@ EOF
             read -r dp_pts
             [[ -z "$dp_pts" ]] && dp_pts="110 442 8888"
             fun_instdrop() {
-                apt-get update -qq && apt-get install -y -qq dropbear >/dev/null 2>&1 || true
+                apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq dropbear >/dev/null 2>&1 || true
+                local main_port="${dp_pts%% *}"
+                local rest_ports=""
+                [[ "$dp_pts" == *" "* ]] && rest_ports="${dp_pts#* }"
                 local extra_args=""
-                for p in $dp_pts; do extra_args="$extra_args -p $p"; done
+                for p in $rest_ports; do [[ -n "$p" ]] && extra_args="$extra_args -p $p"; done
+
                 cat > /etc/default/dropbear << EOF
 NO_START=0
-DROPBEAR_PORT=
+DROPBEAR_PORT=$main_port
 DROPBEAR_EXTRA_ARGS="$extra_args"
 DROPBEAR_BANNER=""
 DROPBEAR_RECEIVE_WINDOW=65536
 EOF
-                systemctl restart dropbear 2>/dev/null || service dropbear restart 2>/dev/null
+                sed -i 's/NO_START=1/NO_START=0/' /etc/default/dropbear 2>/dev/null || true
+                systemctl unmask dropbear >/dev/null 2>&1 || true
+                systemctl stop dropbear.socket >/dev/null 2>&1 || true
+                systemctl disable dropbear.socket >/dev/null 2>&1 || true
+                systemctl daemon-reload >/dev/null 2>&1 || true
+                systemctl enable dropbear >/dev/null 2>&1 || true
+                systemctl restart dropbear 2>/dev/null || service dropbear restart 2>/dev/null || /etc/init.d/dropbear restart 2>/dev/null || true
             }
             fun_bar 'fun_instdrop'
-            for p in $dp_pts; do ufw allow "$p"/tcp 2>/dev/null || true; done
+            for p in $dp_pts; do
+                ufw allow "$p"/tcp >/dev/null 2>&1 || true
+                iptables -I INPUT 1 -p tcp --dport "$p" -j ACCEPT >/dev/null 2>&1 || true
+            done
             echo -e "\n\033[1;32mDROPBEAR INSTALADO CON ÉXITO EN PUERTOS: $dp_pts\033[0m"
             sleep 2
         fi
@@ -2050,6 +2078,89 @@ hyst_follow_logs() {
     journalctl -u hysteria-server -f --no-pager
 }
 
+instalar_udp_cris() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${BLUE}                INSTALAR UDP CRIS RÁPIDO${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    local u_obfs u_user u_pass
+    echo -ne "${GREEN}OBFS para UDP CRIS [default: crisdev]: ${NC}"
+    read -r u_obfs
+    [[ -z "$u_obfs" ]] && u_obfs="crisdev"
+
+    echo -ne "${GREEN}Usuario UDP CRIS [default: crisdev]: ${NC}"
+    read -r u_user
+    [[ -z "$u_user" ]] && u_user="crisdev"
+
+    echo -ne "${GREEN}Contraseña UDP CRIS [default: crisdev]: ${NC}"
+    read -r u_pass
+    [[ -z "$u_pass" ]] && u_pass="crisdev"
+
+    echo -e "\n${YELLOW}Instalando y activando UDP CRIS (Core Hysteria v1)...${NC}"
+    fun_bar "hyst_install_binary"
+
+    mkdir -p /etc/hysteria
+    if [[ ! -f "$HYST_CERT" || ! -f "$HYST_KEY" ]]; then
+        openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
+            -keyout "$HYST_KEY" -out "$HYST_CERT" -subj "/CN=crisdev.online" >/dev/null 2>&1 || true
+    fi
+    chmod 600 "$HYST_KEY" 2>/dev/null || true
+    chmod 644 "$HYST_CERT" 2>/dev/null || true
+
+    local auth_block
+    auth_block="$(hyst_build_auth_list)"
+    if [[ "$auth_block" != *"${u_user}:${u_pass}"* ]]; then
+        auth_block="$(printf '      "%s:%s",\n%s' "$u_user" "$u_pass" "$auth_block")"
+    fi
+
+    cat >"$HYST_CONF" <<EOF
+{
+  "listen": ":36712",
+  "protocol": "udp",
+  "cert": "${HYST_CERT}",
+  "key": "${HYST_KEY}",
+  "obfs": "$u_obfs",
+  "auth": {
+    "mode": "passwords",
+    "config": [
+${auth_block}
+    ]
+  },
+  "alpn": "h3",
+  "recv_window_conn": 15728640,
+  "recv_window": 67108864,
+  "max_conn_client": 0,
+  "idle_timeout": 60,
+  "up_mbps": 100,
+  "down_mbps": 100,
+  "disable_mtu_discovery": false,
+  "resolver": "8.8.8.8:53"
+}
+EOF
+    cat >"$HYST_ENV" <<EOF
+HYST_PORT="36712"
+HYST_RULES="20000:50000"
+HYST_OBFS="$u_obfs"
+HYST_USER="$u_user"
+HYST_PASS="$u_pass"
+EOF
+    hyst_write_service
+    systemctl restart hysteria-server.service >/dev/null 2>&1 || systemctl restart hysteria-server >/dev/null 2>&1 || nohup /usr/local/bin/hysteria -c /etc/hysteria/config.json server >/dev/null 2>&1 &
+    
+    local ip; ip=$(get_public_ip)
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "${GREEN}⚡ ¡UDP CRIS INSTALADO Y ACTIVADO CON ÉXITO! ⚡${NC}"
+    echo "────────────────────────────────────────────────────────────"
+    echo -e " ${WHITE}• Servidor IP:     ${GREEN}$ip${NC}"
+    echo -e " ${WHITE}• Puerto UDP:      ${GREEN}36712${NC}"
+    echo -e " ${WHITE}• Rangos Hopping:  ${YELLOW}20000:50000${NC}"
+    echo -e " ${WHITE}• OBFS:            ${CYAN}$u_obfs${NC}"
+    echo -e " ${WHITE}• Usuario / Clave: ${YELLOW}$u_user : $u_pass${NC} ${WHITE}(+ usuarios SSH)${NC}"
+    echo "────────────────────────────────────────────────────────────"
+    echo -e "${WHITE}Configura estos mismos datos en la app HTTP Conexión.${NC}"
+    pause
+}
+
 menu_udp() {
     while true; do
         clear
@@ -2139,7 +2250,7 @@ menu_protocolos() {
             echo -e "\033[1;32mSERVICIO: \033[1;33mBHTTP RELAY \033[1;32mPUERTO: \033[1;37m$bhttp_p\033[0m"
         fi
 
-        # 6. UDP CRIS (Hysteria v1)
+        # 6. UDP CRIS / HYSTERIA
         if systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -q 'hysteria'; then
             local _hyst_pt=""
             [[ -f /etc/hysteria/sshplus.env ]] && _hyst_pt="$(grep '^HYST_PORT=' /etc/hysteria/sshplus.env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
@@ -2150,9 +2261,9 @@ menu_protocolos() {
             local _hyst_rules=""
             [[ -f /etc/hysteria/sshplus.env ]] && _hyst_rules="$(grep '^HYST_RULES=' /etc/hysteria/sshplus.env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
             if [[ -n "$_hyst_rules" && "$_hyst_rules" != "none" && "$_hyst_rules" != "0" ]]; then
-                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS (HYSTERIA v1) \033[1;32mPUERTO: \033[1;37m$_hyst_pt \033[1;33mRANGOS: \033[1;37m$_hyst_rules\033[0m"
+                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS \033[1;32mPUERTO: \033[1;37m$_hyst_pt \033[1;33mRANGOS: \033[1;37m$_hyst_rules\033[0m"
             else
-                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS (HYSTERIA v1) \033[1;32mPUERTO: \033[1;37m$_hyst_pt\033[0m"
+                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS \033[1;32mPUERTO: \033[1;37m$_hyst_pt\033[0m"
             fi
         fi
 
@@ -2196,15 +2307,15 @@ menu_protocolos() {
         pgrep -f 'chisel' >/dev/null 2>&1 && sts_chisel="\033[1;32mo\033[0m" || sts_chisel="\033[1;31mx\033[0m"
         [[ -n "$bhttp_p" ]] && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
 
-        printf "  %b[1]%b  > OPENSSH         %b    %b[10]%b > OPENVPN            %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssh" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ovpn"
-        printf "  %b[2]%b  > PROXY SOCKS     %b    %b[11]%b > WEBSOCKET-CORRECT   %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_socks" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ws"
-        printf "  %b[3]%b  > SSL TUNNEL      %b    %b[12]%b > SSLH MULTIPLEX      %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssl" "$SSHPLUS_NUM" "$SCOLOR" "$sts_sslh"
-        printf "  %b[4]%b  > DROPBEAR        %b    %b[13]%b > SQUID PROXY         %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_drop" "$SSHPLUS_NUM" "$SCOLOR" "$sts_squid"
-        printf "  %b[5]%b  > V2RAY           %b    %b[14]%b > CHISEL              %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_v2ray" "$SSHPLUS_NUM" "$SCOLOR" "$sts_chisel"
-        printf "  %b[6]%b  > SLOWDNS         %b    %b[15]%b > BHTTP MULTI-PUERTO  %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_slow" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
-        printf "  %b[7]%b  > HYSTERIA v1     %b    %b[16]%b > EXPORTAR PARA GEN\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[8]%b  > TROJAN-GO       %b    %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[9]%b  > BADVPN          %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_badvpn"
+        printf "  %b[1]%b  > OPENSSH         %b    %b[10]%b > BADVPN             %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssh" "$SSHPLUS_NUM" "$SCOLOR" "$sts_badvpn"
+        printf "  %b[2]%b  > PROXY SOCKS     %b    %b[11]%b > OPENVPN            %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_socks" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ovpn"
+        printf "  %b[3]%b  > SSL TUNNEL      %b    %b[12]%b > WEBSOCKET-CORRECT   %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssl" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ws"
+        printf "  %b[4]%b  > DROPBEAR        %b    %b[13]%b > SSLH MULTIPLEX      %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_drop" "$SSHPLUS_NUM" "$SCOLOR" "$sts_sslh"
+        printf "  %b[5]%b  > V2RAY           %b    %b[14]%b > SQUID PROXY         %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_v2ray" "$SSHPLUS_NUM" "$SCOLOR" "$sts_squid"
+        printf "  %b[6]%b  > SLOWDNS         %b    %b[15]%b > CHISEL              %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_slow" "$SSHPLUS_NUM" "$SCOLOR" "$sts_chisel"
+        printf "  %b[7]%b  > UDP CRIS        %b    %b[16]%b > BHTTP MULTI-PUERTO  %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
+        printf "  %b[8]%b  > UDP HYSTERIA v1 %b    %b[17]%b > EXPORTAR PARA GEN\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[9]%b  > TROJAN-GO       %b    %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan" "$SSHPLUS_NUM" "$SCOLOR"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
         read -r proto_opt
@@ -2221,34 +2332,34 @@ menu_protocolos() {
                 pause
                 ;;
             6|06) slow_setup ;;
-            7|07) menu_udp ;;
-            8|08)
+            7|07) instalar_udp_cris ;;
+            8|08) menu_udp ;;
+            9|09)
                 clear
                 echo -e "\033[1;33mTrojan-Go integrado via motor Xray (Puerto 443 / 8443).\033[0m"
                 pause
                 ;;
-            9|09) menub ;;
-            10)
+            10) menub ;;
+            11)
                 clear
                 echo -e "\033[1;32mInstalador OpenVPN\033[0m"
                 apt-get install -y openvpn 2>/dev/null || true
                 pause
                 ;;
-            11) fun_socks ;;
-            12)
+            12) fun_socks ;;
+            13)
                 clear
                 echo -e "\033[1;32mSSLH Multiplex\033[0m"
                 apt-get install -y sslh 2>/dev/null || true
                 pause
                 ;;
-            13) fun_squid ;;
-            14)
+            14) fun_squid ;;
+            15)
                 clear
                 echo -e "\033[1;32mChisel Tunnel\033[0m"
                 pause
                 ;;
-            15) menu_bhttp ;;
-            16) exportar_servidor_gen ;;
+            16) menu_bhttp ;;
             17) exportar_servidor_gen ;;
             0|00) return ;;
             *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
