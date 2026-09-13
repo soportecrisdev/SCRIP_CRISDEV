@@ -52,11 +52,7 @@ get_public_ip() {
     echo "$ip"
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  ESCANEO EN VIVO DE PUERTOS Y PROTOCOLOS
-# ─────────────────────────────────────────────────────────────────────────────
 scan_bhttp_ports() {
-    # Detecta puertos escuchando por el binario wakkodev-bhttp-server o configurados en systemd
     local ports=()
     local raw_ports
     raw_ports=$(ss -tlpn 2>/dev/null | grep -E "wakkodev|bhttp" | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u)
@@ -67,7 +63,6 @@ scan_bhttp_ports() {
         done
     fi
 
-    # Si no están corriendo en ss, verificar si hay servicios creados
     if [[ ${#ports[@]} -eq 0 ]]; then
         local svc_ports
         svc_ports=$(grep -h -o -E "\-\-port [0-9]+" /etc/systemd/system/wakkodev-bhttp*.service 2>/dev/null | awk '{print $2}' | sort -n -u || true)
@@ -79,79 +74,6 @@ scan_bhttp_ports() {
     echo "${ports[@]:-}"
 }
 
-get_bhttp_live_status() {
-    local ports_arr
-    read -r -a ports_arr <<< "$(scan_bhttp_ports)"
-    local total=${#ports_arr[@]}
-
-    if [[ $total -gt 0 ]]; then
-        local ports_str
-        ports_str=$(IFS=", "; echo "${ports_arr[*]}")
-        echo -e "${GREEN}[ONLINE]${NC} ${WHITE}Puertos: ${CYAN}${ports_str}${NC} ${YELLOW}(${total} activo$([[ $total -gt 1 ]] && echo 's'))${NC}"
-    else
-        echo -e "${RED}[OFFLINE]${NC} ${DIM}Desactivado${NC}"
-    fi
-}
-
-get_udpcris_live_status() {
-    local uport=""
-    if [[ -f /etc/hysteria/config.json ]]; then
-        uport=$(grep -o '"listen": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "")
-        [[ -z "$uport" ]] && uport=$(grep -o '"listen": ":[0-9]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "")
-    fi
-    [[ -z "$uport" ]] && uport="36712"
-
-    local is_running=false
-    if systemctl is-active --quiet hysteria-server.service 2>/dev/null || pgrep -f hysteria >/dev/null 2>&1; then
-        is_running=true
-    fi
-
-    local badvpn_status="OFF"
-    if systemctl is-active --quiet badvpn.service 2>/dev/null || pgrep -f badvpn-udpgw >/dev/null 2>&1; then
-        badvpn_status="7300"
-    fi
-
-    local hop_status="OFF"
-    if iptables -t nat -L PREROUTING -n 2>/dev/null | grep -q "6000:50000"; then
-        hop_status="6000:50000"
-    fi
-
-    if [[ "$is_running" == "true" ]]; then
-        echo -e "${GREEN}[ONLINE]${NC} ${WHITE}UDP: ${CYAN}${uport}${WHITE} | BadVPN: ${CYAN}${badvpn_status}${WHITE} | Hop: ${CYAN}${hop_status}${NC}"
-    else
-        echo -e "${RED}[OFFLINE]${NC} ${DIM}Desactivado${NC}"
-    fi
-}
-
-get_ssh_live_status() {
-    local is_running=false
-    if systemctl is-active --quiet sshd 2>/dev/null || systemctl is-active --quiet ssh 2>/dev/null || pgrep -f sshd >/dev/null 2>&1; then
-        is_running=true
-    fi
-    if [[ "$is_running" == "true" ]]; then
-        echo -e "${GREEN}[ONLINE]${NC} ${CYAN}Puerto 22${NC}"
-    else
-        echo -e "${RED}[OFFLINE]${NC}"
-    fi
-}
-
-get_ssl_live_status() {
-    if systemctl is-active --quiet stunnel4 2>/dev/null || pgrep -f stunnel4 >/dev/null 2>&1; then
-        echo -e "${GREEN}[ONLINE]${NC} ${CYAN}Puerto 443 -> 22${NC}"
-    else
-        echo -e "${RED}[OFFLINE]${NC}"
-    fi
-}
-
-get_slowdns_live_status() {
-    if pgrep -f dnstt-server >/dev/null 2>&1 || systemctl is-active --quiet dnstt-server 2>/dev/null; then
-        local ns; ns=$(cat /etc/slowdns/ns.txt 2>/dev/null || echo "Configurado")
-        echo -e "${GREEN}[ONLINE]${NC} ${CYAN}Puerto 53${NC} (${WHITE}${ns}${NC})"
-    else
-        echo -e "${RED}[OFFLINE]${NC}"
-    fi
-}
-
 get_online_users_count() {
     who 2>/dev/null | grep -E "pts|sshd" | wc -l || echo "0"
 }
@@ -160,6 +82,9 @@ get_total_users_count() {
     [[ -f "$USER_DATABASE" ]] && wc -l < "$USER_DATABASE" || echo "0"
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  CABECERA PRINCIPAL LIMPIA (SIN SPAM DE PUERTOS)
+# ─────────────────────────────────────────────────────────────────────────────
 draw_header() {
     clear
     local ip; ip=$(get_public_ip)
@@ -179,12 +104,6 @@ draw_header() {
     printf " ${WHITE}🌐 IP Pública:    ${GREEN}%-18s${WHITE}   🖥️  SO:  ${YELLOW}%s${NC}\n" "$ip" "$os"
     printf " ${WHITE}💾 Memoria RAM:   ${GREEN}%-18s${WHITE}   ⚡ CPU: ${YELLOW}%s | %s${NC}\n" "${ram_used}MB / ${ram_total}MB (${ram_pct}%)" "$cpu_load" "$uptime_str"
     printf " ${WHITE}👥 SSH Online:    ${GREEN}%-18s${WHITE}   📁  DB:  ${YELLOW}%s usuario(s)${NC}\n" "${users_online} conectado(s)" "$users_total"
-    echo -e "${CYAN}─────────────────────── ESTADO DE PROTOCOLOS ───────────────────────${NC}"
-    echo -e " ${WHITE}• BHTTP Relay:  $(get_bhttp_live_status)"
-    echo -e " ${WHITE}• UDP CRIS:     $(get_udpcris_live_status)"
-    echo -e " ${WHITE}• OpenSSH:      $(get_ssh_live_status)"
-    echo -e " ${WHITE}• Stunnel SSL:  $(get_ssl_live_status)"
-    echo -e " ${WHITE}• SlowDNS:      $(get_slowdns_live_status)"
     echo -e "${CYAN}────────────────────────────────────────────────────────────────────${NC}"
     echo ""
 }
@@ -249,7 +168,6 @@ crear_usuario() {
     useradd -M -s /bin/false -e "$exp_date" "$username" 2>/dev/null || useradd -M -s /bin/false "$username"
     echo "$username:$password" | chpasswd
 
-    # Guardar en base de datos local: username:limit:exp_date
     sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
     echo "$username:$limit:$exp_date" >> "$USER_DATABASE"
 
@@ -400,20 +318,23 @@ menu_bhttp() {
         local total=${#ports_arr[@]}
 
         echo -e "${GREEN}══ BHTTP MULTI-PUERTO RELAY (WAKKO ENGINE) ═════════════════════${NC}"
-        echo -e " ${WHITE}Puertos BHTTP Activos: ${CYAN}${total}${WHITE} | Lista: ${YELLOW}${ports_arr[*]:-Ninguno}${NC}"
+        if [[ $total -gt 0 ]]; then
+            echo -e " ${WHITE}Puertos BHTTP Activos: ${CYAN}${total}${WHITE} | Lista: ${YELLOW}${ports_arr[*]}${NC}"
+        else
+            echo -e " ${WHITE}Puertos BHTTP Activos: ${DIM}Ninguno${NC}"
+        fi
         echo -e "${GREEN}────────────────────────────────────────────────────────────────${NC}"
         echo -e " ${GREEN}1)${WHITE} Instalar / Actualizar Motor BHTTP Relay"
         echo -e " ${GREEN}2)${WHITE} Configurar Puerto Principal BHTTP (ej: 8080 -> SSH 22)"
-        echo -e " ${GREEN}3)${WHITE} Abrir Puerto Adicional (Multi-Puerto BHTTP: 80, 8888, 3128)"
-        echo -e " ${GREEN}4)${WHITE} Listar y Contar Puertos Activos"
+        echo -e " ${GREEN}3)${WHITE} Abrir Puerto Adicional (Multi-Puerto: 80, 8888, 3128)"
+        echo -e " ${GREEN}4)${WHITE} Listar Puertos Activos"
         echo -e " ${GREEN}5)${WHITE} Eliminar un Puerto BHTTP Específico"
-        echo -e " ${GREEN}6)${WHITE} Probar Conectividad BHTTP -> Backend SSH (Socket Test)"
+        echo -e " ${GREEN}6)${WHITE} Probar Conectividad BHTTP -> SSH 22 (Socket Test)"
         echo -e " ${GREEN}7)${WHITE} Ver Logs en Vivo de BHTTP"
-        echo -e " ${YELLOW}8)${WHITE} Aplicar Optimización Kernel TCP BBR"
-        echo -e " ${RED}9)${WHITE} Detener / Desinstalar Todos los Servicios BHTTP"
-        echo -e " ${RED}0)${WHITE} Volver al Menú Principal"
+        echo -e " ${RED}8)${WHITE} Detener / Desinstalar Servicios BHTTP"
+        echo -e " ${RED}0)${WHITE} Volver al Menú de Protocolos"
         echo -e "${GREEN}────────────────────────────────────────────────────────────────${NC}"
-        read -r -p " Selecciona una opción [0-9]: " opt
+        read -r -p " Selecciona una opción [0-8]: " opt
 
         case "$opt" in
             1) instalar_motor_bhttp ;;
@@ -423,8 +344,7 @@ menu_bhttp() {
             5) eliminar_puerto_bhttp ;;
             6) test_conectividad_bhttp ;;
             7) logs_bhttp ;;
-            8) optimizar_red_bhttp ;;
-            9) desinstalar_bhttp ;;
+            8) desinstalar_bhttp ;;
             0) break ;;
             *) warn "Opción inválida"; sleep 1 ;;
         esac
@@ -572,7 +492,6 @@ eliminar_puerto_bhttp() {
     read -r -p " Ingresa el puerto a desactivar/eliminar: " del_port
     [[ ! "$del_port" =~ ^[0-9]+$ ]] && { fail "Puerto inválido"; pause; return; }
 
-    # Verificar si es el principal o extra
     if [[ -f "/etc/systemd/system/wakkodev-bhttp-port-${del_port}.service" ]]; then
         systemctl disable --now "wakkodev-bhttp-port-${del_port}.service" 2>/dev/null || true
         rm -f "/etc/systemd/system/wakkodev-bhttp-port-${del_port}.service"
@@ -600,14 +519,12 @@ test_conectividad_bhttp() {
         pause; return
     fi
 
-    # 1. Probar que SSH backend responde
     if nc -z -w2 127.0.0.1 22 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/22) 2>/dev/null; then
         ok "Backend SSH en 127.0.0.1:22 respondiendo correctamente."
     else
         fail "Backend SSH en 127.0.0.1:22 no responde o está cerrado."
     fi
 
-    # 2. Probar cada puerto BHTTP
     for p in "${ports_arr[@]}"; do
         if nc -z -w2 127.0.0.1 "$p" 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/"$p") 2>/dev/null; then
             ok "Puerto BHTTP $p: Escuchando y listo para recibir clientes."
@@ -622,37 +539,6 @@ logs_bhttp() {
     draw_header
     echo -e "${CYAN}── LOGS EN TIEMPO REAL BHTTP (Presiona CTRL+C para salir) ───────${NC}"
     journalctl -u "wakkodev-bhttp*" -n 40 --no-pager -f || true
-}
-
-optimizar_red_bhttp() {
-    draw_header
-    info "Aplicando optimizaciones de Kernel BBR & High Performance..."
-    cat > /etc/sysctl.d/99-ssh-cris-performance.conf << 'EOF'
-fs.file-max = 1048576
-net.core.somaxconn = 16384
-net.core.netdev_max_backlog = 16384
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.ipv4.tcp_rmem = 4096 131072 16777216
-net.ipv4.tcp_wmem = 4096 131072 16777216
-net.ipv4.ip_local_port_range = 10240 65535
-net.ipv4.tcp_max_syn_backlog = 16384
-net.ipv4.tcp_max_tw_buckets = 262144
-net.ipv4.tcp_fin_timeout = 15
-net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_slow_start_after_idle = 0
-net.ipv4.tcp_fastopen = 3
-net.ipv4.tcp_keepalive_time = 60
-net.ipv4.tcp_keepalive_intvl = 15
-net.ipv4.tcp_keepalive_probes = 4
-net.ipv4.tcp_mtu_probing = 1
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-EOF
-    modprobe tcp_bbr 2>/dev/null || true
-    sysctl -p /etc/sysctl.d/99-ssh-cris-performance.conf >/dev/null 2>&1 || true
-    ok "Perfil BBR + Rendimiento TCP aplicado."
-    pause
 }
 
 desinstalar_bhttp() {
@@ -680,7 +566,7 @@ menu_udp() {
         echo -e " ${GREEN}4)${WHITE} Probar Socket UDP Local"
         echo -e " ${GREEN}5)${WHITE} Ver Estado y Logs de UDP CRIS"
         echo -e " ${RED}6)${WHITE} Detener / Desinstalar UDP CRIS"
-        echo -e " ${RED}0)${WHITE} Volver al Menú Principal"
+        echo -e " ${RED}0)${WHITE} Volver al Menú de Protocolos"
         echo -e "${YELLOW}────────────────────────────────────────────────────────────────${NC}"
         read -r -p " Selecciona una opción [0-6]: " opt
 
@@ -714,7 +600,6 @@ instalar_udpcris() {
     wget -q "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64" -O /usr/local/bin/hysteria
     chmod +x /usr/local/bin/hysteria
 
-    # Generar certificado auto-firmado
     openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
         -subj "/C=US/ST=CRIS/L=CRIS/O=CRISDEV/CN=crisdev.online" \
         -keyout /etc/hysteria/server.key -out /etc/hysteria/server.crt >/dev/null 2>&1
@@ -863,29 +748,9 @@ desinstalar_udpcris() {
 # ─────────────────────────────────────────────────────────────────────────────
 #  4. OPENSSH & STUNNEL SSL
 # ─────────────────────────────────────────────────────────────────────────────
-menu_ssh_ssl() {
-    while true; do
-        draw_header
-        echo -e "${CYAN}══ OPENSSH & STUNNEL SSL ════════════════════════════════════════${NC}"
-        echo -e " ${GREEN}1)${WHITE} Configurar OpenSSH (Puerto 22, TCP Forwarding)"
-        echo -e " ${GREEN}2)${WHITE} Instalar / Configurar Stunnel4 SSL (Puerto 443 -> SSH 22)"
-        echo -e " ${GREEN}3)${WHITE} Reiniciar Servicios SSH/SSL"
-        echo -e " ${RED}0)${WHITE} Volver al Menú Principal"
-        echo -e "${CYAN}────────────────────────────────────────────────────────────────${NC}"
-        read -r -p " Selecciona una opción [0-3]: " opt
-
-        case "$opt" in
-            1) config_openssh ;;
-            2) config_stunnel ;;
-            3) restart_ssh_ssl ;;
-            0) break ;;
-            *) warn "Opción inválida"; sleep 1 ;;
-        esac
-    done
-}
-
 config_openssh() {
     draw_header
+    echo -e "${CYAN}── CONFIGURACIÓN OPENSSH SERVER ─────────────────────────────────${NC}"
     info "Optimizando configuración de OpenSSH..."
     sed -i 's/#*AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config
     sed -i 's/#*GatewayPorts.*/GatewayPorts yes/' /etc/ssh/sshd_config
@@ -899,6 +764,7 @@ config_openssh() {
 
 config_stunnel() {
     draw_header
+    echo -e "${CYAN}── CONFIGURAR STUNNEL4 SSL/TLS (PUERTO 443 -> SSH 22) ───────────${NC}"
     info "Instalando y configurando Stunnel4 SSL..."
     apt-get install -y stunnel4 2>/dev/null || true
 
@@ -926,70 +792,88 @@ EOF
     pause
 }
 
-restart_ssh_ssl() {
-    draw_header
-    systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
-    systemctl restart dropbear 2>/dev/null || true
-    systemctl restart stunnel4 2>/dev/null || true
-    ok "Servicios SSH y SSL reiniciados."
-    pause
-}
-
 # ─────────────────────────────────────────────────────────────────────────────
-#  5. SLOWDNS & XRAY / V2RAY
+#  5. DROPBEAR SSH (OPCIONAL)
 # ─────────────────────────────────────────────────────────────────────────────
-menu_dns_v2ray() {
+menu_dropbear() {
     while true; do
         draw_header
-        echo -e "${MAGENTA}══ SLOWDNS & XRAY / V2RAY ════════════════════════════════════${NC}"
-        echo -e " ${GREEN}1)${WHITE} Instalar / Configurar SlowDNS (DNSTT Puerto 53)"
-        echo -e " ${GREEN}2)${WHITE} Instalar Xray-core (V2Ray / VMess / VLESS / Trojan)"
-        echo -e " ${GREEN}3)${WHITE} Ver Claves y Estado de SlowDNS"
-        echo -e " ${RED}0)${WHITE} Volver al Menú Principal"
-        echo -e "${MAGENTA}────────────────────────────────────────────────────────────────${NC}"
-        read -r -p " Selecciona una opción [0-3]: " opt
-
-        case "$opt" in
-            1) instalar_slowdns ;;
-            2) instalar_xray ;;
-            3) ver_slowdns ;;
+        echo -e "${CYAN}══ DROPBEAR SSH (OPCIONAL) ══════════════════════════════════════${NC}"
+        echo -e " ${GREEN}1)${WHITE} Configurar e Iniciar Dropbear (Elegir Puertos)"
+        echo -e " ${YELLOW}2)${WHITE} Detener / Desactivar Dropbear (Liberar Puertos)"
+        echo -e " ${RED}0)${WHITE} Volver al Menú de Protocolos"
+        echo -e "${CYAN}─────────────────────────────────────────────────────────────────${NC}"
+        read -r -p " Selecciona una opción [0-2]: " d_opt
+        case "$d_opt" in
+            1)
+                read -r -p " Puertos para Dropbear separados por espacio (ej: 442 8888): " dp_pts
+                [[ -z "$dp_pts" ]] && dp_pts="442 8888"
+                apt-get install -y dropbear 2>/dev/null || true
+                local extra_args=""
+                for p in $dp_pts; do extra_args="$extra_args -p $p"; done
+                cat > /etc/default/dropbear << EOF
+NO_START=0
+DROPBEAR_PORT=
+DROPBEAR_EXTRA_ARGS="$extra_args"
+DROPBEAR_BANNER=""
+DROPBEAR_RECEIVE_WINDOW=65536
+EOF
+                systemctl restart dropbear 2>/dev/null || true
+                for p in $dp_pts; do ufw allow "$p"/tcp 2>/dev/null || true; done
+                ok "Dropbear activo en puertos: $dp_pts"
+                pause
+                ;;
+            2)
+                systemctl stop dropbear 2>/dev/null || true
+                systemctl disable dropbear 2>/dev/null || true
+                ok "Dropbear detenido y desactivado. Puertos liberados."
+                pause
+                ;;
             0) break ;;
-            *) warn "Opción inválida"; sleep 1 ;;
         esac
     done
 }
 
-instalar_slowdns() {
-    draw_header
-    info "Configurando SlowDNS (DNSTT Server)..."
-    read -r -p " Dominio NameServer (NS) (ej: ns1.tudominio.com): " ns_domain
-    [[ -z "$ns_domain" ]] && { fail "El NameServer es requerido."; pause; return; }
+# ─────────────────────────────────────────────────────────────────────────────
+#  6. SLOWDNS & XRAY / V2RAY
+# ─────────────────────────────────────────────────────────────────────────────
+menu_slowdns() {
+    while true; do
+        draw_header
+        echo -e "${MAGENTA}══ SLOWDNS (DNSTT SERVER PUERTO 53) ═════════════════════════════${NC}"
+        echo -e " ${GREEN}1)${WHITE} Configurar Dominio NameServer (NS) y Generar Claves"
+        echo -e " ${GREEN}2)${WHITE} Ver Clave Pública y NameServer"
+        echo -e " ${RED}0)${WHITE} Volver"
+        echo -e "${MAGENTA}────────────────────────────────────────────────────────────────${NC}"
+        read -r -p " Selecciona una opción [0-2]: " opt
 
-    mkdir -p /etc/slowdns
-    wget -q -O /usr/local/bin/dnstt-server "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/dnstt-server" 2>/dev/null || true
-    chmod +x /usr/local/bin/dnstt-server 2>/dev/null || true
-
-    if [[ -x /usr/local/bin/dnstt-server ]]; then
-        /usr/local/bin/dnstt-server -gen-key -privkey-file /etc/slowdns/server.key -pubkey-file /etc/slowdns/server.pub 2>/dev/null || true
-    fi
-
-    echo "$ns_domain" > /etc/slowdns/ns.txt
-    ok "SlowDNS configurado con NS: $ns_domain"
-    if [[ -f /etc/slowdns/server.pub ]]; then
-        echo -e "${YELLOW}Clave Pública SlowDNS:${NC} $(cat /etc/slowdns/server.pub)"
-    fi
-    pause
-}
-
-ver_slowdns() {
-    draw_header
-    if [[ -f /etc/slowdns/server.pub ]]; then
-        echo -e "${WHITE}• NameServer:${NC} $(cat /etc/slowdns/ns.txt 2>/dev/null || echo 'No configurado')"
-        echo -e "${WHITE}• Clave Pública:${NC} ${GREEN}$(cat /etc/slowdns/server.pub)${NC}"
-    else
-        warn "SlowDNS aún no está configurado."
-    fi
-    pause
+        case "$opt" in
+            1)
+                read -r -p " Dominio NameServer (NS) (ej: ns1.tudominio.com): " ns_domain
+                [[ -z "$ns_domain" ]] && { fail "El NameServer es requerido."; pause; continue; }
+                mkdir -p /etc/slowdns
+                wget -q -O /usr/local/bin/dnstt-server "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/dnstt-server" 2>/dev/null || true
+                chmod +x /usr/local/bin/dnstt-server 2>/dev/null || true
+                if [[ -x /usr/local/bin/dnstt-server ]]; then
+                    /usr/local/bin/dnstt-server -gen-key -privkey-file /etc/slowdns/server.key -pubkey-file /etc/slowdns/server.pub 2>/dev/null || true
+                fi
+                echo "$ns_domain" > /etc/slowdns/ns.txt
+                ok "SlowDNS configurado con NS: $ns_domain"
+                [[ -f /etc/slowdns/server.pub ]] && echo -e "${YELLOW}Clave Pública:${NC} $(cat /etc/slowdns/server.pub)"
+                pause
+                ;;
+            2)
+                if [[ -f /etc/slowdns/server.pub ]]; then
+                    echo -e "${WHITE}• NameServer:${NC} $(cat /etc/slowdns/ns.txt 2>/dev/null || echo 'No configurado')"
+                    echo -e "${WHITE}• Clave Pública:${NC} ${GREEN}$(cat /etc/slowdns/server.pub)${NC}"
+                else
+                    warn "SlowDNS aún no está configurado."
+                fi
+                pause
+                ;;
+            0) break ;;
+        esac
+    done
 }
 
 instalar_xray() {
@@ -1001,31 +885,100 @@ instalar_xray() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  6. APARTADO CENTRAL DE PROTOCOLOS
+#  7. MOSTRAR SOLO PUERTOS ACTIVOS
+# ─────────────────────────────────────────────────────────────────────────────
+show_active_protocols_only() {
+    echo -e "${YELLOW}── PUERTOS Y TÚNELES ACTIVOS EN EL SERVIDOR ───────────────────────${NC}"
+    local active_found=0
+
+    # BHTTP
+    local bhttp_ports_arr
+    read -r -a bhttp_ports_arr <<< "$(scan_bhttp_ports)"
+    local total_bhttp=${#bhttp_ports_arr[@]}
+    if [[ $total_bhttp -gt 0 ]]; then
+        local ports_str; ports_str=$(IFS=", "; echo "${bhttp_ports_arr[*]}")
+        echo -e " ${GREEN}✔${WHITE} BHTTP Relay:  ${CYAN}${ports_str}${NC} ${YELLOW}(${total_bhttp} puerto$([[ $total_bhttp -gt 1 ]] && echo 's') activo$([[ $total_bhttp -gt 1 ]] && echo 's'))${NC}"
+        active_found=1
+    fi
+
+    # UDP CRIS
+    if systemctl is-active --quiet hysteria-server.service 2>/dev/null || pgrep -f hysteria >/dev/null 2>&1; then
+        local uport="36712"
+        if [[ -f /etc/hysteria/config.json ]]; then
+            uport=$(grep -o '"listen": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
+            [[ -z "$uport" ]] && uport=$(grep -o '"listen": ":[0-9]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
+        fi
+        local badvpn_str=""
+        if systemctl is-active --quiet badvpn.service 2>/dev/null || pgrep -f badvpn-udpgw >/dev/null 2>&1; then
+            badvpn_str=" | BadVPN: 7300"
+        fi
+        echo -e " ${GREEN}✔${WHITE} UDP CRIS:     Puerto ${CYAN}${uport}${WHITE}${badvpn_str}${NC}"
+        active_found=1
+    fi
+
+    # OpenSSH
+    if systemctl is-active --quiet sshd 2>/dev/null || systemctl is-active --quiet ssh 2>/dev/null || pgrep -f sshd >/dev/null 2>&1; then
+        echo -e " ${GREEN}✔${WHITE} OpenSSH:      Puerto ${CYAN}22${NC}"
+        active_found=1
+    fi
+
+    # Stunnel
+    if systemctl is-active --quiet stunnel4 2>/dev/null || pgrep -f stunnel4 >/dev/null 2>&1; then
+        echo -e " ${GREEN}✔${WHITE} Stunnel SSL:  Puerto ${CYAN}443 -> 22${NC}"
+        active_found=1
+    fi
+
+    # Dropbear (si está activo)
+    if systemctl is-active --quiet dropbear 2>/dev/null || pgrep -f dropbear >/dev/null 2>&1; then
+        local dp_ports
+        dp_ports=$(ss -tlpn 2>/dev/null | grep dropbear | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u | tr '\n' ' ' || echo "Activo")
+        echo -e " ${GREEN}✔${WHITE} Dropbear:     Puertos ${CYAN}${dp_ports}${NC}"
+        active_found=1
+    fi
+
+    # SlowDNS
+    if pgrep -f dnstt-server >/dev/null 2>&1 || systemctl is-active --quiet dnstt-server 2>/dev/null; then
+        local ns; ns=$(cat /etc/slowdns/ns.txt 2>/dev/null || echo "")
+        echo -e " ${GREEN}✔${WHITE} SlowDNS:      Puerto ${CYAN}53${NC} (NS: ${ns})"
+        active_found=1
+    fi
+
+    if [[ $active_found -eq 0 ]]; then
+        echo -e " ${DIM}(No hay puertos adicionales encendidos)${NC}"
+    fi
+    echo -e "${YELLOW}────────────────────────────────────────────────────────────────────${NC}"
+    echo ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  8. APARTADO CENTRAL DE PROTOCOLOS
 # ─────────────────────────────────────────────────────────────────────────────
 menu_protocolos() {
     while true; do
         draw_header
-        echo -e "${CYAN}══ APARTADO MAESTRO DE PROTOCOLOS ═══════════════════════════════${NC}"
+        show_active_protocols_only
+        echo -e "${CYAN}══ GESTOR MAESTRO DE PROTOCOLOS ═════════════════════════════════${NC}"
         echo -e " ${GREEN}[1]${WHITE}  BHTTP Multi-Puerto Relay (Wakko Engine)"
         echo -e " ${GREEN}[2]${WHITE}  UDP CRIS (Hysteria Engine & BadVPN 7300)"
-        echo -e " ${GREEN}[3]${WHITE}  OpenSSH & Stunnel SSL (22 / 443)"
-        echo -e " ${GREEN}[4]${WHITE}  SlowDNS (DNSTT Puerto 53)"
-        echo -e " ${GREEN}[5]${WHITE}  Xray / V2Ray Core"
-        echo -e " ${GREEN}[6]${WHITE}  Test de Conectividad General de Puertos"
-        echo -e " ${GREEN}[7]${WHITE}  Exportar Configuración Completa para el GEN"
+        echo -e " ${GREEN}[3]${WHITE}  OpenSSH Server (Puerto 22, TCP Forwarding)"
+        echo -e " ${GREEN}[4]${WHITE}  Stunnel4 SSL (Puerto 443 -> SSH 22)"
+        echo -e " ${GREEN}[5]${WHITE}  Dropbear SSH (Opcional, configurar puertos)"
+        echo -e " ${GREEN}[6]${WHITE}  SlowDNS (DNSTT Puerto 53)"
+        echo -e " ${GREEN}[7]${WHITE}  Xray / V2Ray Core"
+        echo -e " ${GREEN}[8]${WHITE}  Test General de Conectividad de Puertos"
         echo -e " ${RED}[0]${WHITE}  Volver al Menú Principal"
-        echo -e "${CYAN}────────────────────────────────────────────────────────────────${NC}"
-        read -r -p " Selecciona una opción [0-7]: " proto_opt
+        echo -e "${CYAN}─────────────────────────────────────────────────────────────────${NC}"
+        read -r -p " Selecciona una opción [0-8]: " proto_opt
 
         case "$proto_opt" in
             1) menu_bhttp ;;
             2) menu_udp ;;
-            3) menu_ssh_ssl ;;
-            4) menu_dns_v2ray ;;
-            5) menu_dns_v2ray ;;
-            6) test_general_puertos ;;
-            7) exportar_servidor_gen ;;
+            3) config_openssh ;;
+            4) config_stunnel ;;
+            5) menu_dropbear ;;
+            6) menu_slowdns ;;
+            7) instalar_xray ;;
+            8) test_general_puertos ;;
             0) break ;;
             *) warn "Opción inválida"; sleep 1 ;;
         esac
@@ -1033,13 +986,13 @@ menu_protocolos() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  7. TEST & DIAGNÓSTICO GENERAL DE PUERTOS
+#  9. TEST & DIAGNÓSTICO GENERAL DE PUERTOS
 # ─────────────────────────────────────────────────────────────────────────────
 test_general_puertos() {
     draw_header
     echo -e "${CYAN}── DIAGNÓSTICO GENERAL DE PUERTOS Y SOCKETS ─────────────────────${NC}"
     echo -e "${YELLOW}Sockets TCP en escucha:${NC}"
-    ss -tlpn | grep -E "sshd|stunnel|wakkodev|bhttp|xray" || echo "No se encontraron puertos TCP activos"
+    ss -tlpn | grep -E "sshd|dropbear|stunnel|wakkodev|bhttp|xray" || echo "No se encontraron puertos TCP activos"
     echo ""
     echo -e "${YELLOW}Sockets UDP en escucha:${NC}"
     ss -ulpn | grep -E "hysteria|dnstt|badvpn" || echo "No se encontraron puertos UDP activos"
@@ -1050,7 +1003,7 @@ test_general_puertos() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  8. EXPORTAR SERVIDOR AL GEN / HTTP CONEXIÓN
+#  10. EXPORTAR SERVIDOR AL GEN / HTTP CONEXIÓN
 # ─────────────────────────────────────────────────────────────────────────────
 exportar_servidor_gen() {
     draw_header
@@ -1109,6 +1062,37 @@ EOF
     pause
 }
 
+optimizar_red_bhttp() {
+    draw_header
+    info "Aplicando optimizaciones de Kernel BBR & High Performance..."
+    cat > /etc/sysctl.d/99-ssh-cris-performance.conf << 'EOF'
+fs.file-max = 1048576
+net.core.somaxconn = 16384
+net.core.netdev_max_backlog = 16384
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 131072 16777216
+net.ipv4.tcp_wmem = 4096 131072 16777216
+net.ipv4.ip_local_port_range = 10240 65535
+net.ipv4.tcp_max_syn_backlog = 16384
+net.ipv4.tcp_max_tw_buckets = 262144
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.tcp_keepalive_intvl = 15
+net.ipv4.tcp_keepalive_probes = 4
+net.ipv4.tcp_mtu_probing = 1
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+EOF
+    modprobe tcp_bbr 2>/dev/null || true
+    sysctl -p /etc/sysctl.d/99-ssh-cris-performance.conf >/dev/null 2>&1 || true
+    ok "Perfil BBR + Rendimiento TCP aplicado."
+    pause
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  MENÚ PRINCIPAL
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1116,27 +1100,23 @@ main_menu() {
     need_root
     while true; do
         draw_header
-        echo -e " ${GREEN}[1]${WHITE}  Gestión de Usuarios SSH & Conexiones Multi-Login"
-        echo -e " ${GREEN}[2]${WHITE}  APARTADO DE PROTOCOLOS (BHTTP, UDP CRIS, SSL, SSH, DNS)"
-        echo -e " ${GREEN}[3]${WHITE}  BHTTP Multi-Puerto Relay (Acceso Rápido)"
-        echo -e " ${GREEN}[4]${WHITE}  UDP CRIS & BadVPN 7300 (Acceso Rápido)"
-        echo -e " ${GREEN}[5]${WHITE}  Exportar Configuración Servidor para el GEN"
-        echo -e " ${GREEN}[6]${WHITE}  Diagnóstico & Test de Conectividad de Puertos"
-        echo -e " ${GREEN}[7]${WHITE}  Optimización de Red (TCP BBR & Kernel Buffers)"
-        echo -e " ${GREEN}[8]${WHITE}  Seguridad, Firewall UFW & Monitor de Sistema"
+        echo -e " ${GREEN}[1]${WHITE}  Gestión de Usuarios SSH & VPN"
+        echo -e " ${GREEN}[2]${WHITE}  APARTADO DE PROTOCOLOS (BHTTP, UDP CRIS, SSH, SSL, DNS)"
+        echo -e " ${GREEN}[3]${WHITE}  Monitor de Conexiones Online en Vivo"
+        echo -e " ${GREEN}[4]${WHITE}  Exportar Configuración Servidor para el GEN"
+        echo -e " ${GREEN}[5]${WHITE}  Optimización de Red (TCP BBR & Kernel)"
+        echo -e " ${GREEN}[6]${WHITE}  Seguridad, Firewall UFW & Herramientas"
         echo -e " ${RED}[0]${WHITE}  Salir del Administrador"
-        echo -e "${CYAN}────────────────────────────────────────────────────────────────${NC}"
-        read -r -p " Selecciona una opción [0-8]: " main_opt
+        echo -e "${CYAN}────────────────────────────────────────────────────────────────────${NC}"
+        read -r -p " Selecciona una opción [0-6]: " main_opt
 
         case "$main_opt" in
             1) menu_users ;;
             2) menu_protocolos ;;
-            3) menu_bhttp ;;
-            4) menu_udp ;;
-            5) exportar_servidor_gen ;;
-            6) test_general_puertos ;;
-            7) optimizar_red_bhttp ;;
-            8)
+            3) monitor_conexiones ;;
+            4) exportar_servidor_gen ;;
+            5) optimizar_red_bhttp ;;
+            6)
                 draw_header
                 echo -e "${YELLOW}Estado de UFW Firewall:${NC}"
                 ufw status verbose 2>/dev/null || iptables -L -n -v
