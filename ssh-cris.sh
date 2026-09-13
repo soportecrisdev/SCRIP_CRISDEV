@@ -1702,7 +1702,7 @@ menu_bhttp() {
         [[ -n "$tls_port" ]] && tls_status="${GREEN}ACTIVADO (Puerto: ${tls_port})${NC}"
 
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "         ${BLUE}⚡ GESTIONAR BHTTP & TLS (HTTP CONEXIÓN) ⚡${SCOLOR}"
+        echo -e "             ${BLUE}⚡ GESTIONAR BHTTP (HTTP CONEXIÓN) ⚡${SCOLOR}"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -e "  ${WHITE}BHTTP PLANO (HTTP/1.1) : ${plain_status}"
         if [[ $total_plain -gt 0 ]]; then
@@ -1714,12 +1714,12 @@ menu_bhttp() {
         echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> CONFIGURAR PUERTO PRINCIPAL BHTTP (ej: 80 / 8080)\033[0m"
         echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> ACTIVAR / CONFIGURAR BHTTP TLS (XHTTP / SSL 443)\033[0m"
         echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> ABRIR PUERTO ADICIONAL BHTTP (Multi-puerto: 8081, 8888...)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> LISTAR TODOS LOS PUERTOS BHTTP & TLS ACTIVOS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> LISTAR TODOS LOS PUERTOS BHTTP ACTIVOS\033[0m"
         echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> ELIMINAR UN PUERTO O DETENER BHTTP TLS\033[0m"
         echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR} \033[1;37m> GESTIONAR CERTIFICADO SSL/TLS PARA BHTTP\033[0m"
         echo -e "  ${SSHPLUS_NUM}[7]${SCOLOR} \033[1;37m> VER DATOS DE CONEXIÓN Y CONFIGURACIÓN (App & GEN)\033[0m"
         echo -e "  ${SSHPLUS_NUM}[8]${SCOLOR} \033[1;37m> PROBAR CONECTIVIDAD (Socket & Backend SSH Test)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[9]${SCOLOR} \033[1;37m> DETENER TODOS LOS SERVICIOS BHTTP & TLS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[9]${SCOLOR} \033[1;37m> DETENER TODOS LOS SERVICIOS BHTTP\033[0m"
         echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER A PROTOCOLOS\033[0m"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
@@ -1920,7 +1920,7 @@ EOF
             4|04)
                 clear
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-                echo -e "             ${BLUE}PUERTOS BHTTP & TLS ACTIVOS EN EL SISTEMA${SCOLOR}"
+                echo -e "                 ${BLUE}PUERTOS BHTTP ACTIVOS EN EL SISTEMA${SCOLOR}"
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 echo -e "\n${YELLOW}Servicios y sockets escuchando:${NC}\n"
                 ss -tlpn 2>/dev/null | grep -E "bhttp-server|xhttp-server|bilola" || echo -e "  \033[1;31mNo hay servicios BHTTP/TLS escuchando.\033[0m"
@@ -2026,7 +2026,7 @@ EOF
                 [[ -f /etc/bhttp/tls_sni ]] && cur_sni=$(cat /etc/bhttp/tls_sni 2>/dev/null)
 
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-                echo -e "         ${BLUE}DATOS DE CONEXIÓN BHTTP & TLS (HTTP CONEXIÓN)${SCOLOR}"
+                echo -e "             ${BLUE}DATOS DE CONEXIÓN BHTTP (HTTP CONEXIÓN)${SCOLOR}"
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "HOST / IP VPS:" "$ip"
                 printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "PUERTOS BHTTP PLANOS:" "${ports_arr[*]:-Ninguno}"
@@ -2071,7 +2071,7 @@ EOF
             9|09)
                 clear
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-                echo -e "             ${RED}DETENER TODOS LOS SERVICIOS BHTTP & TLS${SCOLOR}"
+                echo -e "                 ${RED}DETENER TODOS LOS SERVICIOS BHTTP${SCOLOR}"
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 systemctl disable --now bhttp.service 2>/dev/null || true
                 systemctl disable --now bhttp-tls.service 2>/dev/null || true
@@ -2940,6 +2940,41 @@ menu_protocolos() {
             echo -e "\033[1;32mSERVICIO: \033[1;33mDROPBEAR \033[1;32mPUERTO: \033[1;37m$drp_p\033[0m"
         fi
 
+        # 5. V2Ray / Xray
+        local is_xray_active=0
+        local is_v2ray_active=0
+        if systemctl is-active --quiet xray 2>/dev/null || systemctl is-active --quiet xray-server 2>/dev/null || pgrep -x xray >/dev/null 2>&1 || pgrep -f '/xray' >/dev/null 2>&1 || ss -tlpn 2>/dev/null | grep -q 'xray' || netstat -tunlp 2>/dev/null | grep -q 'xray'; then
+            is_xray_active=1
+        fi
+        if systemctl is-active --quiet v2ray 2>/dev/null || systemctl is-active --quiet v2ray-server 2>/dev/null || pgrep -x v2ray >/dev/null 2>&1 || pgrep -f '/v2ray' >/dev/null 2>&1 || ss -tlpn 2>/dev/null | grep -q 'v2ray' || netstat -tunlp 2>/dev/null | grep -q 'v2ray'; then
+            is_v2ray_active=1
+        fi
+
+        if [[ $is_xray_active -eq 1 ]]; then
+            local _xray_pt=""
+            if command -v jq >/dev/null 2>&1 && [[ -f /usr/local/etc/xray/config.json ]]; then
+                _xray_pt="$(jq -r '[.inbounds[]?.port] | map(select(. != null)) | unique | join(" ")' /usr/local/etc/xray/config.json 2>/dev/null)"
+            elif command -v jq >/dev/null 2>&1 && [[ -f /etc/xray/config.json ]]; then
+                _xray_pt="$(jq -r '[.inbounds[]?.port] | map(select(. != null)) | unique | join(" ")' /etc/xray/config.json 2>/dev/null)"
+            fi
+            [[ -z "${_xray_pt// }" && -f /usr/local/etc/xray/config.json ]] && _xray_pt="$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' /usr/local/etc/xray/config.json 2>/dev/null | grep -oE '[0-9]+' | sort -n | uniq | xargs)"
+            [[ -z "${_xray_pt// }" && -f /etc/xray/config.json ]] && _xray_pt="$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' /etc/xray/config.json 2>/dev/null | grep -oE '[0-9]+' | sort -n | uniq | xargs)"
+            [[ -z "${_xray_pt// }" ]] && _xray_pt="$(ss -tlpn 2>/dev/null | grep 'xray' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs)"
+            [[ -z "${_xray_pt// }" ]] && _xray_pt="$(netstat -tunlp 2>/dev/null | grep 'xray' | awk '{print $4}' | cut -d: -f2 | sort -un | xargs)"
+            echo -e "\033[1;32mSERVICIO: \033[1;33mXRAY \033[1;32mPUERTO: \033[1;37m${_xray_pt:-N/A}\033[0m"
+        fi
+
+        if [[ $is_v2ray_active -eq 1 ]]; then
+            local _v2_pt=""
+            if command -v jq >/dev/null 2>&1 && [[ -f /etc/v2ray/config.json ]]; then
+                _v2_pt="$(jq -r '[.inbounds[]?.port] | map(select(. != null)) | unique | join(" ")' /etc/v2ray/config.json 2>/dev/null)"
+            fi
+            [[ -z "${_v2_pt// }" && -f /etc/v2ray/config.json ]] && _v2_pt="$(grep -oE '"port"[[:space:]]*:[[:space:]]*[0-9]+' /etc/v2ray/config.json 2>/dev/null | grep -oE '[0-9]+' | sort -n | uniq | xargs)"
+            [[ -z "${_v2_pt// }" ]] && _v2_pt="$(ss -tlpn 2>/dev/null | grep 'v2ray' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs)"
+            [[ -z "${_v2_pt// }" ]] && _v2_pt="$(netstat -tunlp 2>/dev/null | grep 'v2ray' | awk '{print $4}' | cut -d: -f2 | sort -un | xargs)"
+            echo -e "\033[1;32mSERVICIO: \033[1;33mV2RAY \033[1;32mPUERTO: \033[1;37m${_v2_pt:-N/A}\033[0m"
+        fi
+
         # 6. UDP CRIS / HYSTERIA
         if systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -qE 'hysteria|:36712 '; then
             local _hyst_pt=""
@@ -2988,14 +3023,14 @@ menu_protocolos() {
             echo -e "\033[1;32mSERVICIO: \033[1;33mCHISEL \033[1;32mPUERTO: \033[1;37m$_ch_pt\033[0m"
         fi
 
-        # 11. BHTTP & TLS
+        # 11. BHTTP
         local _b_pts; _b_pts=$(scan_bhttp_ports)
         local _bx_pt; _bx_pt=$(scan_xhttp_port)
         if [[ -n "$_b_pts" || -n "$_bx_pt" ]]; then
             local _b_dsp=""
             [[ -n "$_b_pts" ]] && _b_dsp="BHTTP: ${_b_pts}"
             [[ -n "$_bx_pt" ]] && _b_dsp="${_b_dsp:+${_b_dsp} | }TLS: ${_bx_pt}"
-            echo -e "\033[1;32mSERVICIO: \033[1;33mBHTTP & TLS \033[1;32mPUERTOS: \033[1;37m$_b_dsp\033[0m"
+            echo -e "\033[1;32mSERVICIO: \033[1;33mBHTTP \033[1;32mPUERTOS: \033[1;37m$_b_dsp\033[0m"
         fi
 
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
@@ -3005,7 +3040,23 @@ menu_protocolos() {
         (pgrep -f 'proxy\.py|wsproxy\.py' >/dev/null 2>&1 || [[ -n "$sks_p" ]]) && sts_socks="\033[1;32mo\033[0m" || sts_socks="\033[1;31mx\033[0m"
         (systemctl is-active --quiet stunnel4 2>/dev/null || pgrep -f 'stunnel' >/dev/null 2>&1 || [[ -n "$ssl_p" ]]) && sts_ssl="\033[1;32mo\033[0m" || sts_ssl="\033[1;31mx\033[0m"
         (pgrep -f 'dropbear' >/dev/null 2>&1 || [[ -n "$drp_p" ]]) && sts_drop="\033[1;32mo\033[0m" || sts_drop="\033[1;31mx\033[0m"
-        pgrep -f 'xray|v2ray' >/dev/null 2>&1 && sts_v2ray="\033[1;32mo\033[0m" || sts_v2ray="\033[1;31mx\033[0m"
+        
+        local v2_title="V2RAY"
+        local sts_v2ray="\033[1;31mx\033[0m"
+        if [[ $is_xray_active -eq 1 ]]; then
+            sts_v2ray="\033[1;32mo\033[0m"
+            v2_title="XRAY"
+        elif [[ $is_v2ray_active -eq 1 ]]; then
+            sts_v2ray="\033[1;32mo\033[0m"
+            v2_title="V2RAY"
+        elif pgrep -f 'xray' >/dev/null 2>&1; then
+            sts_v2ray="\033[1;32mo\033[0m"
+            v2_title="XRAY"
+        elif pgrep -f 'v2ray' >/dev/null 2>&1; then
+            sts_v2ray="\033[1;32mo\033[0m"
+            v2_title="V2RAY"
+        fi
+
         (systemctl is-active --quiet slowdns 2>/dev/null || pgrep -f 'dnstt-server' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -qE 'dnstt-server|:5300 ') && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
         (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -qE 'hysteria|:36712 ') && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
         pgrep -f 'trojan' >/dev/null 2>&1 && sts_trojan="\033[1;32mo\033[0m" || sts_trojan="\033[1;31mx\033[0m"
@@ -3021,9 +3072,9 @@ menu_protocolos() {
         printf "  %b[2]%b  > PROXY SOCKS     %b    %b[11]%b > OPENVPN            %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_socks" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ovpn"
         printf "  %b[3]%b  > SSL TUNNEL      %b    %b[12]%b > WEBSOCKET-CORRECT   %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssl" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ws"
         printf "  %b[4]%b  > DROPBEAR        %b    %b[13]%b > SSLH MULTIPLEX      %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_drop" "$SSHPLUS_NUM" "$SCOLOR" "$sts_sslh"
-        printf "  %b[5]%b  > V2RAY           %b    %b[14]%b > SQUID PROXY         %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_v2ray" "$SSHPLUS_NUM" "$SCOLOR" "$sts_squid"
+        printf "  %b[5]%b  > %-15s %b    %b[14]%b > SQUID PROXY         %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$v2_title" "$sts_v2ray" "$SSHPLUS_NUM" "$SCOLOR" "$sts_squid"
         printf "  %b[6]%b  > SLOWDNS         %b    %b[15]%b > CHISEL              %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_slow" "$SSHPLUS_NUM" "$SCOLOR" "$sts_chisel"
-        printf "  %b[7]%b  > UDP CRIS        %b    %b[16]%b > BHTTP & TLS RELAY   %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
+        printf "  %b[7]%b  > UDP CRIS        %b    %b[16]%b > BHTTP               %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
         printf "  %b[8]%b  > UDP HYSTERIA v1 %b    %b[17]%b > EXPORTAR PARA GEN\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR"
         printf "  %b[9]%b  > TROJAN-GO       %b    %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan" "$SSHPLUS_NUM" "$SCOLOR"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
