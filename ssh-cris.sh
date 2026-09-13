@@ -4,7 +4,7 @@
 #  Autor: CRISDEV / HTTP Conexión
 #  Soporte: OpenSSH, Proxy Socks, SSL Tunnel, Dropbear, V2Ray/Xray, SlowDNS,
 #           UDP CRIS / Hysteria v1, Trojan-Go, BadVPN 7300, OpenVPN, WebSocket,
-#           SSLH, Squid, Chisel, BHTTP Multi-Puerto Relay (Wakko Engine) y GEN.
+#           SSLH, Squid, Chisel, BHTTP Multi-Puerto Relay y Token HTTP Conexión.
 # ==============================================================================
 set -Euo pipefail
 
@@ -75,8 +75,27 @@ get_online_users_count() {
     who 2>/dev/null | grep -E "pts|sshd" | wc -l || echo "0"
 }
 
-get_total_users_count() {
-    [[ -f "$USER_DATABASE" ]] && wc -l < "$USER_DATABASE" || echo "0"
+get_users_stats() {
+    local total=0
+    local active=0
+    local expired=0
+    local now_sec; now_sec=$(date +%s)
+
+    if [[ -f "$USER_DATABASE" ]]; then
+        while IFS=: read -r u limit exp || [[ -n "$u" ]]; do
+            [[ -z "$u" || "$u" =~ ^# ]] && continue
+            ((total++))
+            local exp_sec; exp_sec=$(date -d "$exp" +%s 2>/dev/null || date -d "$exp 23:59:59" +%s 2>/dev/null || echo 0)
+            if [[ $exp_sec -ge $now_sec ]]; then
+                ((active++))
+            else
+                ((expired++))
+            fi
+        done < "$USER_DATABASE"
+    fi
+
+    local online; online=$(get_online_users_count)
+    echo "$total:$active:$expired:$online"
 }
 
 get_status_icon() {
@@ -111,8 +130,12 @@ draw_main_header() {
     local ram_pct; ram_pct=$(( ram_used * 100 / (ram_total > 0 ? ram_total : 1) ))
     local cpu_load; cpu_load=$(top -bn1 2>/dev/null | grep "Cpu(s)" | awk '{print $2 + $4"%"}' || echo "N/A")
     local uptime_str; uptime_str=$(uptime -p 2>/dev/null | sed 's/up //' || uptime | awk -F'( |,|:)+' '{print $6"h "$7"m"}')
-    local users_online; users_online=$(get_online_users_count)
-    local users_total; users_total=$(get_total_users_count)
+
+    local stats_str; stats_str=$(get_users_stats)
+    local u_total; u_total=$(echo "$stats_str" | cut -d: -f1)
+    local u_active; u_active=$(echo "$stats_str" | cut -d: -f2)
+    local u_expired; u_expired=$(echo "$stats_str" | cut -d: -f3)
+    local u_online; u_online=$(echo "$stats_str" | cut -d: -f4)
 
     echo -e "${CYAN}========================================================================${NC}"
     echo -e "${WHITE}                 ⚡ SSH-CRIS MASTER SUITE ${VERSION} ⚡            ${NC}"
@@ -120,8 +143,321 @@ draw_main_header() {
     echo -e "${CYAN}========================================================================${NC}"
     printf " ${WHITE}IP Pública:    ${GREEN}%-18s${WHITE}   SO:  ${YELLOW}%s${NC}\n" "$ip" "$os"
     printf " ${WHITE}Memoria RAM:   ${GREEN}%-18s${WHITE}   CPU: ${YELLOW}%s | %s${NC}\n" "${ram_used}MB / ${ram_total}MB (${ram_pct}%)" "$cpu_load" "$uptime_str"
-    printf " ${WHITE}SSH Online:    ${GREEN}%-18s${WHITE}   DB:  ${YELLOW}%s usuario(s)${NC}\n" "${users_online} conectado(s)" "$users_total"
+    printf " ${WHITE}Creados: ${GREEN}%-4s${WHITE} | Activos: ${GREEN}%-4s${WHITE} | Vencidos: ${RED}%-4s${WHITE} | En Línea: ${GREEN}%-4s${NC}\n" "$u_total" "$u_active" "$u_expired" "$u_online"
     echo -e "${CYAN}========================================================================${NC}"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  1. ADMINISTRAR USUARIOS
+# ─────────────────────────────────────────────────────────────────────────────
+menu_users() {
+    while true; do
+        clear
+        local stats_str; stats_str=$(get_users_stats)
+        local u_total; u_total=$(echo "$stats_str" | cut -d: -f1)
+        local u_active; u_active=$(echo "$stats_str" | cut -d: -f2)
+        local u_expired; u_expired=$(echo "$stats_str" | cut -d: -f3)
+        local u_online; u_online=$(echo "$stats_str" | cut -d: -f4)
+
+        echo -e "${CYAN}========================================================================${NC}"
+        echo -e "${WHITE}                          ADMINISTRAR USUARIOS                          ${NC}"
+        echo -e "${CYAN}========================================================================${NC}"
+        printf " ${WHITE}Creados: ${GREEN}%-4s${WHITE} | Activos: ${GREEN}%-4s${WHITE} | Vencidos: ${RED}%-4s${WHITE} | En Línea: ${GREEN}%-4s${NC}\n" "$u_total" "$u_active" "$u_expired" "$u_online"
+        echo -e "${CYAN}========================================================================${NC}"
+        echo -e " ${GREEN}[1]${WHITE}  > CREAR USUARIO          ${GREEN}[6]${WHITE}  > CAMBIAR LIMITE"
+        echo -e " ${GREEN}[2]${WHITE}  > CREAR PRUEBA           ${GREEN}[7]${WHITE}  > CAMBIAR CLAVE"
+        echo -e " ${GREEN}[3]${WHITE}  > ELIMINAR USUARIO       ${GREEN}[8]${WHITE}  > INFORME DE USUARIO"
+        echo -e " ${GREEN}[4]${WHITE}  > MONITOR ONLINE         ${GREEN}[9]${WHITE}  > ELIMINAR CADUCADOS"
+        echo -e " ${GREEN}[5]${WHITE}  > CAMBIAR FECHA          ${GREEN}[10]${WHITE} > TOKEN HTTP CONEXION"
+        echo -e "                           ${RED}[0]${WHITE}  > VOLVER"
+        echo -e "${CYAN}========================================================================${NC}"
+        read -r -p " Opcion: " u_opt
+
+        case "$u_opt" in
+            1) crear_usuario ;;
+            2) crear_prueba ;;
+            3) eliminar_usuario ;;
+            4) monitor_conexiones ;;
+            5) renovar_usuario ;;
+            6) cambiar_limite ;;
+            7) cambiar_clave ;;
+            8) listar_usuarios ;;
+            9) eliminar_caducados ;;
+            10) generar_token_http_conexion ;;
+            0) break ;;
+            *) warn "Opción inválida"; sleep 1 ;;
+        esac
+    done
+}
+
+crear_usuario() {
+    clear
+    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "${WHITE}                          CREAR NUEVO USUARIO                           ${NC}"
+    echo -e "${CYAN}========================================================================${NC}"
+    read -r -p " Nombre de usuario: " username
+    [[ -z "$username" ]] && { fail "El nombre no puede estar vacío"; pause; return; }
+
+    if id "$username" >/dev/null 2>&1; then
+        fail "El usuario '$username' ya existe en el sistema."
+        pause; return
+    fi
+
+    read -r -p " Contraseña: " password
+    [[ -z "$password" ]] && { fail "La contraseña no puede estar vacía"; pause; return; }
+
+    read -r -p " Días de duración (ej: 30): " days
+    [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
+
+    read -r -p " Límite de conexiones simultáneas (ej: 1 o 2): " limit
+    [[ ! "$limit" =~ ^[0-9]+$ ]] && limit=1
+
+    local exp_date
+    exp_date=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date -v+${days}d "+%Y-%m-%d")
+
+    useradd -M -s /bin/false -e "$exp_date" "$username" 2>/dev/null || useradd -M -s /bin/false "$username"
+    echo "$username:$password" | chpasswd
+
+    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+    echo "$username:$limit:$exp_date" >> "$USER_DATABASE"
+
+    local ip; ip=$(get_public_ip)
+    ok "Usuario '$username' creado exitosamente:"
+    echo "────────────────────────────────────────────────────────────────────────"
+    echo -e "${WHITE}• Servidor:   ${GREEN}$ip${NC}"
+    echo -e "${WHITE}• Usuario:    ${YELLOW}$username${NC}"
+    echo -e "${WHITE}• Contraseña: ${YELLOW}$password${NC}"
+    echo -e "${WHITE}• Vence el:   ${CYAN}$exp_date ($days días)${NC}"
+    echo -e "${WHITE}• Límite:     ${GREEN}$limit conexión(es)${NC}"
+    echo "────────────────────────────────────────────────────────────────────────"
+    pause
+}
+
+crear_prueba() {
+    clear
+    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "${WHITE}                       CREAR USUARIO DE PRUEBA (TRIAL)                  ${NC}"
+    echo -e "${CYAN}========================================================================${NC}"
+    read -r -p " Horas de duración para la prueba (ej: 2 o 4, default 2): " hours
+    [[ ! "$hours" =~ ^[0-9]+$ ]] && hours=2
+
+    local rand_id=$(( RANDOM % 9000 + 1000 ))
+    local username="test_${rand_id}"
+    local password=$(( RANDOM % 9000 + 1000 ))
+    local exp_date; exp_date=$(date -d "+$hours hours" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
+
+    useradd -M -s /bin/false "$username" 2>/dev/null || useradd -s /bin/false "$username"
+    echo "$username:$password" | chpasswd
+
+    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+    echo "$username:1:$exp_date" >> "$USER_DATABASE"
+
+    if command -v at >/dev/null 2>&1; then
+        echo "userdel -f $username 2>/dev/null; sed -i '/^$username:/d' $USER_DATABASE" | at now + $hours hours 2>/dev/null || true
+    fi
+
+    local ip; ip=$(get_public_ip)
+    ok "Usuario de prueba creado exitosamente:"
+    echo "────────────────────────────────────────────────────────────────────────"
+    echo -e "${WHITE}• Servidor:   ${GREEN}$ip${NC}"
+    echo -e "${WHITE}• Usuario:    ${YELLOW}$username${NC}"
+    echo -e "${WHITE}• Contraseña: ${YELLOW}$password${NC}"
+    echo -e "${WHITE}• Duración:   ${CYAN}$hours hora(s)${NC}"
+    echo -e "${WHITE}• Límite:     ${GREEN}1 conexión${NC}"
+    echo "────────────────────────────────────────────────────────────────────────"
+    pause
+}
+
+eliminar_usuario() {
+    clear
+    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "${WHITE}                          ELIMINAR USUARIO                              ${NC}"
+    echo -e "${CYAN}========================================================================${NC}"
+    read -r -p " Nombre de usuario a eliminar: " username
+    if ! id "$username" >/dev/null 2>&1; then
+        fail "El usuario '$username' no existe."
+        pause; return
+    fi
+    pkill -u "$username" 2>/dev/null || true
+    userdel -f "$username" 2>/dev/null || true
+    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+    ok "Usuario '$username' eliminado correctamente."
+    pause
+}
+
+renovar_usuario() {
+    clear
+    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "${WHITE}                       CAMBIAR FECHA / RENOVAR USUARIO                  ${NC}"
+    echo -e "${CYAN}========================================================================${NC}"
+    read -r -p " Nombre de usuario: " username
+    if ! id "$username" >/dev/null 2>&1; then
+        fail "El usuario '$username' no existe."
+        pause; return
+    fi
+
+    read -r -p " Agregar días adicionales (ej: 30): " add_days
+    if [[ "$add_days" =~ ^[0-9]+$ ]] && [[ "$add_days" -gt 0 ]]; then
+        local exp_date
+        exp_date=$(date -d "+$add_days days" "+%Y-%m-%d" 2>/dev/null || date -v+${add_days}d "+%Y-%m-%d")
+        chage -E "$exp_date" "$username" 2>/dev/null || true
+        local limit; limit=$(grep "^$username:" "$USER_DATABASE" 2>/dev/null | cut -d: -f2 || echo "1")
+        sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+        echo "$username:${limit:-1}:$exp_date" >> "$USER_DATABASE"
+        ok "Fecha de vencimiento extendida a $exp_date."
+    fi
+    pause
+}
+
+cambiar_limite() {
+    clear
+    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "${WHITE}                       CAMBIAR LIMITE DE CONEXIONES                     ${NC}"
+    echo -e "${CYAN}========================================================================${NC}"
+    read -r -p " Nombre de usuario: " username
+    if ! id "$username" >/dev/null 2>&1; then
+        fail "El usuario '$username' no existe."
+        pause; return
+    fi
+
+    read -r -p " Nuevo límite de conexiones (ej: 1, 2, 3): " new_limit
+    [[ ! "$new_limit" =~ ^[0-9]+$ ]] && new_limit=1
+
+    local exp; exp=$(grep "^$username:" "$USER_DATABASE" 2>/dev/null | cut -d: -f3 || echo "")
+    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+    echo "$username:$new_limit:${exp:-2026-12-31}" >> "$USER_DATABASE"
+    ok "Límite actualizado a $new_limit conexión(es) simultánea(s)."
+    pause
+}
+
+cambiar_clave() {
+    clear
+    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "${WHITE}                       CAMBIAR CONTRASEÑA DE USUARIO                    ${NC}"
+    echo -e "${CYAN}========================================================================${NC}"
+    read -r -p " Nombre de usuario: " username
+    if ! id "$username" >/dev/null 2>&1; then
+        fail "El usuario '$username' no existe."
+        pause; return
+    fi
+
+    read -r -p " Nueva contraseña: " password
+    [[ -z "$password" ]] && { fail "Contraseña vacía"; pause; return; }
+    echo "$username:$password" | chpasswd
+    ok "Contraseña actualizada exitosamente."
+    pause
+}
+
+listar_usuarios() {
+    clear
+    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "${WHITE}                       INFORME DETALLADO DE USUARIOS                    ${NC}"
+    echo -e "${CYAN}========================================================================${NC}"
+    printf "%-16s %-12s %-10s %-16s %-8s\n" "USUARIO" "VENCE" "DIAS" "ESTADO" "LIMITE"
+    echo "────────────────────────────────────────────────────────────────────────"
+    local now_sec; now_sec=$(date +%s)
+
+    while IFS=: read -r u limit exp || [[ -n "$u" ]]; do
+        [[ -z "$u" || "$u" =~ ^# ]] && continue
+        local exp_sec; exp_sec=$(date -d "$exp" +%s 2>/dev/null || echo 0)
+        local days_left=$(( (exp_sec - now_sec) / 86400 ))
+        local status
+        if [[ $exp_sec -lt $now_sec ]]; then
+            status="${RED}VENCIDO${NC}"
+            days_left="0"
+        else
+            status="${GREEN}ACTIVO${NC}"
+        fi
+        printf "%-16s %-12s %-10s %-24b %-8s\n" "$u" "$exp" "${days_left}d" "$status" "${limit} conn"
+    done < "$USER_DATABASE"
+    echo "────────────────────────────────────────────────────────────────────────"
+    pause
+}
+
+eliminar_caducados() {
+    clear
+    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "${WHITE}                       ELIMINAR USUARIOS CADUCADOS                      ${NC}"
+    echo -e "${CYAN}========================================================================${NC}"
+    local now_sec; now_sec=$(date +%s)
+    local count=0
+
+    if [[ -f "$USER_DATABASE" ]]; then
+        while IFS=: read -r u limit exp || [[ -n "$u" ]]; do
+            [[ -z "$u" || "$u" =~ ^# ]] && continue
+            local exp_sec; exp_sec=$(date -d "$exp" +%s 2>/dev/null || echo 0)
+            if [[ $exp_sec -lt $now_sec ]]; then
+                userdel -f "$u" 2>/dev/null || true
+                pkill -u "$u" 2>/dev/null || true
+                sed -i "/^$u:/d" "$USER_DATABASE" 2>/dev/null || true
+                echo -e " ${RED}✘ Eliminado usuario vencido:${NC} $u (Venció: $exp)"
+                ((count++))
+            fi
+        done < "$USER_DATABASE"
+    fi
+
+    if [[ $count -eq 0 ]]; then
+        ok "No se encontraron usuarios caducados."
+    else
+        ok "Se eliminaron $count usuario(s) caducado(s) exitosamente."
+    fi
+    pause
+}
+
+generar_token_http_conexion() {
+    clear
+    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "${WHITE}               GENERAR TOKEN EXCLUSIVO HTTP CONEXION                    ${NC}"
+    echo -e "${CYAN}========================================================================${NC}"
+    read -r -p " Usuario a generar Token: " username
+    if ! id "$username" >/dev/null 2>&1; then
+        fail "El usuario '$username' no existe."
+        pause; return
+    fi
+    local u_info; u_info=$(grep "^$username:" "$USER_DATABASE" 2>/dev/null || echo "$username:1:N/A")
+    local u_limit; u_limit=$(echo "$u_info" | cut -d: -f2)
+    local u_exp; u_exp=$(echo "$u_info" | cut -d: -f3)
+
+    read -r -p " Ingresa la contraseña del usuario: " u_pass
+    [[ -z "$u_pass" ]] && u_pass="1234"
+
+    local ip; ip=$(get_public_ip)
+    local bhttp_ports_arr; read -r -a bhttp_ports_arr <<< "$(scan_bhttp_ports)"
+    local b_port="${bhttp_ports_arr[0]:-8080}"
+
+    local json_payload
+    json_payload=$(cat << EOF
+{"app":"HTTP_CONEXION","server":"$ip","ssh_port":22,"ssl_port":443,"bhttp_port":$b_port,"udp_port":36712,"user":"$username","pass":"$u_pass","limit":$u_limit,"exp":"$u_exp","auth_sig":"CRISDEV_$(date +%s)"}
+EOF
+)
+    local b64_token
+    b64_token=$(echo -n "$json_payload" | base64 | tr -d '\n')
+    local final_token="HC://${b64_token}"
+
+    echo ""
+    echo -e "${GREEN}✔ Token generado exitosamente para HTTP Conexión:${NC}"
+    echo "────────────────────────────────────────────────────────────────────────"
+    echo -e "${YELLOW}${final_token}${NC}"
+    echo "────────────────────────────────────────────────────────────────────────"
+    echo -e "${WHITE}• Usuario:${NC}    ${GREEN}$username${NC}"
+    echo -e "${WHITE}• Vencimiento:${NC}${CYAN}$u_exp${NC}"
+    echo -e "${WHITE}• Límite:${NC}     ${YELLOW}$u_limit conexión(es)${NC}"
+    echo -e "${WHITE}• Servidor:${NC}   ${CYAN}$ip${NC}"
+    echo ""
+    echo -e "${DIM}Este Token encapsula credenciales seguras listas para importar en 1 click en la app HTTP Conexión.${NC}"
+    pause
+}
+
+monitor_conexiones() {
+    clear
+    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "${WHITE}                       MONITOR DE CONEXIONES ONLINE                     ${NC}"
+    echo -e "${CYAN}========================================================================${NC}"
+    printf "%-18s %-12s %-20s\n" "USUARIO" "PID" "DESDE"
+    echo "────────────────────────────────────────────────────────────────────────"
+    who 2>/dev/null | grep -E "pts|sshd" | awk '{printf "%-18s %-12s %-20s\n", $1, $2, $5}' || echo "No hay conexiones activas"
+    echo "────────────────────────────────────────────────────────────────────────"
+    pause
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -191,7 +527,7 @@ print_protocols_active_header() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  APARTADO DE PROTOCOLOS (GRID DE 2 COLUMNAS ESTILO CLÁSICO)
+#  2. CONFIGURACION DE PROTOCOLOS (GRID 2 COLUMNAS)
 # ─────────────────────────────────────────────────────────────────────────────
 menu_protocolos() {
     while true; do
@@ -251,7 +587,7 @@ menu_protocolos() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  1. OPENSSH
+#  PROTOCOLOS: SUBRUTINAS
 # ─────────────────────────────────────────────────────────────────────────────
 config_openssh() {
     clear
@@ -269,9 +605,6 @@ config_openssh() {
     pause
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  2. PROXY SOCKS (PYTHON SOCKS / HTTP)
-# ─────────────────────────────────────────────────────────────────────────────
 config_proxy_socks() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -357,9 +690,6 @@ EOF
     esac
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  3. SSL TUNNEL (STUNNEL4)
-# ─────────────────────────────────────────────────────────────────────────────
 config_stunnel() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -392,9 +722,6 @@ EOF
     pause
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  4. DROPBEAR SSH (OPCIONAL)
-# ─────────────────────────────────────────────────────────────────────────────
 menu_dropbear() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -434,9 +761,6 @@ EOF
     esac
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  5. V2RAY / XRAY
-# ─────────────────────────────────────────────────────────────────────────────
 menu_v2ray() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -461,9 +785,6 @@ menu_v2ray() {
     esac
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  6. SLOWDNS (DNSTT PUERTO 53)
-# ─────────────────────────────────────────────────────────────────────────────
 menu_slowdns() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -504,9 +825,6 @@ menu_slowdns() {
     esac
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  7. HYSTERIA v1 / UDP CRIS
-# ─────────────────────────────────────────────────────────────────────────────
 menu_udp() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -606,9 +924,6 @@ EOF
     esac
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  8. TROJAN-GO
-# ─────────────────────────────────────────────────────────────────────────────
 menu_trojan() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -618,9 +933,6 @@ menu_trojan() {
     pause
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  9. BADVPN UDPGW (PUERTO 7300)
-# ─────────────────────────────────────────────────────────────────────────────
 instalar_badvpn() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -654,9 +966,6 @@ EOF
     pause
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  10. OPENVPN
-# ─────────────────────────────────────────────────────────────────────────────
 menu_openvpn() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -670,9 +979,6 @@ menu_openvpn() {
     pause
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  11. WEBSOCKET-CORRECTOR
-# ─────────────────────────────────────────────────────────────────────────────
 menu_websocket() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -682,9 +988,6 @@ menu_websocket() {
     config_proxy_socks
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  12. SSLH MULTIPLEX
-# ─────────────────────────────────────────────────────────────────────────────
 menu_sslh() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -696,9 +999,6 @@ menu_sslh() {
     pause
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  13. SQUID PROXY
-# ─────────────────────────────────────────────────────────────────────────────
 menu_squid() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -709,9 +1009,6 @@ menu_squid() {
     pause
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  14. CHISEL
-# ─────────────────────────────────────────────────────────────────────────────
 menu_chisel() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -721,9 +1018,6 @@ menu_chisel() {
     pause
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  15. BHTTP MULTI-PUERTO RELAY (WAKKO ENGINE)
-# ─────────────────────────────────────────────────────────────────────────────
 menu_bhttp() {
     while true; do
         clear
@@ -884,9 +1178,6 @@ EOF
     done
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  16. EXPORTAR SERVIDOR AL GEN / HTTP CONEXIÓN
-# ─────────────────────────────────────────────────────────────────────────────
 exportar_servidor_gen() {
     clear
     local ip; ip=$(get_public_ip)
@@ -944,9 +1235,6 @@ EOF
     pause
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  17. TEST DE CONECTIVIDAD
-# ─────────────────────────────────────────────────────────────────────────────
 test_general_puertos() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
@@ -971,7 +1259,7 @@ main_menu() {
     need_root
     while true; do
         draw_main_header
-        echo -e " ${GREEN}[1]${WHITE}  > GESTION DE USUARIOS SSH & VPN"
+        echo -e " ${GREEN}[1]${WHITE}  > ADMINISTRAR USUARIOS"
         echo -e " ${GREEN}[2]${WHITE}  > CONFIGURACION DE PROTOCOLOS"
         echo -e " ${GREEN}[3]${WHITE}  > MONITOR DE CONEXIONES ONLINE"
         echo -e " ${GREEN}[4]${WHITE}  > EXPORTAR DATOS PARA EL GEN"
