@@ -20,6 +20,10 @@ SSHPLUS_DIR="/etc/SSHPlus"
 AMD64_BHTTP="https://www.dropbox.com/scl/fi/xe5uut31ybiiwpio8njlp/wakkodev-bhttp-server-amd64?rlkey=9f92nqgiezysxoq4xjta4lpfc&st=8ezemtuj&dl=1"
 ARM64_BHTTP="https://www.dropbox.com/scl/fi/h3pruw07ecgh4iph24gbm/wakkodev-bhttp-server-arm64?rlkey=hzmvl36pl50k7d9qqkgi4ltzz&st=fs95gvtz&dl=1"
 
+# Hysteria v1.3.5 (Core Oficial para UDPCris / libfarikudp.so)
+HYSTERIA_V1_AMD64="https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-amd64"
+HYSTERIA_V1_ARM64="https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-arm64"
+
 # Colores ANSI
 SSHPLUS_CYAN=$'\033[1;38;2;76;228;255m'
 SSHPLUS_NUM=$'\033[1;38;2;0;255;127m'
@@ -40,8 +44,8 @@ NC='\033[0m'
 SSHPLUS_PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python3)"
 
 # Directorios base
-mkdir -p /etc/ssh-cris /etc/SSHPlus /etc/wakkodev-bhttp /etc/hysteria /etc/stunnel /etc/slowdns
-touch "$USER_DATABASE" /etc/SSHPlus/Exp 2>/dev/null || true
+mkdir -p /etc/ssh-cris /etc/SSHPlus/senha /etc/wakkodev-bhttp /etc/hysteria /etc/stunnel /etc/slowdns /root
+touch "$USER_DATABASE" /etc/SSHPlus/Exp /root/usuarios.db 2>/dev/null || true
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  FUNCIONES DE APOYO Y ANIMACIÓN
@@ -145,32 +149,137 @@ scan_bhttp_ports() {
     echo "${ports[@]:-}"
 }
 
-get_users_stats() {
-    local total=0
-    local active=0
-    local expired=0
-    local now_sec; now_sec=$(date +%s)
+# ─────────────────────────────────────────────────────────────────────────────
+#  HELPER DE USUARIOS (LECTURA NATIVA DESDE LINUX + SSHPLUS + CRIS.DB)
+# ─────────────────────────────────────────────────────────────────────────────
+get_user_list() {
+    local -A seen
+    local u_list=()
 
-    if [[ -f "$USER_DATABASE" ]]; then
-        while IFS=: read -r u limit exp || [[ -n "$u" ]]; do
+    # 1. Usuarios Linux reales UID >= 1000
+    while IFS=: read -r u _ uid _ _ _ _; do
+        [[ -z "$u" || "$u" =~ ^(nobody|systemd-|polkitd|messagebus|daemon|bin|sys|sync|games|man|lp|mail|news|uucp|proxy|www-data|backup|list|irc|gnats|_apt)$ ]] && continue
+        if [[ "$uid" -ge 1000 && -z "${seen[$u]:-}" ]]; then
+            seen[$u]=1
+            u_list+=("$u")
+        fi
+    done < /etc/passwd
+
+    # 2. Usuarios en /etc/SSHPlus/senha/
+    if [[ -d /etc/SSHPlus/senha ]]; then
+        for f in /etc/SSHPlus/senha/*; do
+            [[ -f "$f" ]] || continue
+            local u; u=$(basename "$f")
+            if [[ -z "${seen[$u]:-}" ]]; then
+                seen[$u]=1
+                u_list+=("$u")
+            fi
+        done
+    fi
+
+    # 3. Usuarios en /root/usuarios.db
+    if [[ -f /root/usuarios.db ]]; then
+        while read -r u _; do
             [[ -z "$u" || "$u" =~ ^# ]] && continue
-            ((total++))
-            local exp_sec; exp_sec=$(date -d "$exp" +%s 2>/dev/null || date -d "$exp 23:59:59" +%s 2>/dev/null || echo 0)
-            if [[ $exp_sec -ge $now_sec ]]; then
-                ((active++))
-            else
-                ((expired++))
+            if [[ -z "${seen[$u]:-}" ]]; then
+                seen[$u]=1
+                u_list+=("$u")
+            fi
+        done < /root/usuarios.db
+    fi
+
+    # 4. Usuarios en $USER_DATABASE
+    if [[ -f "$USER_DATABASE" ]]; then
+        while IFS=: read -r u _ _; do
+            [[ -z "$u" || "$u" =~ ^# ]] && continue
+            if [[ -z "${seen[$u]:-}" ]]; then
+                seen[$u]=1
+                u_list+=("$u")
             fi
         done < "$USER_DATABASE"
     fi
 
-    if [[ $total -eq 0 ]]; then
-        total=$(awk -F: '$3>=1000 && $1!="nobody" {print $1}' /etc/passwd 2>/dev/null | wc -l)
-        active=$total
+    printf '%s\n' "${u_list[@]:-}" | sort -u
+}
+
+get_user_password() {
+    local u="$1"
+    if [[ -f "/etc/SSHPlus/senha/$u" ]]; then
+        cat "/etc/SSHPlus/senha/$u" | head -n1 | tr -d '\r\n'
+    elif [[ -f "$USER_DATABASE" ]] && grep -q "^$u:" "$USER_DATABASE"; then
+        grep "^$u:" "$USER_DATABASE" | cut -d: -f4 2>/dev/null || echo "1234"
+    else
+        echo "----"
+    fi
+}
+
+get_user_limit() {
+    local u="$1"
+    if [[ -f /root/usuarios.db ]] && grep -qw "$u" /root/usuarios.db; then
+        grep -w "$u" /root/usuarios.db | head -1 | awk '{print $2}'
+    elif [[ -f "$USER_DATABASE" ]] && grep -q "^$u:" "$USER_DATABASE"; then
+        grep "^$u:" "$USER_DATABASE" | cut -d: -f2
+    else
+        echo "1"
+    fi
+}
+
+get_user_days_remaining() {
+    local u="$1"
+    local raw exp today days
+    raw="$(chage -l "$u" 2>/dev/null | awk -F: '/Account expires|La cuenta caduca|Cuenta expira|conta expira/ {gsub(/^ +/,"",$2); print $2; exit}')"
+    [[ -z "$raw" ]] && raw="$(chage -l "$u" 2>/dev/null | grep -iE 'expires|caduca|expira' | head -1 | awk -F: '{gsub(/^ +/,"",$2); print $2}')"
+    
+    if [[ -z "$raw" || "$raw" =~ ^(never|nunca)$ ]]; then
+        if [[ -f "$USER_DATABASE" ]] && grep -q "^$u:" "$USER_DATABASE"; then
+            raw=$(grep "^$u:" "$USER_DATABASE" | cut -d: -f3)
+        fi
     fi
 
-    local online
-    online=$(who 2>/dev/null | grep -E "pts|sshd" | wc -l || echo "0")
+    if [[ -z "$raw" || "$raw" =~ ^(never|nunca)$ ]]; then
+        echo "Nunca"
+        return
+    fi
+
+    exp="$(date -d "$raw" +%s 2>/dev/null || date -d "$raw 23:59:59" +%s 2>/dev/null || echo 0)"
+    today="$(date +%s)"
+    if [[ $exp -le 0 ]]; then
+        echo "S/R"
+    elif [[ "$today" -ge "$exp" ]]; then
+        echo "Vencido"
+    else
+        days=$(( (exp - today) / 86400 ))
+        echo "${days}d (${raw})"
+    fi
+}
+
+get_users_stats() {
+    local total=0
+    local active=0
+    local expired=0
+    local all_users
+    mapfile -t all_users < <(get_user_list)
+
+    total=${#all_users[@]}
+    for u in "${all_users[@]}"; do
+        [[ -z "$u" ]] && continue
+        local st; st=$(get_user_days_remaining "$u")
+        if [[ "$st" == "Vencido" ]]; then
+            ((expired++))
+        else
+            ((active++))
+        fi
+    done
+
+    local ons; ons=$(ps -x 2>/dev/null | grep sshd | grep -v root | grep priv | wc -l || echo 0)
+    local onop=0
+    [[ -e /etc/openvpn/openvpn-status.log ]] && onop=$(grep -c "10.8.0" /etc/openvpn/openvpn-status.log 2>/dev/null || echo 0)
+    local drp=0 ondrp=0
+    if [[ -e /etc/default/dropbear ]]; then
+        drp=$(ps aux 2>/dev/null | grep dropbear | grep -v grep | wc -l || echo 0)
+        ondrp=$(( drp > 0 ? drp - 1 : 0 ))
+    fi
+    local online=$(( ons + onop + ondrp ))
     echo "$total:$active:$expired:$online"
 }
 
@@ -888,38 +997,50 @@ EOF
     done
 }
 
-# 9. UDP CRIS (HYSTERIA V1 + BADVPN 7300 ENGINE)
+# 9. UDP CRIS (HYSTERIA V1.3.5 OFICIAL + BADVPN 7300 ENGINE)
 menu_udp() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       HYSTERIA v1 / UDP CRIS                           ${NC}"
+    echo -e "${WHITE}             HYSTERIA v1.3.5 / UDP CRIS (LIBFARIKUDP ENGINE)            ${NC}"
     echo -e "${CYAN}========================================================================${NC}"
-    echo -e " ${GREEN}[1]${WHITE} > Instalar / Configurar UDP CRIS (Hysteria Engine)"
+    echo -e " ${GREEN}[1]${WHITE} > Instalar / Iniciar UDP CRIS (Hysteria v1.3.5 + Buffer 15MB)"
     echo -e " ${GREEN}[2]${WHITE} > Activar / Desactivar Port Hopping (Rango 6000:50000)"
-    echo -e " ${GREEN}[3]${WHITE} > Ver Estado y Logs"
+    echo -e " ${GREEN}[3]${WHITE} > Ver Estado del Servicio y Conexiones"
     echo -e " ${RED}[4]${WHITE} > Detener / Desinstalar UDP CRIS"
     echo -e " ${RED}[0]${WHITE} > Volver"
     echo -e "${CYAN}========================================================================${NC}"
     read -r -p " Opcion: " u_opt
     case "$u_opt" in
         1)
-            read -r -p " Puerto UDP de escucha (ej: 36712 o 5666): " uport
+            echo -ne "\n\033[1;32mPuerto UDP de escucha (ej: 36712 o 5666)\033[1;37m: "
+            read -r uport
             [[ ! "$uport" =~ ^[0-9]+$ ]] && uport=36712
-            read -r -p " Contraseña OBFS (ej: crisdev): " obfs_pass
+
+            echo -ne "\033[1;32mContraseña OBFS (default: crisdev)\033[1;37m: "
+            read -r obfs_pass
             [[ -z "$obfs_pass" ]] && obfs_pass="crisdev"
-            read -r -p " Contraseña Auth (ej: crisdev): " auth_pass
+
+            echo -ne "\033[1;32mContraseña Auth (default: crisdev)\033[1;37m: "
+            read -r auth_pass
             [[ -z "$auth_pass" ]] && auth_pass="crisdev"
 
-            mkdir -p /etc/hysteria /usr/local/bin
-            curl -fL --retry 3 "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64" -o /usr/local/bin/hysteria 2>/dev/null || \
-            wget -q "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64" -O /usr/local/bin/hysteria 2>/dev/null
-            chmod +x /usr/local/bin/hysteria 2>/dev/null || true
+            fun_inst_udp_cris() {
+                mkdir -p /etc/hysteria /usr/local/bin
+                local arch; arch=$(uname -m)
+                local h_url="$HYSTERIA_V1_AMD64"
+                [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && h_url="$HYSTERIA_V1_ARM64"
 
-            openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
-                -subj "/C=US/ST=CRIS/L=CRIS/O=CRISDEV/CN=crisdev.online" \
-                -keyout /etc/hysteria/server.key -out /etc/hysteria/server.crt >/dev/null 2>&1
+                curl -fL --retry 5 "$h_url" -o /usr/local/bin/hysteria 2>/dev/null || \
+                wget -q "$h_url" -O /usr/local/bin/hysteria 2>/dev/null || true
+                chmod +x /usr/local/bin/hysteria 2>/dev/null || true
 
-            cat > /etc/hysteria/config.json << EOF
+                # Certificado SSL autogenerado
+                openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
+                    -subj "/C=US/ST=CRIS/L=CRIS/O=CRISDEV/CN=crisdev.online" \
+                    -keyout /etc/hysteria/server.key -out /etc/hysteria/server.crt >/dev/null 2>&1
+
+                # Configuración optimizada compatible 100% con UDPTunnel.java / libfarikudp.so
+                cat > /etc/hysteria/config.json << EOF
 {
   "listen": ":$uport",
   "protocol": "udp",
@@ -936,49 +1057,84 @@ menu_udp() {
   "recv_window_conn": 15728640,
   "recv_window": 67108864,
   "max_conn_client": 0,
+  "idle_timeout": 60,
+  "up_mbps": 100,
+  "down_mbps": 100,
   "disable_mtu_discovery": false,
   "resolver": "8.8.8.8:53"
 }
 EOF
-            cat > /etc/systemd/system/hysteria-server.service << EOF
+
+                # Optimización del Kernel para UDP de alta velocidad
+                sysctl -w net.core.rmem_max=67108864 >/dev/null 2>&1 || true
+                sysctl -w net.core.wmem_max=67108864 >/dev/null 2>&1 || true
+                sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+
+                # Servicio systemd
+                cat > /etc/systemd/system/hysteria-server.service << EOF
 [Unit]
-Description=CRISDEV UDP Hysteria Server
+Description=CRISDEV UDP Hysteria Server v1.3.5
 After=network.target
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/hysteria -c /etc/hysteria/config.json server
 Restart=always
-RestartSec=3
+RestartSec=2
 LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
 EOF
-            systemctl daemon-reload
-            systemctl enable --now hysteria-server.service 2>/dev/null || true
-            ufw allow "$uport"/udp 2>/dev/null || true
-            echo -e "\n\033[1;32mUDP CRIS activo en puerto UDP $uport (OBFS: $obfs_pass, Auth: $auth_pass)\033[0m"
+                systemctl daemon-reload
+                systemctl enable --now hysteria-server.service 2>/dev/null || true
+
+                # BadVPN UDPGW 7300
+                if [[ ! -f /usr/local/bin/badvpn-udpgw ]]; then
+                    wget -q -O /usr/local/bin/badvpn-udpgw "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/UDP_CRIS/badvpn-udpgw" 2>/dev/null || true
+                    chmod +x /usr/local/bin/badvpn-udpgw 2>/dev/null || true
+                fi
+                if [[ -x /usr/local/bin/badvpn-udpgw ]]; then
+                    screen -dmS badvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000 2>/dev/null || true
+                fi
+
+                # Port Hopping 6000:50000
+                iptables -t nat -A PREROUTING -p udp --dport 6000:50000 -j REDIRECT --to-ports "$uport" 2>/dev/null || true
+                ufw allow "$uport"/udp 2>/dev/null || true
+                ufw allow 6000:50000/udp 2>/dev/null || true
+            }
+
+            echo -e "\n\033[1;32mINSTALANDO Y CONFIGURANDO UDP CRIS (HYSTERIA v1.3.5)...\033[0m"
+            fun_bar 'fun_inst_udp_cris'
+            echo -e "\n\033[1;32m[✔] UDP CRIS ACTIVO EN PUERTO UDP $uport (OBFS: $obfs_pass | Auth: $auth_pass)\033[0m"
+            echo -e "\033[1;32m[✔] Port Hopping UDP 6000-50000 -> $uport configurado.\033[0m"
             pause
             ;;
         2)
             if iptables -t nat -L PREROUTING -n 2>/dev/null | grep -q "6000:50000"; then
                 iptables -t nat -D PREROUTING -p udp --dport 6000:50000 -j REDIRECT 2>/dev/null || true
-                echo -e "\n\033[1;32mPort Hopping desactivado.\033[0m"
+                echo -e "\n\033[1;31mPort Hopping 6000:50000 desactivado.\033[0m"
             else
                 local uport="36712"
                 [[ -f /etc/hysteria/config.json ]] && uport=$(grep -o '"listen": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
                 iptables -t nat -A PREROUTING -p udp --dport 6000:50000 -j REDIRECT --to-ports "$uport" 2>/dev/null || true
-                echo -e "\n\033[1;32mPort hopping UDP 6000-50000 activado hacia $uport.\033[0m"
+                echo -e "\n\033[1;32mPort Hopping UDP 6000-50000 activado hacia $uport.\033[0m"
             fi
             pause
             ;;
-        3) systemctl status hysteria-server.service --no-pager || true; pause ;;
+        3)
+            echo -e "\n\033[1;33mEstado del servicio Hysteria:\033[0m"
+            systemctl status hysteria-server.service --no-pager || true
+            echo -e "\n\033[1;33mPuerto UDP escuchando:\033[0m"
+            ss -ulpn | grep hysteria || true
+            pause
+            ;;
         4)
             systemctl disable --now hysteria-server.service 2>/dev/null || true
             rm -rf /etc/hysteria /usr/local/bin/hysteria /etc/systemd/system/hysteria-server.service
             systemctl daemon-reload
-            echo -e "\n\033[1;32mUDP CRIS desinstalado!\033[0m"
+            iptables -t nat -D PREROUTING -p udp --dport 6000:50000 -j REDIRECT 2>/dev/null || true
+            echo -e "\n\033[1;32mUDP CRIS desinstalado con éxito!\033[0m"
             pause
             ;;
         0) return ;;
@@ -1185,7 +1341,7 @@ crear_usuario() {
     read -r username
     [[ -z "$username" ]] && return
 
-    if id "$username" >/dev/null 2>&1; then
+    if id "$username" >/dev/null 2>&1 || grep -q "^$username:" /etc/passwd 2>/dev/null; then
         echo -e "\n\033[1;31mEl usuario '$username' ya existe."
         pause; return
     fi
@@ -1205,11 +1361,17 @@ crear_usuario() {
     local exp_date
     exp_date=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
 
-    useradd -M -s /bin/false -e "$exp_date" "$username" 2>/dev/null || useradd -M -s /bin/false "$username"
+    useradd -M -s /bin/false -e "$exp_date" "$username" >/dev/null 2>&1 || useradd -M -s /bin/false "$username"
     echo "$username:$password" | chpasswd
 
+    # Guardar contraseña legible para SSH-Plus y sincronización
+    mkdir -p /etc/SSHPlus/senha /root
+    echo "$password" > "/etc/SSHPlus/senha/$username"
+    sed -i "/^$username /d" /root/usuarios.db 2>/dev/null || true
+    echo "$username $limit" >> /root/usuarios.db
+
     sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-    echo "$username:$limit:$exp_date" >> "$USER_DATABASE"
+    echo "$username:$limit:$exp_date:$password" >> "$USER_DATABASE"
 
     local ip; ip=$(get_public_ip)
     echo -e "\n\033[1;32mUSUARIO CREADO EXITOSAMENTE!\033[0m"
@@ -1239,8 +1401,12 @@ crear_prueba() {
 
     useradd -M -s /bin/false "$username" 2>/dev/null || useradd -s /bin/false "$username"
     echo "$username:$password" | chpasswd
+
+    mkdir -p /etc/SSHPlus/senha /root
+    echo "$password" > "/etc/SSHPlus/senha/$username"
+    echo "$username 1" >> /root/usuarios.db
     sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-    echo "$username:1:$exp_date" >> "$USER_DATABASE"
+    echo "$username:1:$exp_date:$password" >> "$USER_DATABASE"
 
     local ip; ip=$(get_public_ip)
     echo -e "\n\033[1;32mUSUARIO DE PRUEBA CREADO!\033[0m"
@@ -1262,14 +1428,12 @@ eliminar_usuario() {
     read -r username
     [[ -z "$username" ]] && return
 
-    if id "$username" >/dev/null 2>&1; then
-        pkill -u "$username" 2>/dev/null || true
-        userdel -f "$username" 2>/dev/null || true
-        sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-        echo -e "\n\033[1;32mUsuario '$username' eliminado con éxito!\033[0m"
-    else
-        echo -e "\n\033[1;31mEl usuario '$username' no existe."
-    fi
+    pkill -u "$username" 2>/dev/null || true
+    userdel -f "$username" 2>/dev/null || true
+    rm -f "/etc/SSHPlus/senha/$username" 2>/dev/null || true
+    sed -i "/^$username /d" /root/usuarios.db 2>/dev/null || true
+    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+    echo -e "\n\033[1;32mUsuario '$username' eliminado con éxito!\033[0m"
     pause
 }
 
@@ -1294,11 +1458,6 @@ renovar_usuario() {
     read -r username
     [[ -z "$username" ]] && return
 
-    if ! id "$username" >/dev/null 2>&1; then
-        echo -e "\n\033[1;31mEl usuario no existe."
-        pause; return
-    fi
-
     echo -ne "\033[1;32mNuevos días a sumar (ej: 30)\033[1;37m: "
     read -r days
     [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
@@ -1307,12 +1466,10 @@ renovar_usuario() {
     new_exp=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
     chage -E "$new_exp" "$username" 2>/dev/null || true
 
-    local limit=1
-    if [[ -f "$USER_DATABASE" ]]; then
-        limit=$(grep "^$username:" "$USER_DATABASE" | cut -d: -f2 || echo 1)
-        sed -i "/^$username:/d" "$USER_DATABASE"
-    fi
-    echo "$username:${limit:-1}:$new_exp" >> "$USER_DATABASE"
+    local limit; limit=$(get_user_limit "$username")
+    local pass; pass=$(get_user_password "$username")
+    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+    echo "$username:${limit:-1}:$new_exp:$pass" >> "$USER_DATABASE"
 
     echo -e "\n\033[1;32mUsuario '$username' renovado hasta $new_exp\033[0m"
     pause
@@ -1331,12 +1488,16 @@ cambiar_limite() {
     read -r limit
     [[ ! "$limit" =~ ^[0-9]+$ ]] && limit=1
 
+    sed -i "/^$username /d" /root/usuarios.db 2>/dev/null || true
+    echo "$username $limit" >> /root/usuarios.db
+
     local exp="2030-01-01"
-    if [[ -f "$USER_DATABASE" ]]; then
+    local pass; pass=$(get_user_password "$username")
+    if [[ -f "$USER_DATABASE" ]] && grep -q "^$username:" "$USER_DATABASE"; then
         exp=$(grep "^$username:" "$USER_DATABASE" | cut -d: -f3 || echo "2030-01-01")
         sed -i "/^$username:/d" "$USER_DATABASE"
     fi
-    echo "$username:$limit:$exp" >> "$USER_DATABASE"
+    echo "$username:$limit:$exp:$pass" >> "$USER_DATABASE"
     echo -e "\n\033[1;32mLímite de '$username' actualizado a $limit conexión(es)\033[0m"
     pause
 }
@@ -1355,6 +1516,17 @@ cambiar_clave() {
     [[ -z "$password" ]] && return
 
     echo "$username:$password" | chpasswd
+    mkdir -p /etc/SSHPlus/senha
+    echo "$password" > "/etc/SSHPlus/senha/$username"
+
+    local limit; limit=$(get_user_limit "$username")
+    local exp="2030-01-01"
+    if [[ -f "$USER_DATABASE" ]] && grep -q "^$username:" "$USER_DATABASE"; then
+        exp=$(grep "^$username:" "$USER_DATABASE" | cut -d: -f3 || echo "2030-01-01")
+        sed -i "/^$username:/d" "$USER_DATABASE"
+    fi
+    echo "$username:$limit:$exp:$password" >> "$USER_DATABASE"
+
     echo -e "\n\033[1;32mContraseña de '$username' cambiada exitosamente!\033[0m"
     pause
 }
@@ -1364,17 +1536,32 @@ listar_usuarios() {
     echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
     echo -e "                   ${BLUE}INFORME DE USUARIOS${SCOLOR}"
     echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    printf "%-18s %-12s %-14s %-10s\n" "USUARIO" "LIMITE" "VENCE" "ESTADO"
+    
+    local all_users
+    mapfile -t all_users < <(get_user_list)
+    local total=${#all_users[@]}
+    local stats_str; stats_str=$(get_users_stats)
+    local online; online=$(echo "$stats_str" | cut -d: -f4)
+    local expired; expired=$(echo "$stats_str" | cut -d: -f3)
+
+    echo -e "${WHITE}  TOTAL: ${GREEN}${total}${WHITE}  |  EN LINEA: ${GREEN}${online}${WHITE}  |  VENCIDOS: ${RED}${expired}${NC}"
     echo "────────────────────────────────────────────────────────────"
-    local now_sec; now_sec=$(date +%s)
-    if [[ -f "$USER_DATABASE" ]]; then
-        while IFS=: read -r u limit exp || [[ -n "$u" ]]; do
-            [[ -z "$u" || "$u" =~ ^# ]] && continue
-            local exp_sec; exp_sec=$(date -d "$exp" +%s 2>/dev/null || echo 0)
-            local status="${GREEN}ACTIVO${NC}"
-            [[ $exp_sec -lt $now_sec ]] && status="${RED}VENCIDO${NC}"
-            printf "%-18s %-12s %-14s %b\n" "$u" "${limit:-1}" "${exp:-N/A}" "$status"
-        done < "$USER_DATABASE"
+    printf "%-4s %-16s %-12s %-8s %s\n" "#" "USUARIO" "CONTRASENA" "LIMITE" "VENCIMIENTO"
+    echo "────────────────────────────────────────────────────────────"
+
+    local i=1
+    for u in "${all_users[@]}"; do
+        [[ -z "$u" ]] && continue
+        local pass; pass=$(get_user_password "$u")
+        local limit; limit=$(get_user_limit "$u")
+        local days; days=$(get_user_days_remaining "$u")
+        local col_days="${GREEN}$days${NC}"
+        [[ "$days" == "Vencido" ]] && col_days="${RED}$days${NC}"
+        printf "%-4s %-16s %-12s %-8s %b\n" "$i" "$u" "$pass" "$limit" "$col_days"
+        ((i++))
+    done
+    if [[ $total -eq 0 ]]; then
+        echo -e "  ${YELLOW}No hay usuarios registrados en el sistema.${NC}"
     fi
     echo "────────────────────────────────────────────────────────────"
     pause
@@ -1386,25 +1573,22 @@ eliminar_caducados() {
     echo -e "                   ${BLUE}ELIMINAR USUARIOS CADUCADOS${SCOLOR}"
     echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
     local count=0
-    local now_sec; now_sec=$(date +%s)
-    local tmp_db="/tmp/users.db.$$"
-    touch "$tmp_db"
+    local all_users
+    mapfile -t all_users < <(get_user_list)
 
-    if [[ -f "$USER_DATABASE" ]]; then
-        while IFS=: read -r u limit exp || [[ -n "$u" ]]; do
-            [[ -z "$u" ]] && continue
-            local exp_sec; exp_sec=$(date -d "$exp" +%s 2>/dev/null || echo 0)
-            if [[ $exp_sec -lt $now_sec && $exp_sec -gt 0 ]]; then
-                pkill -u "$u" 2>/dev/null || true
-                userdel -f "$u" 2>/dev/null || true
-                ((count++))
-                echo -e " • Usuario vencido eliminado: \033[1;31m$u\033[0m"
-            else
-                echo "$u:$limit:$exp" >> "$tmp_db"
-            fi
-        done < "$USER_DATABASE"
-        mv -f "$tmp_db" "$USER_DATABASE"
-    fi
+    for u in "${all_users[@]}"; do
+        [[ -z "$u" ]] && continue
+        local st; st=$(get_user_days_remaining "$u")
+        if [[ "$st" == "Vencido" ]]; then
+            pkill -u "$u" 2>/dev/null || true
+            userdel -f "$u" 2>/dev/null || true
+            rm -f "/etc/SSHPlus/senha/$u" 2>/dev/null || true
+            sed -i "/^$u /d" /root/usuarios.db 2>/dev/null || true
+            sed -i "/^$u:/d" "$USER_DATABASE" 2>/dev/null || true
+            ((count++))
+            echo -e " • Usuario vencido eliminado: \033[1;31m$u\033[0m"
+        fi
+    done
     echo -e "\n\033[1;32mTotal de usuarios caducados eliminados: $count\033[0m"
     pause
 }
