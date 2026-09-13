@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Entrypoint directo para ssh-cris
+if [[ -f "/opt/ssh-cris/ssh-cris.sh" ]]; then
+    exec /opt/ssh-cris/ssh-cris.sh "$@"
+else
+    bash <(curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/install.sh) "$@"
+fi

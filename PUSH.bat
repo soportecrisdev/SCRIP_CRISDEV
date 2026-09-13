@@ -1,77 +1,69 @@
 @echo off
-chcp 65001 >nul 2>&1
+setlocal EnableDelayedExpansion
 title CRISDEV - Push a GitHub
 color 0A
 
 echo.
-echo ╔══════════════════════════════════════════════════════════╗
-echo ║     CRISDEV VPN Manager - Push a GitHub                ║
-echo ║     @CRISIS1823                                         ║
-echo ╚══════════════════════════════════════════════════════════╝
+echo ======================================================
+echo       CRISDEV VPN Manager - Push a GitHub
+echo       @CRISIS1823
+echo ======================================================
 echo.
 
-REM Ir al directorio del .bat
 cd /d "%~dp0"
 
-REM Verificar que es un repositorio git
 if not exist ".git" (
     echo [ERROR] No se encontro repositorio Git aqui.
-    echo         Asegurate de que este archivo esta en la carpeta SCRIP.
+    echo Asegurate de que este archivo esta en la carpeta SCRIP.
     pause
     exit /b 1
 )
 
-REM Verificar que hay cambios
-git status --porcelain
-if errorlevel 1 (
-    echo.
-    echo [INFO] No hay cambios para subir.
-    pause
-    exit /b 0
-)
-
 echo.
-echo ════════════════════════════════════════════════════════
-echo  ARCHIVOS MODIFICADOS:
-echo ════════════════════════════════════════════════════════
+echo ======================================================
+echo  ARCHIVOS MODIFICADOS Y NUEVOS:
+echo ======================================================
 git status --short
 echo.
 
-REM Pedir mensaje de commit
-echo ════════════════════════════════════════════════════════
-set /p MSG="Mensaje de commit: "
+set MSG=
+set /p MSG="Mensaje de commit (Presiona ENTER para mensaje automatico): "
 
 if "%MSG%"=="" (
-    REM Auto-generar mensaje con fecha y hora
-    for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set dt=%%I
-    set MSG=Actualizacion %dt:~0,4%-%dt:~4,2%-%dt:~6,2% %dt:~8,2%:%dt:~10,2%
+    set MSG=Actualizacion SSH-CRIS y BHTTP %DATE% %TIME%
 )
 
 echo.
-echo [1/3] Agregando archivos...
+echo [1/3] Agregando todos los archivos...
 git add -A
 
+echo.
 echo [2/3] Creando commit: %MSG%
 git commit -m "%MSG%"
 
-echo [3/3] Subiendo a GitHub...
+echo.
+echo [3/3] Subiendo cambios a GitHub (origin/main)...
 git push origin main
 
-if errorlevel 1 (
+if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo [ERROR] Fallo al subir. Verifica tu conexion y credenciales.
-    echo         Si es la primera vez, ejecuta:
-    echo         git remote add origin https://github.com/soportecrisdev/SCRIP_CRISDEV.git
-    echo         git push -u origin main
+    echo ======================================================
+    echo [ERROR] Fallo al subir a GitHub.
+    echo ======================================================
+    echo Posibles causas:
+    echo 1. Conflicto con commits remotos. Intenta: git pull --rebase origin main
+    echo 2. Credenciales o Token de GitHub expirado.
+    echo 3. Permisos de escritura en el repositorio.
+    echo.
     pause
     exit /b 1
 )
 
 echo.
-echo ╔══════════════════════════════════════════════════════════╗
-echo ║     CAMBIOS SUBIDOS EXITOSAMENTE A GITHUB              ║
-echo ╚══════════════════════════════════════════════════════════╝
+echo ======================================================
+echo      CAMBIOS SUBIDOS EXITOSAMENTE A GITHUB
+echo ======================================================
 echo.
-echo  Repo: https://github.com/soportecrisdev/SCRIP_CRISDEV
+echo Repositorio: https://github.com/soportecrisdev/SCRIP_CRISDEV
 echo.
 pause

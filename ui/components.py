@@ -329,6 +329,12 @@ def user_detail_card(user: dict):
         ("Ultima IP", user.get("last_ip") or "N/A"),
         ("Protocolos", ", ".join(user.get("protocols", []))),
     ]
+    if "8" in [str(p) for p in user.get("protocols", [])]:
+        try:
+            hy_ver = int(user.get("udp_hy_version", 1) or 1)
+        except (TypeError, ValueError):
+            hy_ver = 1
+        fields.append(("UDP-Hysteria", f"v{hy_ver}"))
     for label, value in fields:
         print(f"  {label:<18} {bold(value)}")
 

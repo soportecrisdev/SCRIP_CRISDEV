@@ -77,10 +77,14 @@ def _generate_password(length: int = 16) -> str:
     import secrets, string
     return ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(length))
 
-def _cmd(command: str) -> str:
+def _cmd(command: str, sudo: bool = False, input_text: str = None, timeout: int = 10) -> str:
     try:
-        r = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=10)
-        return r.stdout.strip()
+        if sudo and hasattr(os, "geteuid") and os.geteuid() != 0:
+            command = f"sudo {command}"
+        r = subprocess.run(command, shell=True, capture_output=True, text=True,
+                           timeout=timeout, input=input_text)
+        out = (r.stdout or "").strip()
+        return out if out else (r.stderr or "").strip()
     except Exception:
         return ""
 
@@ -439,51 +443,152 @@ def _start_python_socks():
 
 
 # --- UDP-HYSTERIA2 ---
+def _hy_active_users() -> dict:
+    """Mapa {usuario: password} con los usuarios que tienen UDP-Hysteria
+    (proto 8) activos, no suspendidos y no expirados. La app envia la
+    credencial HY2 como 'usuario:password', por eso el server debe usar
+    auth type userpass con exactamente estos pares."""
+    now = datetime.now()
+    out = {}
+    for u in _load_users():
+        if "8" not in [str(p) for p in u.get("protocols", [])]:
+            continue
+        if u.get("status") != "active":
+            continue
+        exp = u.get("expires_at")
+        try:
+            if exp and datetime.fromisoformat(str(exp)) < now:
+                continue
+        except ValueError:
+            pass
+        out[u["username"]] = u.get("password", "")
+    return out
+
+
+def _hy_obfs_password() -> str:
+    """Obfs global del server (sincronizado manualmente en GEN udpObfs).
+    Vacio = sin obfs en ambos lados."""
+    try:
+        with open(SERVER_CONFIG) as f:
+            return json.load(f).get("hysteria_obfs_pass", "") or ""
+    except Exception:
+        return ""
+
+
+def _hy_write_config():
+    """Genera /etc/hysteria/config.yaml (Hysteria v2), /etc/hysteria/config.json (v1)
+    y /etc/zivpn/config.json (ZIVPN) alineados 1:1 con la app."""
+    users = _hy_active_users()
+    obfs = _hy_obfs_password()
+
+    # 1. Config Hysteria V2 (config.yaml)
+    lines = [
+        f"listen: ':{PORT_HYSTERIA}'",
+        "tls:",
+        f"  cert: {CERT_DIR}/server.crt",
+        f"  key: {CERT_DIR}/server.key",
+        "auth:",
+        "  type: userpass",
+    ]
+    if users:
+        lines.append("  users:")
+        for k, v in users.items():
+            lines.append(f"    {k}: {v}")
+    else:
+        lines.append("  users: {}")
+    if obfs:
+        lines += [
+            "obfs:",
+            "  type: salamander",
+            "  salamander:",
+            f"    password: {obfs}",
+        ]
+    lines += [
+        "masquerade:",
+        "  type: proxy",
+        "  proxy:",
+        "    url: https://bing.com",
+        "    rewriteHost: true",
+    ]
+    conf_v2 = "\n".join(lines) + "\n"
+    _cmd("mkdir -p /etc/hysteria /etc/zivpn", sudo=True)
+    _cmd("bash -c 'cat > /etc/hysteria/config.yaml'", input_text=conf_v2, sudo=True)
+
+    # 2. Config Hysteria V1 / ZIVPN (config.json) con lista dual [usuario:pass, pass]
+    pass_list = []
+    for u, p in users.items():
+        if f"{u}:{p}" not in pass_list:
+            pass_list.append(f"{u}:{p}")
+        if p and p not in pass_list:
+            pass_list.append(p)
+    if not pass_list:
+        pass_list = ["crisdevapp"]
+
+    v1_config = {
+        "listen": f":{PORT_HYSTERIA}",
+        "protocol": "udp",
+        "cert": f"{CERT_DIR}/server.crt" if os.path.exists(f"{CERT_DIR}/server.crt") else "/etc/hysteria/hysteria.server.crt",
+        "key": f"{CERT_DIR}/server.key" if os.path.exists(f"{CERT_DIR}/server.key") else "/etc/hysteria/hysteria.server.key",
+        "up": "100 Mbps",
+        "up_mbps": 100,
+        "down": "100 Mbps",
+        "down_mbps": 100,
+        "disable_udp": False,
+        "obfs": obfs if obfs else "crisdev",
+        "recv_window_conn": 15728640,
+        "recv_window": 67108864,
+        "max_conn_client": 0,
+        "idle_timeout": 60,
+        "auth": {
+            "mode": "passwords",
+            "config": pass_list
+        }
+    }
+    _cmd("bash -c 'cat > /etc/hysteria/config.json'", input_text=json.dumps(v1_config, indent=2), sudo=True)
+    _cmd("bash -c 'cat > /etc/zivpn/config.json'", input_text=json.dumps(v1_config, indent=2), sudo=True)
+
+
 def _install_hysteria():
-    """Instala Hysteria2 (QUIC UDP)."""
+    """Instala Hysteria2 (QUIC UDP) oficial y deja el config alineado con la app."""
     info_msg("Instalando Hysteria2...")
     _cmd("bash <(curl -fsSL https://get.hy2.sh/)", sudo=True, timeout=120)
-
-    # Generar password aleatorio
-    password = _cmd("openssl rand -hex 16", sudo=True).strip()
-    if not password:
-        password = "crisdev_hysteria_2024"
-
-    # Configuracion basica
-    cert_path = f"{CERT_DIR}/hysteria.pem"
-    conf = (
-        f"listen: ':443'\n"
-        f"tls:\n"
-        f"  cert: {CERT_DIR}/server.crt\n"
-        f"  key: {CERT_DIR}/server.key\n"
-        f"auth:\n"
-        f"  type: password\n"
-        f"  password: {password}\n"
-        f"  user: default\n"
-        f"masquerade:\n"
-        f"  type: proxy\n"
-        f"  proxy:\n"
-        f"    url: https://bing.com\n"
-        f"    rewriteHost: true\n"
-    )
-    _cmd("mkdir -p /etc/hysteria", sudo=True)
-    _cmd("bash -c 'cat > /etc/hysteria/config.yaml'", input_text=conf, sudo=True)
-
+    _hy_write_config()
     _cmd("systemctl enable hysteria-server", sudo=True)
     _cmd("systemctl restart hysteria-server", sudo=True)
-    ok_msg(f"Hysteria2 instalado en puerto 443/UDP")
-    info_msg(f"Password de autenticacion: {password}")
-    _audit("HYSTERIA_INSTALL", f"Puerto 443/UDP, pass: {password}")
+    users = _hy_active_users()
+    ok_msg(f"Hysteria2 instalado en puerto {PORT_HYSTERIA}/UDP")
+    info_msg(f"Usuarios Hysteria activos: {len(users)}")
+    for k in list(users)[:10]:
+        print(f"    {k}")
+    obfs = _hy_obfs_password()
+    if obfs:
+        info_msg("OBFS activo: usa la MISMA clave en el campo OBFS del GEN")
+    else:
+        info_msg("Sin obfs: deja el campo OBFS vacio en el GEN para perfiles Hysteria")
+    _audit("HYSTERIA_INSTALL", f"Puerto {PORT_HYSTERIA}/UDP, usuarios: {len(users)}")
 
 
 def _stop_hysteria():
-    _cmd("systemctl stop hysteria-server", sudo=True)
-    ok_msg("Hysteria2 detenido")
+    _cmd("systemctl stop hysteria-server 2>/dev/null || true", sudo=True)
+    _cmd("systemctl stop hysteria 2>/dev/null || true", sudo=True)
+    _cmd("systemctl stop zivpn 2>/dev/null || true", sudo=True)
+    ok_msg("Hysteria detenido")
 
 
 def _start_hysteria():
-    _cmd("systemctl start hysteria-server", sudo=True)
-    ok_msg("Hysteria2 iniciado")
+    _cmd("systemctl start hysteria-server 2>/dev/null || true", sudo=True)
+    _cmd("systemctl start hysteria 2>/dev/null || true", sudo=True)
+    _cmd("systemctl start zivpn 2>/dev/null || true", sudo=True)
+    ok_msg("Hysteria iniciado")
+
+
+def _hy_sync_users(restart: bool = True):
+    """Re-sincroniza usuarios Hysteria (v1, v2 y ZIVPN) tras crear/editar/borrar/suspender."""
+    _hy_write_config()
+    if restart:
+        _cmd("systemctl restart hysteria-server 2>/dev/null || true", sudo=True)
+        _cmd("systemctl restart hysteria 2>/dev/null || true", sudo=True)
+        _cmd("systemctl restart zivpn 2>/dev/null || true", sudo=True)
 
 
 # --- XRAY / V2Ray ---
@@ -872,10 +977,22 @@ def _usr_create():
     print()
     print(f"  Protocolos:")
     print(f"    1) SSH         4) SlowDNS    7) Xray Trojan")
-    print(f"    2) SSH-SSL     5) Xray VLESS 8) Hysteria2")
+    print(f"    2) SSH-SSL     5) Xray VLESS 8) UDP-Hysteria")
     print(f"    3) WebSocket   6) Xray VMess 9) udp-custom")
     proto_input = prompt_input("Selecciona (coma separados)")
     protocols = [p.strip() for p in proto_input.split(",") if p.strip()]
+
+    # Combobox: version del motor UDP-Hysteria (solo aplica al proto 8).
+    # Por defecto 1 (v1); la v2 requiere binario libhy2.so en la app.
+    udp_hy_version = 1
+    if "8" in protocols:
+        print()
+        print(f"  {bold('Version de UDP-Hysteria:')}")
+        print(f"    1) Hysteria v1  {dim('(por defecto)')}")
+        print(f"    2) Hysteria v2  {dim('(requiere app con soporte v2)')}")
+        ver_input = prompt_input("Version [1]")
+        if ver_input == "2":
+            udp_hy_version = 2
 
     days_str = prompt_input("Dias de vigencia [30]")
     days = int(days_str) if days_str.isdigit() else 30
@@ -895,6 +1012,7 @@ def _usr_create():
         "current_connections": 0,
         "bandwidth_limit": 0,
         "protocols": protocols,
+        "udp_hy_version": udp_hy_version,
         "data_used_bytes": 0,
         "last_login": None,
         "last_ip": None,
@@ -904,12 +1022,22 @@ def _usr_create():
     _save_users(users)
     _audit("USER_CREATE", f"{username}")
 
+    # Sincronizar credenciales en el sistema operativo Linux (SSH/Dropbear/Stunnel/Squid)
+    _cmd(f"id -u {username} >/dev/null 2>&1 || useradd -m -s /bin/false {username}", sudo=True)
+    _cmd(f"echo '{username}:{password}' | chpasswd", sudo=True)
+    _cmd(f"chsh -s /bin/false {username} 2>/dev/null || true", sudo=True)
+
+    # Sincronizar siempre servicios VPN (Hysteria v1/v2, ZIVPN)
+    _hy_sync_users()
+
     print()
     print(f"  {bold(ok('USUARIO CREADO'))}")
     print(f"  Usuario:    {bold(username)}")
     print(f"  Contrasena: {bold(password)}")
     print(f"  Expira:     {bold(exp_date)}")
     print(f"  Protocolos: {bold(', '.join(protocols))}")
+    if "8" in protocols:
+        print(f"  UDP-Hysteria v{bold(str(udp_hy_version))}")
 
 
 def _usr_edit():
@@ -924,7 +1052,7 @@ def _usr_edit():
     print(f"  Que deseas cambiar?")
     print(f"    1) Contrasena       4) Limite BW")
     print(f"    2) Expiracion       5) Protocolos")
-    print(f"    3) Max conexiones   0) Volver")
+    print(f"    3) Max conexiones   6) Version UDP-Hysteria")
     opt = prompt_input("Opcion")
 
     users = _load_users()
@@ -934,6 +1062,9 @@ def _usr_edit():
                 np = prompt_input("Nueva contrasena")
                 if np:
                     u["password"] = np
+                    # Sincronizar nueva clave con el sistema Linux
+                    _cmd(f"id -u {username} >/dev/null 2>&1 || useradd -m -s /bin/false {username}", sudo=True)
+                    _cmd(f"echo '{username}:{np}' | chpasswd", sudo=True)
             elif opt == "2":
                 nd = prompt_input("Dias a agregar")
                 if nd.isdigit():
@@ -952,11 +1083,18 @@ def _usr_edit():
             elif opt == "5":
                 np2 = prompt_input("Nuevos protos (coma)")
                 u["protocols"] = [p.strip() for p in np2.split(",")]
+            elif opt == "6":
+                print(f"\n  Version actual: {u.get('udp_hy_version', 1)}")
+                print(f"    1) Hysteria v1")
+                print(f"    2) Hysteria v2")
+                nv = prompt_input("Version [1]")
+                u["udp_hy_version"] = 2 if nv == "2" else 1
             else:
                 return
             break
     _save_users(users)
     _audit("USER_EDIT", username)
+    _hy_sync_users()
     ok_msg(f"Usuario {username} actualizado")
 
 
@@ -970,6 +1108,10 @@ def _usr_delete():
         users = [u for u in users if u["username"] != username]
         _save_users(users)
         _audit("USER_DELETE", username)
+        # Eliminar procesos y usuario de Linux
+        _cmd(f"pkill -u {username} 2>/dev/null || true", sudo=True)
+        _cmd(f"userdel -r {username} 2>/dev/null || userdel {username} 2>/dev/null || true", sudo=True)
+        _hy_sync_users()
         ok_msg(f"Usuario {username} eliminado")
 
 
@@ -986,6 +1128,10 @@ def _usr_suspend():
                 break
         _save_users(users)
         _audit("USER_SUSPEND", username)
+        # Bloquear cuenta en Linux y matar conexiones
+        _cmd(f"usermod -L {username} 2>/dev/null || true", sudo=True)
+        _cmd(f"pkill -u {username} 2>/dev/null || true", sudo=True)
+        _hy_sync_users()
         ok_msg(f"Usuario {username} suspendido")
 
 
@@ -1001,6 +1147,9 @@ def _usr_reactivate():
             break
     _save_users(users)
     _audit("USER_REACTIVATE", username)
+    # Desbloquear cuenta en Linux
+    _cmd(f"usermod -U {username} 2>/dev/null || true", sudo=True)
+    _hy_sync_users()
     ok_msg(f"Usuario {username} reactivado")
 
 
@@ -1030,6 +1179,8 @@ def _usr_renew():
             break
     _save_users(users)
     _audit("USER_RENEW", f"{username}")
+    _cmd(f"usermod -U {username} 2>/dev/null || true", sudo=True)
+    _hy_sync_users()
     ok_msg(f"Usuario {username} renovado hasta {u['expires_at']}")
 
 
@@ -1203,8 +1354,20 @@ def _generate_links():
     print(f"\n  {bold('Trojan + WS + TLS:')}")
     print(f"    trojan://{upass}@{host}:2096?type=ws&host={host}&path=%2Ftrojan-ws&security=tls#CRISDEV-Trojan")
 
-    print(f"\n  {bold('Hysteria2:')}")
-    print(f"    hysteria2://{upass}@{host}:{PORT_HYSTERIA}?insecure=1&obfs=salamander&obfs-password={upass}#CRISDEV-Hysteria2")
+    try:
+        hy_ver = int(user.get("udp_hy_version", 1) or 1)
+    except (TypeError, ValueError):
+        hy_ver = 1
+    if hy_ver == 2:
+        print(f"\n  {bold('UDP-Hysteria v2:')}")
+        # El server usa auth userpass => la credencial HY2 es usuario:password.
+        # El obfs del link debe reflejar el config real del server.
+        hy_obfs = _hy_obfs_password()
+        hy_obfs_q = f"&obfs=salamander&obfs-password={hy_obfs}" if hy_obfs else ""
+        print(f"    hysteria2://{user['username']}:{upass}@{host}:{PORT_HYSTERIA}?insecure=1{hy_obfs_q}&hyver=2#CRISDEV-UDP-Hysteria2")
+    else:
+        print(f"\n  {bold('UDP-Hysteria v1:')}")
+        print(f"    hysteria://{upass}@{host}:{PORT_HYSTERIA}?insecure=1&alpn=h3&obfs={upass}&upmbps=100&downmbps=1000&hyver=1#CRISDEV-UDP-Hysteria1")
 
 
 # ============================================================================

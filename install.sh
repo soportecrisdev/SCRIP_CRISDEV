@@ -1,102 +1,76 @@
-#!/bin/bash
-# ============================================================================
-# CRISDEV VPN Manager - Instalador Remoto
-# Ejecutar en el VPS nuevo con:
-#   bash <(curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/install.sh)
-# ============================================================================
-set -euo pipefail
+#!/usr/bin/env bash
+# ==============================================================================
+#  SSH-CRIS v1 — Instalador Remoto Oficial
+#  Ejecución en VPS limpio (Debian / Ubuntu):
+#    bash <(curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/install.sh)
+# ==============================================================================
+set -Euo pipefail
 
-REPO_URL="https://github.com/soportecrisdev/SCRIP_CRISDEV.git"
-INSTALL_DIR="/opt/crisdev"
-SCRIPT_NAME="crisdev.sh"
-REMOTE_SCRIPT="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/$SCRIPT_NAME"
+REPO_RAW="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main"
+INSTALL_DIR="/opt/ssh-cris"
+BIN_NAME="ssh-cris.sh"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
+RED='\033[1;31m'
+GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
 NC='\033[0m'
 
-echo -e "${CYAN}"
-echo "╔══════════════════════════════════════════════════════════╗"
-echo "║     CRISDEV VPN Manager - Instalador Remoto            ║"
-echo "║     @CRISIS1823                                         ║"
-echo "╚══════════════════════════════════════════════════════════╝"
-echo -e "${NC}"
+clear
+echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${CYAN}║${WHITE}             ⚡ INSTALADOR SSH-CRIS MASTER v1 ⚡             ${CYAN}║${NC}"
+echo -e "${CYAN}║${WHITE}                 CRISDEV / HTTP Conexión                    ${CYAN}║${NC}"
+echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+echo ""
 
-# Verificar root
-if [[ $EUID -ne 0 ]]; then
-    echo -e "${RED}[ERROR]${NC} Ejecuta como root: sudo bash install.sh"
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    echo -e "${RED}[ERROR]${NC} Ejecuta este instalador como root: sudo bash $0"
     exit 1
 fi
 
-echo -e "${YELLOW}[1/5]${NC} Verificando sistema..."
-
-# Detectar sistema operativo
-if [[ -f /etc/debian_version ]]; then
-    OS="debian"
-    echo -e "${GREEN}[OK]${NC} Sistema Debian/Ubuntu detectado"
-elif [[ -f /etc/redhat-release ]]; then
-    OS="redhat"
-    echo -e "${GREEN}[OK]${NC} Sistema CentOS/RHEL detectado"
-else
-    echo -e "${RED}[ERROR]${NC} Sistema no soportado (solo Debian/Ubuntu/CentOS)"
-    exit 1
+echo -e "${YELLOW}[1/4]${NC} Actualizando repositorios e instalando paquetes base..."
+if command -v apt-get >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get update -y -qq >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl wget git jq openssl stunnel4 dropbear ufw fail2ban \
+        socat netcat-openbsd python3 libssl-dev screen nano unzip iproute2 procps >/dev/null 2>&1 || true
+elif command -v yum >/dev/null 2>&1; then
+    yum install -y -q curl wget git jq openssl stunnel ufw fail2ban socat python3 screen nano unzip iproute procps-ng >/dev/null 2>&1 || true
 fi
+echo -e "${GREEN}[✔]${NC} Dependencias listas."
 
-echo -e "${YELLOW}[2/5]${NC} Instalando dependencias básicas..."
-if [[ "$OS" == "debian" ]]; then
-    apt-get update -qq
-    apt-get install -y -qq curl wget git jq openssl stunnel4 dropbear ufw fail2ban \
-        socat netcat-openbsd python3 python3-pip libssl-dev screen nano unzip 2>/dev/null
-else
-    yum install -y -q curl wget git jq openssl stunnel ufw fail2ban \
-        socat nmap-ncat python3 python3-pip openssl-devel screen nano unzip 2>/dev/null
-fi
-echo -e "${GREEN}[OK]${NC} Dependencias instaladas"
-
-echo -e "${YELLOW}[3/5]${NC} Descargando CRISDEV VPN Manager..."
+echo -e "${YELLOW}[2/4]${NC} Creando directorios y descargando SSH-CRIS Suite..."
 mkdir -p "$INSTALL_DIR"
-mkdir -p "$INSTALL_DIR/ui"
-cd "$INSTALL_DIR"
+mkdir -p /etc/ssh-cris /etc/wakkodev-bhttp /etc/hysteria /etc/stunnel /etc/slowdns
 
-# Intentar clonar repo completo
-if git clone "$REPO_URL" . 2>/dev/null; then
-    echo -e "${GREEN}[OK]${NC} Repositorio clonado"
+# Descargar script maestro si no existe localmente
+if [[ -f "./ssh-cris.sh" ]]; then
+    cp -a "./ssh-cris.sh" "$INSTALL_DIR/$BIN_NAME"
 else
-    echo -e "${YELLOW}[WARN]${NC} Clono falló, descargando script directamente..."
-    wget -q "$REMOTE_SCRIPT" -O "$SCRIPT_NAME" 2>/dev/null || \
-    curl -fsSL "$REMOTE_SCRIPT" -o "$SCRIPT_NAME" 2>/dev/null
-    if [[ ! -f "$SCRIPT_NAME" ]]; then
-        echo -e "${RED}[ERROR]${NC} No se pudo descargar el script"
-        exit 1
-    fi
-    echo -e "${GREEN}[OK]${NC} Script descargado"
+    curl -fsSL "$REPO_RAW/ssh-cris.sh" -o "$INSTALL_DIR/$BIN_NAME" 2>/dev/null || \
+    wget -q "$REPO_RAW/ssh-cris.sh" -O "$INSTALL_DIR/$BIN_NAME"
 fi
 
-chmod +x "$SCRIPT_NAME"
+chmod +x "$INSTALL_DIR/$BIN_NAME"
+echo -e "${GREEN}[✔]${NC} Script maestro instalado en $INSTALL_DIR/$BIN_NAME."
 
-echo -e "${YELLOW}[4/5]${NC} Instalando comando 'crisdev'..."
-ln -sf "$INSTALL_DIR/$SCRIPT_NAME" /usr/local/bin/crisdev
-echo -e "${GREEN}[OK]${NC} Comando 'crisdev' disponible (bash script)"
+echo -e "${YELLOW}[3/4]${NC} Creando accesos directos globales en el sistema..."
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/ssh-cris
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/cris
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/menu
+echo -e "${GREEN}[✔]${NC} Comandos 'ssh-cris', 'cris' y 'menu' registrados."
 
-# Crear comando para la UI Python
-cat > /usr/local/bin/crisdev-ui << 'UIEOF'
-#!/bin/bash
-cd /opt/crisdev && python3 crisdev.py "$@"
-UIEOF
-chmod +x /usr/local/bin/crisdev-ui
-echo -e "${GREEN}[OK]${NC} Comando 'crisdev-ui' disponible (panel Python)"
-
-echo -e "${YELLOW}[5/5]${NC} Ejecutando instalación completa..."
-echo ""
-bash "$SCRIPT_NAME" --install
+echo -e "${YELLOW}[4/4]${NC} Optimizando puertos SSH base..."
+sed -i 's/#*AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config 2>/dev/null || true
+sed -i 's/#*GatewayPorts.*/GatewayPorts yes/' /etc/ssh/sshd_config 2>/dev/null || true
+systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
 
 echo ""
-echo -e "${BOLD}${GREEN}═══════════════════════════════════════════════════${NC}"
-echo -e "${BOLD}${GREEN}  INSTALACIÓN COMPLETADA${NC}"
-echo -e "${BOLD}${GREEN}═══════════════════════════════════════════════════${NC}"
+echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
+echo -e "${WHITE}  ¡INSTALACIÓN COMPLETADA CON ÉXITO!${NC}"
+echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
+echo -e "${WHITE}Escribe ${CYAN}ssh-cris${WHITE}, ${CYAN}cris${WHITE} o ${CYAN}menu${WHITE} para abrir el panel.${NC}"
 echo ""
-echo -e "  Ejecuta: ${BOLD}crisdev${NC}"
-echo ""
+
+# Iniciar menú
+exec "$INSTALL_DIR/$BIN_NAME"

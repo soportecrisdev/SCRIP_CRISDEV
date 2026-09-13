@@ -1,0 +1,178 @@
+#!/bin/bash
+clear
+#--------------------------
+# SCRIPT NoxuraSSH
+# Dev. J DAVID AG
+#--------------------------
+
+RED='\033[1;31m'
+YELLOW='\033[1;33m'
+SCOLOR='\033[0m'
+CYAN='\033[38;2;76;228;255m'
+NEON='\033[1;38;2;0;255;127m'
+
+draw_lang_line() {
+    echo -e "${CYAN}============================================================${SCOLOR}"
+}
+
+detect_lang() {
+    local saved=""
+    [[ -f /etc/SSHPlus/lang ]] && saved="$(cat /etc/SSHPlus/lang 2>/dev/null || true)"
+    local raw="${LANG_CHOICE:-${saved:-${LC_ALL:-${LC_MESSAGES:-${LANG:-es}}}}}"
+    case "${raw,,}" in
+        en|en_*|en-*|english) echo "en" ;;
+        *) echo "es" ;;
+    esac
+}
+
+LANG_SELECTED="$(detect_lang)"
+
+choose_lang() {
+    [[ -n "${LANG_CHOICE:-}" ]] && return
+    [[ -t 0 ]] || return
+    clear
+    draw_lang_line
+    echo -e "\033[1;37m              SELECT LANGUAGE - SELECCIONAR IDIOMA${SCOLOR}"
+    draw_lang_line
+    echo -e "${NEON}[1]${SCOLOR} \033[1;37m> Español${SCOLOR}"
+    echo -e "${NEON}[2]${SCOLOR} \033[1;37m> English${SCOLOR}"
+    draw_lang_line
+    echo -ne "\033[1;32mopcion\033[1;33m: ${SCOLOR}"
+    read -r lang_opt
+    case "$lang_opt" in
+        2) LANG_SELECTED="en" ;;
+        *) LANG_SELECTED="es" ;;
+    esac
+    export LANG_CHOICE="$LANG_SELECTED"
+    mkdir -p /etc/SSHPlus 2>/dev/null || true
+    printf '%s\n' "$LANG_SELECTED" >/etc/SSHPlus/lang 2>/dev/null || true
+}
+
+tr_msg() {
+    local key="$1"
+    if [[ "$LANG_SELECTED" == "en" ]]; then
+        case "$key" in
+            must_root) echo "Must be run as root." ;;
+            bad_arch) echo "Unsupported architecture." ;;
+            ubuntu_old) echo "Unsupported Ubuntu version." ;;
+            ubuntu_req) echo "Ubuntu 18.04 or newer is required." ;;
+            debian_old) echo "Unsupported Debian version." ;;
+            debian_req) echo "Debian 9 or newer is required." ;;
+            bad_os) echo "Unsupported system." ;;
+            os_req) echo "Debian/Ubuntu is required." ;;
+            plus_fail) echo "Could not load the Plus installer." ;;
+            clone_help) echo "Use: git clone https://github.com/Davidgelves/NoxuraSSH.git && cd NoxuraSSH && bash noxurassh" ;;
+            download_help) echo "Or download again: rm -f noxurassh && wget -qO noxurassh https://raw.githubusercontent.com/Davidgelves/NoxuraSSH/main/noxurassh" ;;
+        esac
+    else
+        case "$key" in
+            must_root) echo "Debe ejecutarse como usuario root." ;;
+            bad_arch) echo "Arquitectura no compatible." ;;
+            ubuntu_old) echo "Version de Ubuntu no compatible." ;;
+            ubuntu_req) echo "Se requiere Ubuntu 18.04 o superior." ;;
+            debian_old) echo "Version de Debian no compatible." ;;
+            debian_req) echo "Se requiere Debian 9 o superior." ;;
+            bad_os) echo "Sistema no compatible." ;;
+            os_req) echo "Se requiere Debian/Ubuntu." ;;
+            plus_fail) echo "No se pudo cargar el instalador Plus." ;;
+            clone_help) echo "Use: git clone https://github.com/Davidgelves/NoxuraSSH.git && cd NoxuraSSH && bash noxurassh" ;;
+            download_help) echo "O descargue de nuevo: rm -f noxurassh && wget -qO noxurassh https://raw.githubusercontent.com/Davidgelves/NoxuraSSH/main/noxurassh" ;;
+        esac
+    fi
+}
+
+[[ "$EUID" -ne 0 ]] && {
+    echo -e "${RED}[x] $(tr_msg must_root)${SCOLOR}"
+    exit 1
+}
+
+choose_lang
+
+apt_update_safe() {
+    local cnf_hook="/etc/apt/apt.conf.d/50command-not-found"
+    local cnf_disabled="/etc/apt/apt.conf.d/50command-not-found.sshplus-disabled"
+    if ! python3 -c 'import apt_pkg' >/dev/null 2>&1 && [[ -f "$cnf_hook" ]]; then
+        mv -f "$cnf_hook" "$cnf_disabled" 2>/dev/null || true
+    fi
+    apt-get update -y || true
+}
+
+case "$(uname -m)" in
+    'amd64' | 'x86_64')
+        arch='64'
+        ;;
+    'aarch64' | 'armv8')
+        arch='arm64'
+        ;;
+    *)
+        echo -e "${RED}[x] $(tr_msg bad_arch)${SCOLOR}"
+        exit 1
+        ;;
+esac
+
+if grep -qs "ubuntu" /etc/os-release; then
+    os_version=$(grep 'VERSION_ID' /etc/os-release | cut -d '"' -f 2 | tr -d '.')
+    [[ "$os_version" -lt 1804 ]] && {
+        echo -e "${RED}[x] $(tr_msg ubuntu_old)\n${YELLOW}[!] $(tr_msg ubuntu_req)${SCOLOR}"
+        exit 1
+    }
+elif [[ -e /etc/debian_version ]]; then
+    os_version=$(grep -oE '[0-9]+' /etc/debian_version | head -1)
+    [[ "$os_version" -lt 9 ]] && {
+        echo -e "${RED}[x] $(tr_msg debian_old)\n${YELLOW}[!] $(tr_msg debian_req)${SCOLOR}"
+        exit 1
+    }
+else
+    echo -e "${RED}[x] $(tr_msg bad_os)\n${YELLOW}[!] $(tr_msg os_req)${SCOLOR}"
+    exit 1
+fi
+
+dpkg --configure -a
+apt_update_safe
+apt-get upgrade -y || true
+apt-get install -y python3-apt command-not-found unzip python3 curl wget
+[[ -f /etc/apt/apt.conf.d/50command-not-found.sshplus-disabled ]] && mv -f /etc/apt/apt.conf.d/50command-not-found.sshplus-disabled /etc/apt/apt.conf.d/50command-not-found 2>/dev/null || true
+
+sysctl -w net.ipv6.conf.all.disable_ipv6=1 && sysctl -p
+echo 'net.ipv6.conf.all.disable_ipv6 = 1' > /etc/sysctl.d/70-disable-ipv6.conf
+sysctl -p -f /etc/sysctl.d/70-disable-ipv6.conf
+
+_SSHPLUS_RAW_MAIN="https://raw.githubusercontent.com/Davidgelves/NoxuraSSH/main"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALLER_LOCAL="${SCRIPT_DIR}/script/${arch}/Plus"
+
+run_plus() {
+    chmod +x "$1"
+    exec bash "$1"
+}
+
+if [[ -f "${INSTALLER_LOCAL}" ]]; then
+    run_plus "${INSTALLER_LOCAL}"
+fi
+
+_PLUS_URLS=(
+    "${_SSHPLUS_RAW_MAIN}/script/${arch}/Plus"
+    "https://cdn.jsdelivr.net/gh/Davidgelves/NoxuraSSH@main/script/${arch}/Plus"
+)
+TMP_PLUS="$(mktemp)"
+_PLUS_OK=0
+for _PLUS_U in "${_PLUS_URLS[@]}"; do
+    : >"${TMP_PLUS}"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "${_PLUS_U}" -o "${TMP_PLUS}" 2>/dev/null || true
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "${TMP_PLUS}" "${_PLUS_U}" 2>/dev/null || true
+    fi
+    if [[ -s "${TMP_PLUS}" ]]; then
+        _PLUS_OK=1
+        break
+    fi
+done
+if [[ "${_PLUS_OK}" -eq 1 ]]; then
+    run_plus "${TMP_PLUS}"
+fi
+
+echo -e "${RED}[x] $(tr_msg plus_fail)${SCOLOR}"
+echo -e "${YELLOW}    $(tr_msg clone_help)${SCOLOR}"
+echo -e "${YELLOW}    $(tr_msg download_help)${SCOLOR}"
+exit 1
