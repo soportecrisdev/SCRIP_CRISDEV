@@ -11,13 +11,16 @@ export LANG=C
 VERSION="v1.0-CRISDEV"
 TITLE="SSH-CRIS MASTER SUITE"
 INSTALL_DIR="/opt/ssh-cris"
-BHTTP_BASE="/etc/wakkodev-bhttp"
+BHTTP_BASE="/etc/bhttp"
 BHTTP_CONFIG="$BHTTP_BASE/config"
+BHTTP_CERTS="$BHTTP_BASE/certs"
 USER_DATABASE="/etc/ssh-cris/users.db"
 SSHPLUS_DIR="/etc/SSHPlus"
 
-AMD64_BHTTP="https://www.dropbox.com/scl/fi/xe5uut31ybiiwpio8njlp/wakkodev-bhttp-server-amd64?rlkey=9f92nqgiezysxoq4xjta4lpfc&st=8ezemtuj&dl=1"
-ARM64_BHTTP="https://www.dropbox.com/scl/fi/h3pruw07ecgh4iph24gbm/wakkodev-bhttp-server-arm64?rlkey=hzmvl36pl50k7d9qqkgi4ltzz&st=fs95gvtz&dl=1"
+AMD64_BHTTP="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-amd64"
+ARM64_BHTTP="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-arm64"
+AMD64_XHTTP="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-amd64"
+ARM64_XHTTP="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-arm64"
 
 # Hysteria v1.3.5 (Core Oficial para UDPCris / libfarikudp.so)
 HYSTERIA_V1_AMD64="https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-amd64"
@@ -43,7 +46,7 @@ NC='\033[0m'
 SSHPLUS_PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python3)"
 
 # Directorios base
-mkdir -p /etc/ssh-cris /etc/SSHPlus/senha /etc/wakkodev-bhttp /etc/hysteria /etc/stunnel /etc/slowdns /root
+mkdir -p /etc/ssh-cris /etc/SSHPlus/senha /etc/bhttp /etc/bhttp/certs /etc/hysteria /etc/stunnel /etc/slowdns /root
 touch "$USER_DATABASE" /etc/SSHPlus/Exp /root/usuarios.db 2>/dev/null || true
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -132,7 +135,7 @@ verif_ptrs_socks() {
 scan_bhttp_ports() {
     local ports=()
     local raw_ports
-    raw_ports=$(ss -tlpn 2>/dev/null | grep -E "wakkodev|bhttp" | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u)
+    raw_ports=$(ss -tlpn 2>/dev/null | grep -E "bhttp-server|bilola-server|wakkodev" | grep -v -E "xhttp|tls" | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u)
     if [[ -n "$raw_ports" ]]; then
         for p in $raw_ports; do
             [[ "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
@@ -140,12 +143,24 @@ scan_bhttp_ports() {
     fi
     if [[ ${#ports[@]} -eq 0 ]]; then
         local svc_ports
-        svc_ports=$(grep -h -o -E "\-\-port [0-9]+" /etc/systemd/system/wakkodev-bhttp*.service 2>/dev/null | awk '{print $2}' | sort -n -u || true)
+        svc_ports=$(grep -h -o -E "\-\-port [0-9]+" /etc/systemd/system/bhttp*.service /etc/systemd/system/wakkodev-bhttp*.service 2>/dev/null | awk '{print $2}' | sort -n -u || true)
         for p in $svc_ports; do
             [[ "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
         done
     fi
     echo "${ports[*]:-}"
+}
+
+scan_xhttp_port() {
+    local tls_p=""
+    if systemctl is-active --quiet bhttp-tls.service 2>/dev/null || pgrep -f 'xhttp-server|bilola-xhttp' >/dev/null 2>&1; then
+        [[ -f /etc/bhttp/tls_port ]] && tls_p=$(cat /etc/bhttp/tls_port 2>/dev/null)
+        if [[ -z "$tls_p" ]]; then
+            tls_p=$(ss -tlpn 2>/dev/null | grep -E "xhttp-server|bilola-xhttp" | awk '{print $4}' | awk -F: '{print $NF}' | head -1)
+        fi
+        [[ -z "$tls_p" ]] && tls_p="443"
+    fi
+    echo "$tls_p"
 }
 
 get_proc_ports() {
@@ -1597,52 +1612,145 @@ EOF
     done
 }
 
-# 8. BHTTP MULTI-PUERTO (WAKKO ENGINE)
+# ─────────────────────────────────────────────────────────────────────────────
+# 8. BHTTP & TLS (XHTTP) MANAGER — HTTP CONEXIÓN
+# ─────────────────────────────────────────────────────────────────────────────
+install_bhttp_binary() {
+    if [[ -x /usr/local/bin/bhttp-server || -x /bin/bhttp-server ]]; then
+        return 0
+    fi
+    echo -e "${YELLOW}Descargando Core BHTTP Relay oficial...${NC}"
+    local arch; arch=$(uname -m)
+    local raw_url="$AMD64_BHTTP"
+    [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && raw_url="$ARM64_BHTTP"
+    mkdir -p "$BHTTP_BASE"
+    curl -fsSL "$raw_url" -o /usr/local/bin/bhttp-server 2>/dev/null || \
+    wget -q "$raw_url" -O /usr/local/bin/bhttp-server 2>/dev/null || \
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server" -o /usr/local/bin/bhttp-server 2>/dev/null || true
+    chmod 755 /usr/local/bin/bhttp-server 2>/dev/null || true
+    ln -sfn /usr/local/bin/bhttp-server /usr/local/bin/bhttp 2>/dev/null || true
+    ln -sfn /usr/local/bin/bhttp-server /bin/bhttp-server 2>/dev/null || true
+    ln -sfn /usr/local/bin/bhttp-server /bin/bhttp 2>/dev/null || true
+    chmod 755 /bin/bhttp-server /bin/bhttp 2>/dev/null || true
+    [[ -x /usr/local/bin/bhttp-server || -x /bin/bhttp-server ]]
+}
+
+install_xhttp_binary() {
+    if [[ -x /usr/local/bin/xhttp-server || -x /bin/xhttp-server ]]; then
+        return 0
+    fi
+    echo -e "${YELLOW}Descargando Core BHTTP-TLS (XHTTP) oficial...${NC}"
+    local arch; arch=$(uname -m)
+    local raw_url="$AMD64_XHTTP"
+    [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && raw_url="$ARM64_XHTTP"
+    mkdir -p "$BHTTP_BASE"
+    curl -fsSL "$raw_url" -o /usr/local/bin/xhttp-server 2>/dev/null || \
+    wget -q "$raw_url" -O /usr/local/bin/xhttp-server 2>/dev/null || \
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server" -o /usr/local/bin/xhttp-server 2>/dev/null || true
+    chmod 755 /usr/local/bin/xhttp-server 2>/dev/null || true
+    ln -sfn /usr/local/bin/xhttp-server /usr/local/bin/xhttp 2>/dev/null || true
+    ln -sfn /usr/local/bin/xhttp-server /bin/xhttp-server 2>/dev/null || true
+    ln -sfn /usr/local/bin/xhttp-server /bin/xhttp 2>/dev/null || true
+    chmod 755 /bin/xhttp-server /bin/xhttp 2>/dev/null || true
+    [[ -x /usr/local/bin/xhttp-server || -x /bin/xhttp-server ]]
+}
+
+ensure_bhttp_tls_cert() {
+    local domain="${1:-crisdev.online}"
+    mkdir -p /etc/bhttp /etc/bhttp/certs
+    if [[ ! -f /etc/bhttp/server.crt || ! -f /etc/bhttp/server.key ]]; then
+        echo -e "${YELLOW}Generando certificado SSL/TLS (RSA 2048) para BHTTP TLS...${NC}"
+        openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
+            -keyout /etc/bhttp/server.key -out /etc/bhttp/server.crt \
+            -subj "/CN=${domain}" >/dev/null 2>&1 || true
+        chmod 600 /etc/bhttp/server.key 2>/dev/null || true
+        chmod 644 /etc/bhttp/server.crt 2>/dev/null || true
+    fi
+}
+
+ensure_bhttp_connect() {
+    if [[ ! -x /usr/local/bin/bhttp-connect ]]; then
+        cat > /usr/local/bin/bhttp-connect << 'EOF_BHTTP_CONN_SH'
+#!/usr/bin/env bash
+DEST_HOST="${1:-127.0.0.1}"
+DEST_PORT="${2:-22}"
+if command -v nc >/dev/null 2>&1; then
+    exec nc "$DEST_HOST" "$DEST_PORT"
+elif command -v socat >/dev/null 2>&1; then
+    exec socat - "TCP:$DEST_HOST:$DEST_PORT"
+else
+    exec 3<>/dev/tcp/"$DEST_HOST"/"$DEST_PORT" && { cat <&3 & cat >&3; }
+fi
+EOF_BHTTP_CONN_SH
+        chmod 755 /usr/local/bin/bhttp-connect /bin/bhttp-connect 2>/dev/null || true
+    fi
+}
+
 menu_bhttp() {
     while true; do
         clear
         local ports_arr
         read -r -a ports_arr <<< "$(scan_bhttp_ports)"
-        local total=${#ports_arr[@]}
+        local total_plain=${#ports_arr[@]}
+        local tls_port
+        tls_port=$(scan_xhttp_port)
 
-        echo -e "${CYAN}========================================================================${NC}"
-        echo -e "${WHITE}                 BHTTP MULTI-PUERTO RELAY (WAKKO ENGINE)                ${NC}"
-        echo -e "${CYAN}========================================================================${NC}"
-        if [[ $total -gt 0 ]]; then
-            echo -e " ${WHITE}Puertos BHTTP Activos: ${GREEN}${total}${WHITE} | Lista: ${YELLOW}${ports_arr[*]}${NC}"
-        else
-            echo -e " ${WHITE}Puertos BHTTP Activos: ${RED}Ninguno (Apagado)${NC}"
+        local plain_status="${RED}DESACTIVADO${NC}"
+        [[ $total_plain -gt 0 ]] && plain_status="${GREEN}ACTIVADO (${total_plain} puerto/s)${NC}"
+
+        local tls_status="${RED}DESACTIVADO${NC}"
+        [[ -n "$tls_port" ]] && tls_status="${GREEN}ACTIVADO (Puerto: ${tls_port})${NC}"
+
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "         ${BLUE}⚡ GESTIONAR BHTTP & TLS (HTTP CONEXIÓN) ⚡${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${WHITE}BHTTP PLANO (HTTP/1.1) : ${plain_status}"
+        if [[ $total_plain -gt 0 ]]; then
+            echo -e "  ${WHITE}PUERTOS PLANOS        : ${YELLOW}${ports_arr[*]}${NC}"
         fi
-        echo -e "${CYAN}========================================================================${NC}"
-        echo -e " ${GREEN}[1]${WHITE} > Instalar / Actualizar Motor BHTTP Relay"
-        echo -e " ${GREEN}[2]${WHITE} > Configurar Puerto Principal BHTTP (ej: 8080 o 80 -> SSH 22)"
-        echo -e " ${GREEN}[3]${WHITE} > Abrir Puerto Adicional (Multi-Puerto: 80, 8888, 3128, etc.)"
-        echo -e " ${GREEN}[4]${WHITE} > Listar Puertos BHTTP Activos"
-        echo -e " ${GREEN}[5]${WHITE} > Eliminar un Puerto BHTTP Específico"
-        echo -e " ${GREEN}[6]${WHITE} > Probar Conectividad BHTTP -> Backend SSH (Socket Test)"
-        echo -e " ${RED}[7]${WHITE} > Detener / Desinstalar Servicios BHTTP"
-        echo -e " ${RED}[0]${WHITE} > Volver a Protocolos"
-        echo -e "${CYAN}========================================================================${NC}"
-        read -r -p " Opcion: " b_opt
+        echo -e "  ${WHITE}BHTTP TLS (HTTP/2 XHTTP): ${tls_status}"
+        echo -e "  ${WHITE}BACKEND SSH DESTINO   : ${GREEN}127.0.0.1:22${NC}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> CONFIGURAR PUERTO PRINCIPAL BHTTP (ej: 80 / 8080)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> ACTIVAR / CONFIGURAR BHTTP TLS (XHTTP / SSL 443)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> ABRIR PUERTO ADICIONAL BHTTP (Multi-puerto: 8081, 8888...)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> LISTAR TODOS LOS PUERTOS BHTTP & TLS ACTIVOS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> ELIMINAR UN PUERTO O DETENER BHTTP TLS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR} \033[1;37m> GESTIONAR CERTIFICADO SSL/TLS PARA BHTTP\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[7]${SCOLOR} \033[1;37m> VER DATOS DE CONEXIÓN Y CONFIGURACIÓN (App & GEN)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[8]${SCOLOR} \033[1;37m> PROBAR CONECTIVIDAD (Socket & Backend SSH Test)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[9]${SCOLOR} \033[1;37m> DETENER TODOS LOS SERVICIOS BHTTP & TLS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER A PROTOCOLOS\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r b_opt
 
         case "$b_opt" in
-            1)
-                local arch; arch=$(uname -m)
-                local url="$AMD64_BHTTP"
-                [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && url="$ARM64_BHTTP"
-                mkdir -p "$BHTTP_BASE"
-                systemctl stop wakkodev-bhttp.service 2>/dev/null || true
-                curl -fL --retry 3 "$url" -o /usr/local/bin/wakkodev-bhttp-server 2>/dev/null || \
-                wget -q "$url" -O /usr/local/bin/wakkodev-bhttp-server 2>/dev/null
-                chmod 755 /usr/local/bin/wakkodev-bhttp-server 2>/dev/null || true
-                echo -e "\n\033[1;32mMotor BHTTP instalado con éxito en /usr/local/bin/wakkodev-bhttp-server!\033[0m"
-                pause
-                ;;
-            2)
-                read -r -p " Ingresa puerto principal para BHTTP (ej: 8080 o 80): " bport
-                [[ ! "$bport" =~ ^[0-9]+$ ]] && bport=8080
-                read -r -p " Puerto SSH destino (Backend, default 22): " backend_port
-                [[ ! "$backend_port" =~ ^[0-9]+$ ]] && backend_port=22
+            1|01)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "              ${BLUE}CONFIGURAR PUERTO PRINCIPAL BHTTP${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                install_bhttp_binary
+                ensure_bhttp_connect
+                if [[ ! -x /usr/local/bin/bhttp-server && ! -x /bin/bhttp-server ]]; then
+                    echo -e "\033[1;31mError al descargar o instalar bhttp-server.\033[0m"
+                    pause
+                    continue
+                fi
+
+                local def_p="8080"
+                if ! ss -tlpn 2>/dev/null | grep -q ':80 '; then
+                    def_p="80"
+                fi
+
+                echo -ne "${WHITE}Ingresa puerto principal para BHTTP [Enter = ${def_p}]: ${NC}"
+                read -r bport
+                [[ -z "$bport" || ! "$bport" =~ ^[0-9]+$ ]] && bport="$def_p"
+
+                echo -ne "${WHITE}Puerto SSH destino Backend [Enter = 22]: ${NC}"
+                read -r backend_port
+                [[ -z "$backend_port" || ! "$backend_port" =~ ^[0-9]+$ ]] && backend_port="22"
 
                 mkdir -p "$BHTTP_BASE"
                 cat > "$BHTTP_CONFIG" << EOF
@@ -1652,16 +1760,20 @@ SESSION_TTL=180
 MAX_SESSIONS=4096
 PROFILE=performance
 EOF
-                cat > /etc/systemd/system/wakkodev-bhttp.service << EOF
+                # Limpiar servicios obsoletos con nombres viejos
+                systemctl stop wakkodev-bhttp.service 2>/dev/null || true
+                rm -f /etc/systemd/system/wakkodev-bhttp.service 2>/dev/null || true
+
+                cat > /etc/systemd/system/bhttp.service << EOF
 [Unit]
-Description=CRISDEV BHTTP Relay Service (Port $bport)
+Description=HTTP Conexion BHTTP Relay Service (Port $bport)
 After=network-online.target ssh.service
 Wants=network-online.target
 
 [Service]
 Type=simple
 EnvironmentFile=-$BHTTP_CONFIG
-ExecStart=/usr/local/bin/wakkodev-bhttp-server --listen 0.0.0.0 --port $bport --backend-host 127.0.0.1 --backend-port $backend_port --session-ttl 180 --max-sessions 4096 --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
+ExecStart=/usr/local/bin/bhttp-server --listen 0.0.0.0 --port $bport --backend-host 127.0.0.1 --backend-port $backend_port --session-ttl 180 --max-sessions 4096 --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
 Restart=always
 RestartSec=1
 LimitNOFILE=524288
@@ -1670,23 +1782,65 @@ LimitNOFILE=524288
 WantedBy=multi-user.target
 EOF
                 systemctl daemon-reload
-                systemctl enable --now wakkodev-bhttp.service 2>/dev/null || true
+                systemctl unmask bhttp.service 2>/dev/null || true
+                systemctl enable --now bhttp.service 2>/dev/null || true
+                systemctl restart bhttp.service 2>/dev/null || true
+                iptables -I INPUT -p tcp --dport "$bport" -j ACCEPT 2>/dev/null || true
                 ufw allow "$bport"/tcp 2>/dev/null || true
-                echo -e "\n\033[1;32mBHTTP Relay activo en puerto TCP $bport -> SSH $backend_port\033[0m"
+
+                if systemctl is-active --quiet bhttp.service 2>/dev/null; then
+                    echo -e "\n\033[1;32m⚡ BHTTP Relay activo y funcionando en el puerto TCP ${bport} -> SSH ${backend_port}! ⚡\033[0m"
+                else
+                    echo -e "\n\033[1;31mError al iniciar BHTTP Relay. Verifique con: systemctl status bhttp\033[0m"
+                fi
                 pause
                 ;;
-            3)
-                read -r -p " Ingresa puerto adicional (ej: 80, 8888, 3128, 8081): " xport
-                [[ ! "$xport" =~ ^[0-9]+$ ]] && { echo -e "\n\033[1;31mPuerto inválido!"; pause; continue; }
-                cat > "/etc/systemd/system/wakkodev-bhttp-port-${xport}.service" << EOF
+            2|02)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "             ${BLUE}CONFIGURAR BHTTP TLS (XHTTP / SSL)${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                install_xhttp_binary
+                ensure_bhttp_tls_cert "crisdev.online"
+                ensure_bhttp_connect
+
+                if [[ ! -x /usr/local/bin/xhttp-server && ! -x /bin/xhttp-server ]]; then
+                    echo -e "\033[1;31mError al descargar o instalar xhttp-server.\033[0m"
+                    pause
+                    continue
+                fi
+
+                local def_tls="443"
+                if ss -tlpn 2>/dev/null | grep -q ':443 '; then
+                    def_tls="8443"
+                fi
+
+                echo -ne "${WHITE}Ingresa puerto para BHTTP TLS [Enter = ${def_tls}]: ${NC}"
+                read -r new_tls
+                [[ -z "$new_tls" || ! "$new_tls" =~ ^[0-9]+$ ]] && new_tls="$def_tls"
+
+                echo -ne "${WHITE}Puerto SSH destino Backend [Enter = 22]: ${NC}"
+                read -r tls_backend
+                [[ -z "$tls_backend" || ! "$tls_backend" =~ ^[0-9]+$ ]] && tls_backend="22"
+
+                echo -ne "${WHITE}Dominio SNI sugerido [Enter = crisdev.online]: ${NC}"
+                read -r custom_sni
+                [[ -z "$custom_sni" ]] && custom_sni="crisdev.online"
+
+                ensure_bhttp_tls_cert "$custom_sni"
+                mkdir -p "$BHTTP_BASE"
+                echo "$new_tls" > /etc/bhttp/tls_port
+                echo "$custom_sni" > /etc/bhttp/tls_sni
+
+                cat > /etc/systemd/system/bhttp-tls.service << EOF
 [Unit]
-Description=CRISDEV BHTTP Extra Port $xport
+Description=HTTP Conexion BHTTP TLS (XHTTP) Relay Service (Port $new_tls)
 After=network-online.target ssh.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/wakkodev-bhttp-server --listen 0.0.0.0 --port $xport --backend-host 127.0.0.1 --backend-port 22 --session-ttl 180 --max-sessions 4096 --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
+ExecStart=/usr/local/bin/xhttp-server --listen 0.0.0.0:$new_tls --target 127.0.0.1:$tls_backend --tls-cert /etc/bhttp/server.crt --tls-key /etc/bhttp/server.key --session-timeout 2m
 Restart=always
 RestartSec=1
 LimitNOFILE=524288
@@ -1695,60 +1849,223 @@ LimitNOFILE=524288
 WantedBy=multi-user.target
 EOF
                 systemctl daemon-reload
-                systemctl enable --now "wakkodev-bhttp-port-${xport}.service" 2>/dev/null || true
-                ufw allow "$xport"/tcp 2>/dev/null || true
-                echo -e "\n\033[1;32mPuerto extra BHTTP $xport activado con éxito!\033[0m"
-                pause
-                ;;
-            4)
-                echo -e "\n\033[1;33mPuertos BHTTP escuchando:\033[0m"
-                ss -tlpn | grep -E "bhttp|wakkodev" || echo "No hay puertos BHTTP activos"
-                pause
-                ;;
-            5)
-                local cur_b_ports
-                read -r -a cur_b_ports <<< "$(scan_bhttp_ports)"
-                echo -e "\nPuertos detectados: \033[1;33m${cur_b_ports[*]:-Ninguno}\033[0m"
-                read -r -p " Ingresa el puerto a eliminar: " del_port
-                if [[ -f "/etc/systemd/system/wakkodev-bhttp-port-${del_port}.service" ]]; then
-                    systemctl disable --now "wakkodev-bhttp-port-${del_port}.service" 2>/dev/null || true
-                    rm -f "/etc/systemd/system/wakkodev-bhttp-port-${del_port}.service"
-                    systemctl daemon-reload
-                    echo -e "\n\033[1;32mPuerto extra $del_port eliminado con éxito!\033[0m"
-                elif [[ -f "/etc/systemd/system/wakkodev-bhttp.service" ]] && grep -q -- "--port $del_port" /etc/systemd/system/wakkodev-bhttp.service; then
-                    systemctl disable --now wakkodev-bhttp.service 2>/dev/null || true
-                    rm -f /etc/systemd/system/wakkodev-bhttp.service
-                    systemctl daemon-reload
-                    echo -e "\n\033[1;32mPuerto principal $del_port eliminado con éxito!\033[0m"
+                systemctl unmask bhttp-tls.service 2>/dev/null || true
+                systemctl enable --now bhttp-tls.service 2>/dev/null || true
+                systemctl restart bhttp-tls.service 2>/dev/null || true
+                iptables -I INPUT -p tcp --dport "$new_tls" -j ACCEPT 2>/dev/null || true
+                ufw allow "$new_tls"/tcp 2>/dev/null || true
+
+                if systemctl is-active --quiet bhttp-tls.service 2>/dev/null; then
+                    echo -e "\n\033[1;32m⚡ BHTTP TLS (XHTTP) activo y escuchando en el puerto TCP ${new_tls} (SSL/TLS) -> SSH ${tls_backend}! ⚡\033[0m"
+                else
+                    echo -e "\n\033[1;31mError al iniciar BHTTP TLS. Verifique con: systemctl status bhttp-tls\033[0m"
                 fi
                 pause
                 ;;
-            6)
-                if nc -z -w2 127.0.0.1 22 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/22) 2>/dev/null; then
-                    echo -e "\n\033[1;32m[✔] Backend SSH en 127.0.0.1:22 respondiendo OK.\033[0m"
+            3|03)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "                 ${BLUE}ABRIR PUERTO ADICIONAL BHTTP${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                install_bhttp_binary
+                echo -ne "${WHITE}Ingresa puerto adicional (ej: 8081, 8888, 3128, 7080): ${NC}"
+                read -r xport
+                [[ ! "$xport" =~ ^[0-9]+$ ]] && { echo -e "\n\033[1;31mPuerto inválido!\033[0m"; pause; continue; }
+
+                cat > "/etc/systemd/system/bhttp-port-${xport}.service" << EOF
+[Unit]
+Description=HTTP Conexion BHTTP Extra Port $xport
+After=network-online.target ssh.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/bhttp-server --listen 0.0.0.0 --port $xport --backend-host 127.0.0.1 --backend-port 22 --session-ttl 180 --max-sessions 4096 --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
+Restart=always
+RestartSec=1
+LimitNOFILE=524288
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                systemctl daemon-reload
+                systemctl unmask "bhttp-port-${xport}.service" 2>/dev/null || true
+                systemctl enable --now "bhttp-port-${xport}.service" 2>/dev/null || true
+                iptables -I INPUT -p tcp --dport "$xport" -j ACCEPT 2>/dev/null || true
+                ufw allow "$xport"/tcp 2>/dev/null || true
+                echo -e "\n\033[1;32m⚡ Puerto adicional BHTTP ${xport} activado con éxito! ⚡\033[0m"
+                pause
+                ;;
+            4|04)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "             ${BLUE}PUERTOS BHTTP & TLS ACTIVOS EN EL SISTEMA${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "\n${YELLOW}Servicios y sockets escuchando:${NC}\n"
+                ss -tlpn 2>/dev/null | grep -E "bhttp-server|xhttp-server|bilola" || echo -e "  \033[1;31mNo hay servicios BHTTP/TLS escuchando.\033[0m"
+                echo -e "\n${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                pause
+                ;;
+            5|05)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "                ${RED}ELIMINAR PUERTO BHTTP O DETENER TLS${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                local cur_b_ports
+                read -r -a cur_b_ports <<< "$(scan_bhttp_ports)"
+                local cur_tls; cur_tls=$(scan_xhttp_port)
+
+                echo -e "Puertos BHTTP Planos detectados: \033[1;33m${cur_b_ports[*]:-Ninguno}\033[0m"
+                echo -e "Puerto BHTTP TLS detectado    : \033[1;33m${cur_tls:-Ninguno}\033[0m"
+                echo ""
+                echo -ne "${WHITE}Ingresa el número de puerto a eliminar o detener: ${NC}"
+                read -r del_port
+
+                if [[ -n "$cur_tls" && "$del_port" == "$cur_tls" ]]; then
+                    systemctl disable --now bhttp-tls.service 2>/dev/null || true
+                    rm -f /etc/systemd/system/bhttp-tls.service /etc/bhttp/tls_port
+                    systemctl daemon-reload
+                    echo -e "\n\033[1;32mBHTTP TLS en puerto ${del_port} detenido y eliminado con éxito!\033[0m"
+                elif [[ -f "/etc/systemd/system/bhttp-port-${del_port}.service" ]]; then
+                    systemctl disable --now "bhttp-port-${del_port}.service" 2>/dev/null || true
+                    rm -f "/etc/systemd/system/bhttp-port-${del_port}.service"
+                    systemctl daemon-reload
+                    echo -e "\n\033[1;32mPuerto extra BHTTP ${del_port} eliminado con éxito!\033[0m"
+                elif [[ -f "/etc/systemd/system/bhttp.service" ]] && grep -q -- "--port $del_port" /etc/systemd/system/bhttp.service; then
+                    systemctl disable --now bhttp.service 2>/dev/null || true
+                    rm -f /etc/systemd/system/bhttp.service
+                    systemctl daemon-reload
+                    echo -e "\n\033[1;32mPuerto principal BHTTP ${del_port} eliminado con éxito!\033[0m"
                 else
-                    echo -e "\n\033[1;31m[✘] Backend SSH en 127.0.0.1:22 cerrado.\033[0m"
+                    echo -e "\n\033[1;31mNo se encontró ningún servicio BHTTP configurado en el puerto ${del_port}.\033[0m"
+                fi
+                pause
+                ;;
+            6|06)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "              ${BLUE}GESTIONAR CERTIFICADO SSL/TLS (BHTTP)${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                mkdir -p /etc/bhttp /etc/bhttp/certs
+                if [[ -f /etc/bhttp/server.crt ]]; then
+                    local exp_date; exp_date=$(openssl x509 -enddate -noout -in /etc/bhttp/server.crt 2>/dev/null | cut -d= -f2)
+                    local subj_cn; subj_cn=$(openssl x509 -subject -noout -in /etc/bhttp/server.crt 2>/dev/null | sed -e 's/subject=//')
+                    echo -e "  ${WHITE}Certificado Actual : ${GREEN}Existente${NC}"
+                    echo -e "  ${WHITE}Sujeto (CN)        : ${YELLOW}${subj_cn}${NC}"
+                    echo -e "  ${WHITE}Vencimiento        : ${GREEN}${exp_date}${NC}"
+                else
+                    echo -e "  ${WHITE}Certificado Actual : ${RED}No configurado${NC}"
+                fi
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> Generar nuevo certificado auto-firmado (RSA 2048 / 10 años)\033[0m"
+                echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> Importar certificado de Hysteria / Stunnel\033[0m"
+                echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> Volver\033[0m"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+                read -r c_opt
+                case "$c_opt" in
+                    1)
+                        echo -ne "${WHITE}Ingresa Dominio / Host para el certificado [Enter = crisdev.online]: ${NC}"
+                        read -r new_dom
+                        [[ -z "$new_dom" ]] && new_dom="crisdev.online"
+                        openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
+                            -keyout /etc/bhttp/server.key -out /etc/bhttp/server.crt \
+                            -subj "/CN=${new_dom}" >/dev/null 2>&1
+                        chmod 600 /etc/bhttp/server.key
+                        chmod 644 /etc/bhttp/server.crt
+                        systemctl restart bhttp-tls.service 2>/dev/null || true
+                        echo -e "\n\033[1;32mCertificado SSL generado y aplicado correctamente para CN=${new_dom}!\033[0m"
+                        pause
+                        ;;
+                    2)
+                        if [[ -f /etc/hysteria/server.crt && -f /etc/hysteria/server.key ]]; then
+                            cp -f /etc/hysteria/server.crt /etc/bhttp/server.crt
+                            cp -f /etc/hysteria/server.key /etc/bhttp/server.key
+                            chmod 600 /etc/bhttp/server.key
+                            chmod 644 /etc/bhttp/server.crt
+                            systemctl restart bhttp-tls.service 2>/dev/null || true
+                            echo -e "\n\033[1;32mCertificado importado desde Hysteria con éxito!\033[0m"
+                        elif [[ -f /etc/stunnel/stunnel.pem ]]; then
+                            cp -f /etc/stunnel/stunnel.pem /etc/bhttp/server.crt
+                            cp -f /etc/stunnel/stunnel.pem /etc/bhttp/server.key
+                            systemctl restart bhttp-tls.service 2>/dev/null || true
+                            echo -e "\n\033[1;32mCertificado importado desde Stunnel con éxito!\033[0m"
+                        else
+                            echo -e "\n\033[1;31mNo se encontraron certificados previos en Hysteria ni Stunnel.\033[0m"
+                        fi
+                        pause
+                        ;;
+                esac
+                ;;
+            7|07)
+                clear
+                local ip; ip=$(get_public_ip)
+                local cur_tls_p; cur_tls_p=$(scan_xhttp_port)
+                local cur_sni="crisdev.online"
+                [[ -f /etc/bhttp/tls_sni ]] && cur_sni=$(cat /etc/bhttp/tls_sni 2>/dev/null)
+
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "         ${BLUE}DATOS DE CONEXIÓN BHTTP & TLS (HTTP CONEXIÓN)${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "HOST / IP VPS:" "$ip"
+                printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "PUERTOS BHTTP PLANOS:" "${ports_arr[*]:-Ninguno}"
+                printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "PUERTO BHTTP TLS:" "${cur_tls_p:-Desactivado}"
+                printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "SSH BACKEND DESTINO:" "127.0.0.1:22"
+                printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "SNI / HOST TLS:" "$cur_sni"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "\033[1;33mMODOS DE USO EN LA APP HTTP CONEXIÓN / GEN:\033[0m"
+                echo -e "  • \033[1;37mModo BHTTP Plano:\033[0m IP = ${ip} | Puerto = ${ports_arr[0]:-8080} | Tipo = SSH + BHTTP (BHP1)"
+                echo -e "  • \033[1;37mModo BHTTP TLS  :\033[0m IP = ${ip} | Puerto = ${cur_tls_p:-443} | SNI = ${cur_sni} | Tipo = SSH + XHTTP (TLS)"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                pause
+                ;;
+            8|08)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "            ${BLUE}PROBAR CONECTIVIDAD BHTTP & SSH BACKEND${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                if nc -z -w2 127.0.0.1 22 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/22) 2>/dev/null; then
+                    echo -e "  \033[1;32m[✔] Backend SSH en 127.0.0.1:22 respondiendo OK.\033[0m"
+                else
+                    echo -e "  \033[1;31m[✘] Backend SSH en 127.0.0.1:22 cerrado o inaccesible.\033[0m"
                 fi
                 for p in "${ports_arr[@]}"; do
                     if nc -z -w2 127.0.0.1 "$p" 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/"$p") 2>/dev/null; then
-                        echo -e "\033[1;32m[✔] Puerto BHTTP $p: Escuchando correctamente.\033[0m"
+                        echo -e "  \033[1;32m[✔] Puerto BHTTP Plano $p: Escuchando y respondiendo.\033[0m"
                     else
-                        echo -e "\033[1;31m[✘] Puerto BHTTP $p: No responde.\033[0m"
+                        echo -e "  \033[1;31m[✘] Puerto BHTTP Plano $p: No responde.\033[0m"
                     fi
                 done
+                local t_port; t_port=$(scan_xhttp_port)
+                if [[ -n "$t_port" ]]; then
+                    if nc -z -w2 127.0.0.1 "$t_port" 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/"$t_port") 2>/dev/null; then
+                        echo -e "  \033[1;32m[✔] Puerto BHTTP TLS $t_port: Escuchando y respondiendo.\033[0m"
+                    else
+                        echo -e "  \033[1;31m[✘] Puerto BHTTP TLS $t_port: No responde.\033[0m"
+                    fi
+                fi
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 pause
                 ;;
-            7)
+            9|09)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "             ${RED}DETENER TODOS LOS SERVICIOS BHTTP & TLS${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                systemctl disable --now bhttp.service 2>/dev/null || true
+                systemctl disable --now bhttp-tls.service 2>/dev/null || true
                 systemctl disable --now wakkodev-bhttp.service 2>/dev/null || true
-                for f in /etc/systemd/system/wakkodev-bhttp-port-*.service; do
+                for f in /etc/systemd/system/bhttp-port-*.service /etc/systemd/system/wakkodev-bhttp-port-*.service; do
                     [[ -f "$f" ]] && systemctl disable --now "$(basename "$f")" 2>/dev/null || true
                 done
-                rm -f /etc/systemd/system/wakkodev-bhttp*.service
+                rm -f /etc/systemd/system/bhttp*.service /etc/systemd/system/wakkodev-bhttp*.service /etc/bhttp/tls_port
+                pkill -9 -f 'bhttp-server|xhttp-server|wakkodev' >/dev/null 2>&1 || true
                 systemctl daemon-reload
-                echo -e "\n\033[1;32mServicios BHTTP detenidos!\033[0m"
+                echo -e "\n\033[1;32mTodos los servicios BHTTP y BHTTP TLS han sido detenidos.\033[0m"
                 pause
                 ;;
-            0) return ;;
+            0|00) return ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
         esac
     done
 }
@@ -2657,6 +2974,16 @@ menu_protocolos() {
             echo -e "\033[1;32mSERVICIO: \033[1;33mCHISEL \033[1;32mPUERTO: \033[1;37m$_ch_pt\033[0m"
         fi
 
+        # 11. BHTTP & TLS
+        local _b_pts; _b_pts=$(scan_bhttp_ports)
+        local _bx_pt; _bx_pt=$(scan_xhttp_port)
+        if [[ -n "$_b_pts" || -n "$_bx_pt" ]]; then
+            local _b_dsp=""
+            [[ -n "$_b_pts" ]] && _b_dsp="BHTTP: ${_b_pts}"
+            [[ -n "$_bx_pt" ]] && _b_dsp="${_b_dsp:+${_b_dsp} | }TLS: ${_bx_pt}"
+            echo -e "\033[1;32mSERVICIO: \033[1;33mBHTTP & TLS \033[1;32mPUERTOS: \033[1;37m$_b_dsp\033[0m"
+        fi
+
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
 
         local sts_ssh sts_socks sts_ssl sts_drop sts_v2ray sts_slow sts_hyst sts_trojan sts_badvpn sts_ovpn sts_ws sts_sslh sts_squid sts_chisel sts_bhttp
@@ -2674,7 +3001,7 @@ menu_protocolos() {
         pgrep -f 'sslh' >/dev/null 2>&1 && sts_sslh="\033[1;32mo\033[0m" || sts_sslh="\033[1;31mx\033[0m"
         (pgrep -f 'squid' >/dev/null 2>&1 || [[ -n "$sqd_p" ]]) && sts_squid="\033[1;32mo\033[0m" || sts_squid="\033[1;31mx\033[0m"
         (systemctl is-active --quiet chisel 2>/dev/null || pgrep -f 'chisel' >/dev/null 2>&1) && sts_chisel="\033[1;32mo\033[0m" || sts_chisel="\033[1;31mx\033[0m"
-        [[ -n "$bhttp_p" ]] && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet bhttp 2>/dev/null || systemctl is-active --quiet bhttp-tls 2>/dev/null || pgrep -f 'bhttp-server|xhttp-server|bilola' >/dev/null 2>&1 || [[ -n "$_b_pts" || -n "$_bx_pt" ]]) && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
 
         printf "  %b[1]%b  > OPENSSH         %b    %b[10]%b > BADVPN             %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssh" "$SSHPLUS_NUM" "$SCOLOR" "$sts_badvpn"
         printf "  %b[2]%b  > PROXY SOCKS     %b    %b[11]%b > OPENVPN            %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_socks" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ovpn"
@@ -2682,7 +3009,7 @@ menu_protocolos() {
         printf "  %b[4]%b  > DROPBEAR        %b    %b[13]%b > SSLH MULTIPLEX      %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_drop" "$SSHPLUS_NUM" "$SCOLOR" "$sts_sslh"
         printf "  %b[5]%b  > V2RAY           %b    %b[14]%b > SQUID PROXY         %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_v2ray" "$SSHPLUS_NUM" "$SCOLOR" "$sts_squid"
         printf "  %b[6]%b  > SLOWDNS         %b    %b[15]%b > CHISEL              %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_slow" "$SSHPLUS_NUM" "$SCOLOR" "$sts_chisel"
-        printf "  %b[7]%b  > UDP CRIS        %b    %b[16]%b > BHTTP MULTI-PUERTO  %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
+        printf "  %b[7]%b  > UDP CRIS        %b    %b[16]%b > BHTTP & TLS RELAY   %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
         printf "  %b[8]%b  > UDP HYSTERIA v1 %b    %b[17]%b > EXPORTAR PARA GEN\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR"
         printf "  %b[9]%b  > TROJAN-GO       %b    %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan" "$SSHPLUS_NUM" "$SCOLOR"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
@@ -3380,7 +3707,7 @@ menu_script_settings() {
                     echo -ne "\033[1;31m¿Desea desinstalar el script por completo? [s/n]: \033[0m"
                     read -r ans_del
                     if [[ "$ans_del" =~ ^[sS]$ ]]; then
-                        rm -rf /opt/ssh-cris /etc/SSHPlus /bin/ssh-cris /bin/menu /etc/wakkodev-bhttp /etc/hysteria
+                        rm -rf /opt/ssh-cris /etc/SSHPlus /bin/ssh-cris /bin/menu /etc/bhttp /etc/wakkodev-bhttp /etc/hysteria
                         echo -e "\033[1;32mScript desinstalado.\033[0m"
                         exit 0
                     fi
@@ -3425,7 +3752,7 @@ menu_mas_ajustes() {
                 else
                     clear
                     echo -e "\033[1;32mReiniciando servicios...\033[0m"
-                    systemctl restart sshd ssh dropbear stunnel4 badvpn-udpgw hysteria-server slowdns wakkodev-bhttp 2>/dev/null || true
+                    systemctl restart sshd ssh dropbear stunnel4 badvpn-udpgw hysteria-server slowdns bhttp bhttp-tls chisel 2>/dev/null || true
                     echo -e "\033[1;32m[✔] Servicios reiniciados!\033[0m"
                     pause
                 fi

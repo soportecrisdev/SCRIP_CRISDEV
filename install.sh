@@ -42,7 +42,7 @@ echo -e "${GREEN}[✔]${NC} Dependencias listas."
 echo -e "${YELLOW}[2/4]${NC} Creando estructura y descargando suite completa de módulos..."
 mkdir -p "$INSTALL_DIR" /etc/SSHPlus /etc/SSHPlus/v2ray /etc/SSHPlus/senha /etc/SSHPlus/.tmp /etc/SSHPlus/userteste \
     /etc/bot /etc/bot/info-users /etc/bot/arquivos /etc/bot/revenda /etc/bot/suspensos /etc/rec \
-    /etc/ssh-cris /etc/wakkodev-bhttp /etc/hysteria /etc/stunnel /etc/slowdns /usr/lib /bin
+    /etc/ssh-cris /etc/bhttp /etc/hysteria /etc/stunnel /etc/slowdns /usr/lib /bin
 
 # Licencia y datos base
 echo 'By J DAVID AG' > /usr/lib/sshplus
@@ -226,6 +226,51 @@ ln -sfn /usr/local/bin/chisel /usr/bin/chisel 2>/dev/null || true
 ln -sfn /usr/local/bin/chisel /bin/chisel 2>/dev/null || true
 chmod 755 /bin/chisel /usr/bin/chisel 2>/dev/null || true
 
+# Instalar Core BHTTP (Plano) y XHTTP (TLS/HTTP2)
+echo -e "${YELLOW}[*]${NC} Descargando Cores BHTTP & BHTTP-TLS (XHTTP)..."
+mkdir -p /etc/bhttp /etc/bhttp/certs
+if [[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]]; then
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-amd64" -o /usr/local/bin/bhttp-server 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-amd64" -O /usr/local/bin/bhttp-server 2>/dev/null || true
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-amd64" -o /usr/local/bin/xhttp-server 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-amd64" -O /usr/local/bin/xhttp-server 2>/dev/null || true
+elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-arm64" -o /usr/local/bin/bhttp-server 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-arm64" -O /usr/local/bin/bhttp-server 2>/dev/null || true
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-arm64" -o /usr/local/bin/xhttp-server 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-arm64" -O /usr/local/bin/xhttp-server 2>/dev/null || true
+fi
+chmod 755 /usr/local/bin/bhttp-server /usr/local/bin/xhttp-server 2>/dev/null || true
+ln -sfn /usr/local/bin/bhttp-server /usr/local/bin/bhttp 2>/dev/null || true
+ln -sfn /usr/local/bin/bhttp-server /bin/bhttp-server 2>/dev/null || true
+ln -sfn /usr/local/bin/bhttp-server /bin/bhttp 2>/dev/null || true
+ln -sfn /usr/local/bin/xhttp-server /usr/local/bin/xhttp 2>/dev/null || true
+ln -sfn /usr/local/bin/xhttp-server /bin/xhttp-server 2>/dev/null || true
+ln -sfn /usr/local/bin/xhttp-server /bin/xhttp 2>/dev/null || true
+
+# Generar certificado base para BHTTP TLS si no existe
+if [[ ! -f /etc/bhttp/server.crt || ! -f /etc/bhttp/server.key ]]; then
+    openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
+        -keyout /etc/bhttp/server.key -out /etc/bhttp/server.crt -subj "/CN=crisdev.online" >/dev/null 2>&1 || true
+    chmod 600 /etc/bhttp/server.key 2>/dev/null || true
+    chmod 644 /etc/bhttp/server.crt 2>/dev/null || true
+fi
+
+# Instalar helper bhttp-connect para canal SSH sesión
+cat > /usr/local/bin/bhttp-connect << 'EOF_BHTTP_CONN'
+#!/usr/bin/env bash
+DEST_HOST="${1:-127.0.0.1}"
+DEST_PORT="${2:-22}"
+if command -v nc >/dev/null 2>&1; then
+    exec nc "$DEST_HOST" "$DEST_PORT"
+elif command -v socat >/dev/null 2>&1; then
+    exec socat - "TCP:$DEST_HOST:$DEST_PORT"
+else
+    exec 3<>/dev/tcp/"$DEST_HOST"/"$DEST_PORT" && { cat <&3 & cat >&3; }
+fi
+EOF_BHTTP_CONN
+chmod 755 /usr/local/bin/bhttp-connect /bin/bhttp-connect 2>/dev/null || true
+
 # Configuración base inicial de Hysteria v1 para que arranque activo
 mkdir -p /etc/hysteria
 if [[ ! -f /etc/hysteria/server.crt || ! -f /etc/hysteria/server.key ]]; then
@@ -322,14 +367,9 @@ EOF
     ufw allow 36712/udp >/dev/null 2>&1 || true
     iptables -I INPUT 1 -p udp --dport 36712 -j ACCEPT 2>/dev/null || true
 
-# Instalar Servidor BHTTP Multi-Puerto
-if [[ -f "./wakkodev_bhttp_server.py" ]]; then
-    cp -af "./wakkodev_bhttp_server.py" /etc/wakkodev-bhttp/wakkodev_bhttp_server.py 2>/dev/null || true
-else
-    curl -fsSL "$REPO_RAW/wakkodev_bhttp_server.py" -o /etc/wakkodev-bhttp/wakkodev_bhttp_server.py 2>/dev/null || \
-    wget -q "$REPO_RAW/wakkodev_bhttp_server.py" -O /etc/wakkodev-bhttp/wakkodev_bhttp_server.py 2>/dev/null || true
-fi
-chmod +x /etc/wakkodev-bhttp/wakkodev_bhttp_server.py 2>/dev/null || true
+# Preparar estructura de BHTTP y BHTTP-TLS
+mkdir -p /etc/bhttp /etc/bhttp/certs
+touch /etc/bhttp/config 2>/dev/null || true
 
 echo -e "${GREEN}[✔]${NC} Módulos y servicios instalados correctamente."
 
