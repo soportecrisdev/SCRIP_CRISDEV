@@ -94,4 +94,4 @@ fun_udp2 () {
     sleep 3
     menu
 }
-[[ $(ps x | grep "udpvpn"|grep -v grep |wc -l) = '0' ]] &&  fun_udp1 || fun_udp2
+[[ $(pgrep -f 'badvpn-udpgw|udpvpn' |wc -l) = '0' ]] &&  fun_udp1 || fun_udp2

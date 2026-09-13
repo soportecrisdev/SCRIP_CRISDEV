@@ -64,7 +64,7 @@ _bad_tr() {
     fi
 }
 
-_running() { ps x | grep -w udpvpn | grep -v grep >/dev/null 2>&1; }
+_running() { pgrep -f 'badvpn-udpgw|udpvpn' >/dev/null 2>&1; }
 _ports() { netstat -nplt 2>/dev/null | grep 'badvpn-ud' | awk '{print $4}' | grep -oE '[0-9]+$' | xargs; }
 _status_mark() { _running && printf "${GREEN}o${NC}" || printf "${RED}x${NC}"; }
 

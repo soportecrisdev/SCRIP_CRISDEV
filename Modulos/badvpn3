@@ -3,12 +3,12 @@
 fun_badvpn() {
     clear
     echo -e "\E[44;1;37m            GESTIONAR BADVPN-UDP             \E[0m"
-    if ps x | grep -w udpvpn | grep -v grep 1>/dev/null 2>/dev/null; then
-        echo -e "\033[1;33mPUERTOS\033[1;37m: \033[1;32m$(netstat -nplt | grep 'badvpn-ud' | awk {'print $4'} | cut -d: -f2 | xargs)"
+    if pgrep -f 'badvpn-udpgw|udpvpn' 1>/dev/null 2>/dev/null; then
+        echo -e "\033[1;33mPUERTOS\033[1;37m: \033[1;32m$((ss -ulpn 2>/dev/null | grep -E 'badvpn|udpvpn' || netstat -nplu 2>/dev/null | grep 'badvpn') | awk {'print $4'} | cut -d: -f2 | xargs)"
     else
         sleep 0.1
     fi
-    var_sks1=$(ps x | grep "udpvpn"|grep -v grep > /dev/null && echo -e "\033[1;32m(ON ◉) " || echo -e "\033[1;31m(OFF ○)")
+    var_sks1=$(pgrep -f 'badvpn-udpgw|udpvpn' > /dev/null && echo -e "\033[1;32m(ON ◉) " || echo -e "\033[1;31m(OFF ○)")
 echo -e "\033[01;34m===================================================================="
     echo -e "\033[1;34m[\033[1;37m01 •\033[1;34m]\033[1;37m  > \033[1;33m\033[1;37m( HABILITAR PUERTO UDP PARA JUEGOS/VOIP. ) $var_sks1 \033[0m"
     echo -e "\033[1;34m[\033[1;37m02 •\033[1;34m]\033[1;37m  > \033[1;33m\033[1;37m( ABRIR NUEVOS PUERTOS UDP. )\033[0m"
@@ -16,7 +16,7 @@ echo -e "\033[01;34m============================================================
 echo -e "\033[01;34m===================================================================="
     echo -ne "\033[1;37m[ELIJA UN NUMERO]\033[1;37m: "; read resposta
     if [[ "$resposta" = '1' ]]; then
-        if ps x | grep -w udpvpn | grep -v grep 1>/dev/null 2>/dev/null; then
+        if pgrep -f 'badvpn-udpgw|udpvpn' 1>/dev/null 2>/dev/null; then
             clear
             echo -e "\E[41;1;37m             BADVPN-UDP              \E[0m"
             echo ""
@@ -67,7 +67,7 @@ echo -e "\033[01;34m============================================================
             fun_badvpn
         fi
     elif [[ "$resposta" = '2' ]]; then
-        if ps x | grep -w udpvpn | grep -v grep 1>/dev/null 2>/dev/null; then
+        if pgrep -f 'badvpn-udpgw|udpvpn' 1>/dev/null 2>/dev/null; then
             clear
             echo -e "\E[44;1;37m            BADVPN-UDP             \E[0m"
             echo ""

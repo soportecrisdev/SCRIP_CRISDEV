@@ -4,12 +4,12 @@ fun_badvpn() {
     clear
     echo -e "\E[44;1;37m            GESTIONAR BADVPN PRO            \E[0m"
     echo ""
-    if ps x | grep -w udpvpn | grep -v grep 1>/dev/null 2>/dev/null; then
-        echo -e "\033[1;33mPUERTOS\033[1;37m: \033[1;32m$(netstat -nplt | grep 'badvpn-ud' | awk {'print $4'} | cut -d: -f2 | xargs)"
+    if pgrep -f 'badvpn-udpgw|udpvpn' 1>/dev/null 2>/dev/null; then
+        echo -e "\033[1;33mPUERTOS\033[1;37m: \033[1;32m$((ss -ulpn 2>/dev/null | grep -E 'badvpn|udpvpn' || netstat -nplu 2>/dev/null | grep 'badvpn') | awk {'print $4'} | cut -d: -f2 | xargs)"
     else
         sleep 0.1
     fi
-    var_sks1=$(ps x | grep "udpvpn"|grep -v grep > /dev/null && echo -e "\033[1;32m◉ " || echo -e "\033[1;31m○ ")
+    var_sks1=$(pgrep -f 'badvpn-udpgw|udpvpn' > /dev/null && echo -e "\033[1;32m◉ " || echo -e "\033[1;31m○ ")
     echo ""
     echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;37m• \033[1;33mACTIVAR BADVPN (PRO) $var_sks1 \033[0m"
     echo -e "\033[1;31m[\033[1;36m0\033[1;31m] \033[1;37m• \033[1;33mVOLVER\033[0m"
@@ -18,7 +18,7 @@ fun_badvpn() {
     echo -ne "\033[1;32m¿QUÉ DESEA HACER \033[1;33m?\033[1;37m "
     read resposta
     if [[ "$resposta" = '1' ]]; then
-        if ps x | grep -w udpvpn | grep -v grep 1>/dev/null 2>/dev/null; then
+        if pgrep -f 'badvpn-udpgw|udpvpn' 1>/dev/null 2>/dev/null; then
             clear
             echo -e "\E[41;1;37m             BADVPN              \E[0m"
             echo ""
@@ -72,7 +72,7 @@ fun_badvpn() {
             fun_badvpn
         fi
     elif [[ "$resposta" = '100' ]]; then
-        if ps x | grep -w udpvpn | grep -v grep 1>/dev/null 2>/dev/null; then
+        if pgrep -f 'badvpn-udpgw|udpvpn' 1>/dev/null 2>/dev/null; then
             clear
             echo -e "\E[44;1;37m            BADVPN PRO            \E[0m"
             echo ""

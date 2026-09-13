@@ -2140,7 +2140,7 @@ menu_protocolos() {
         fi
 
         # 6. UDP CRIS (Hysteria v1)
-        if systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1; then
+        if systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -q 'hysteria'; then
             local _hyst_pt=""
             [[ -f /etc/hysteria/sshplus.env ]] && _hyst_pt="$(grep '^HYST_PORT=' /etc/hysteria/sshplus.env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
             [[ -z "${_hyst_pt// }" && -f /etc/hysteria/config.json ]] && _hyst_pt="$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/hysteria/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
@@ -2157,9 +2157,9 @@ menu_protocolos() {
         fi
 
         # 7. BadVPN
-        if systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -f 'badvpn-udpgw|udpvpn' >/dev/null 2>&1; then
+        if systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -f 'badvpn-udpgw|udpvpn' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -q 'badvpn'; then
             local _bad_p
-            _bad_p=$(ss -tulpn 2>/dev/null | grep -E 'badvpn-udpgw|udpvpn' | awk '{print $5}' | grep -oE '[0-9]+$' | sort -u | xargs || true)
+            _bad_p=$(ss -ulpn 2>/dev/null | grep -E 'badvpn-udpgw|udpvpn' | awk '{print $5}' | grep -oE '[0-9]+$' | sort -un | xargs || true)
             [[ -z "$_bad_p" && -f /etc/systemd/system/badvpn-udpgw.service ]] && _bad_p=$(grep -oE '\-\-listen\-addr[[:space:]]+127\.0\.0\.1:[0-9]+' /etc/systemd/system/badvpn-udpgw.service 2>/dev/null | cut -d: -f2 | xargs || true)
             [[ -z "$_bad_p" ]] && _bad_p="7300"
             echo -e "\033[1;32mSERVICIO: \033[1;33mBADVPN \033[1;32mPUERTO: \033[1;37m$_bad_p\033[0m"
@@ -2186,9 +2186,9 @@ menu_protocolos() {
         (pgrep -f 'dropbear' >/dev/null 2>&1 || [[ -n "$drp_p" ]]) && sts_drop="\033[1;32mo\033[0m" || sts_drop="\033[1;31mx\033[0m"
         pgrep -f 'xray|v2ray' >/dev/null 2>&1 && sts_v2ray="\033[1;32mo\033[0m" || sts_v2ray="\033[1;31mx\033[0m"
         pgrep -f 'dnstt-server' >/dev/null 2>&1 && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1) && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f 'hysteria' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -q 'hysteria') && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
         pgrep -f 'trojan' >/dev/null 2>&1 && sts_trojan="\033[1;32mo\033[0m" || sts_trojan="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -f 'badvpn-udpgw|udpvpn' >/dev/null 2>&1) && sts_badvpn="\033[1;32mo\033[0m" || sts_badvpn="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -f 'badvpn-udpgw|udpvpn' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -q 'badvpn') && sts_badvpn="\033[1;32mo\033[0m" || sts_badvpn="\033[1;31mx\033[0m"
         pgrep -f 'openvpn' >/dev/null 2>&1 && sts_ovpn="\033[1;32mo\033[0m" || sts_ovpn="\033[1;31mx\033[0m"
         pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1 && sts_ws="\033[1;32mo\033[0m" || sts_ws="\033[1;31mx\033[0m"
         pgrep -f 'sslh' >/dev/null 2>&1 && sts_sslh="\033[1;32mo\033[0m" || sts_sslh="\033[1;31mx\033[0m"

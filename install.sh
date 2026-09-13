@@ -99,17 +99,40 @@ else
 fi
 chmod +x "$INSTALL_DIR/$BIN_NAME"
 
-# Instalar BadVPN (badvpn-udpgw) binario
-echo -e "${YELLOW}[*]${NC} Configurando BadVPN udpgw..."
-if [[ -f "./badvpn/badvpn-udpgw" ]]; then
-    cp -af "./badvpn/badvpn-udpgw" /usr/local/bin/badvpn-udpgw 2>/dev/null || true
-    cp -af "./badvpn/badvpn-udpgw" /bin/badvpn-udpgw 2>/dev/null || true
-else
-    curl -fsSL "$REPO_RAW/badvpn/badvpn-udpgw" -o /usr/local/bin/badvpn-udpgw 2>/dev/null || \
-    wget -q "$REPO_RAW/badvpn/badvpn-udpgw" -O /usr/local/bin/badvpn-udpgw 2>/dev/null || true
-    cp -af /usr/local/bin/badvpn-udpgw /bin/badvpn-udpgw 2>/dev/null || true
+# Instalar BadVPN (badvpn-udpgw) binario y compilar si es necesario
+echo -e "${YELLOW}[*]${NC} Compilando e instalando BadVPN udpgw..."
+if [[ ! -x /usr/local/bin/badvpn-udpgw && ! -x /bin/badvpn-udpgw ]]; then
+    mkdir -p /usr/local/src
+    (
+        cd /usr/local/src
+        curl -fsSL "https://github.com/ambrop72/badvpn/archive/refs/tags/1.999.130.tar.gz" -o badvpn-1.999.130.tar.gz 2>/dev/null || wget -q "https://github.com/ambrop72/badvpn/archive/refs/tags/1.999.130.tar.gz" -O badvpn-1.999.130.tar.gz
+        tar -xzf badvpn-1.999.130.tar.gz 2>/dev/null || true
+        mkdir -p badvpn-build && cd badvpn-build
+        cmake ../badvpn-1.999.130 -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 >/dev/null 2>&1 || true
+        make -j$(nproc 2>/dev/null || echo 1) >/dev/null 2>&1 || true
+        make install >/dev/null 2>&1 || true
+    )
 fi
 chmod +x /usr/local/bin/badvpn-udpgw /bin/badvpn-udpgw 2>/dev/null || true
+ln -sfn /usr/local/bin/badvpn-udpgw /bin/badvpn-udpgw 2>/dev/null || true
+
+# Configurar servicio systemd para BadVPN (puerto 7300 por defecto)
+cat > /etc/systemd/system/badvpn-udpgw.service << 'EOF'
+[Unit]
+Description=BadVPN UDP Gateway (Port 7300)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 9000 --max-connections-for-client 5 --client-socket-sndbuf 10000
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl enable --now badvpn-udpgw.service >/dev/null 2>&1 || true
 
 # Instalar Core UDP CRIS (Hysteria v1.3.5)
 echo -e "${YELLOW}[*]${NC} Descargando Core UDP CRIS (Hysteria v1.3.5)..."
@@ -121,8 +144,110 @@ elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
     curl -fsSL "https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-arm64" -o /usr/local/bin/hysteria1 2>/dev/null || \
     wget -q "https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-arm64" -O /usr/local/bin/hysteria1 2>/dev/null || true
 fi
-chmod +x /usr/local/bin/hysteria1 2>/dev/null || true
+chmod 755 /usr/local/bin/hysteria1 2>/dev/null || true
 ln -sfn /usr/local/bin/hysteria1 /usr/local/bin/hysteria 2>/dev/null || true
+chmod 755 /usr/local/bin/hysteria 2>/dev/null || true
+
+# Configuración base inicial de Hysteria v1 para que arranque activo
+mkdir -p /etc/hysteria
+if [[ ! -f /etc/hysteria/server.crt || ! -f /etc/hysteria/server.key ]]; then
+    openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
+        -keyout /etc/hysteria/server.key -out /etc/hysteria/server.crt -subj "/CN=crisdev.online" >/dev/null 2>&1 || true
+fi
+chmod 600 /etc/hysteria/server.key 2>/dev/null || true
+chmod 644 /etc/hysteria/server.crt 2>/dev/null || true
+
+if [[ ! -f /etc/hysteria/config.json ]]; then
+cat > /etc/hysteria/config.json << 'EOF'
+{
+  "listen": ":36712",
+  "protocol": "udp",
+  "cert": "/etc/hysteria/server.crt",
+  "key": "/etc/hysteria/server.key",
+  "obfs": "crisdev",
+  "auth": {
+    "mode": "passwords",
+    "config": [
+      "crisdev:crisdev"
+    ]
+  },
+  "alpn": "h3",
+  "recv_window_conn": 15728640,
+  "recv_window": 67108864,
+  "max_conn_client": 0,
+  "idle_timeout": 60,
+  "up_mbps": 100,
+  "down_mbps": 100,
+  "disable_mtu_discovery": false,
+  "resolver": "8.8.8.8:53"
+}
+EOF
+fi
+
+cat > /etc/hysteria/sshplus.env << 'EOF'
+HYST_PORT="36712"
+HYST_RULES="20000:50000"
+HYST_OBFS="crisdev"
+EOF
+
+cat > /etc/hysteria/iptables.sh << 'EOF'
+#!/bin/bash
+ACTION="$1"
+ENV_FILE="/etc/hysteria/sshplus.env"
+CHAIN="SSHPLUS_HYSTERIA"
+[[ -f "$ENV_FILE" ]] && . "$ENV_FILE"
+clear_rules() {
+    while iptables -t nat -C PREROUTING -p udp -j "$CHAIN" >/dev/null 2>&1; do
+        iptables -t nat -D PREROUTING -p udp -j "$CHAIN" >/dev/null 2>&1 || break
+    done
+    iptables -t nat -F "$CHAIN" >/dev/null 2>&1 || true
+    iptables -t nat -X "$CHAIN" >/dev/null 2>&1 || true
+}
+apply_rules() {
+    clear_rules
+    iptables -I INPUT 1 -p udp --dport "${HYST_PORT:-36712}" -j ACCEPT >/dev/null 2>&1 || true
+    [[ -z "$HYST_RULES" || "$HYST_RULES" = "none" || "$HYST_RULES" = "0" ]] && return 0
+    iptables -t nat -N "$CHAIN" >/dev/null 2>&1 || true
+    iptables -t nat -I PREROUTING 1 -p udp -j "$CHAIN" >/dev/null 2>&1 || true
+    local clean="${HYST_RULES// /}" item
+    IFS=',' read -ra items <<<"$clean"
+    for item in "${items[@]}"; do
+        [[ -z "$item" || "$item" = "53" || "$item" = "5300" ]] && continue
+        iptables -t nat -A "$CHAIN" -p udp --dport "$item" -j REDIRECT --to-ports "$HYST_PORT" >/dev/null 2>&1 || true
+    done
+}
+case "$ACTION" in
+    apply) apply_rules ;;
+    clear) clear_rules ;;
+esac
+exit 0
+EOF
+chmod +x /etc/hysteria/iptables.sh 2>/dev/null || true
+
+cat > /etc/systemd/system/hysteria-server.service << 'EOF'
+[Unit]
+Description=CRISDEV UDP Hysteria v1.3.5 Server
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Environment=HYSTERIA_LOG_LEVEL=debug
+ExecStartPre=-/etc/hysteria/iptables.sh apply
+ExecStart=/usr/local/bin/hysteria -c /etc/hysteria/config.json server
+ExecStopPost=-/etc/hysteria/iptables.sh clear
+WorkingDirectory=/etc/hysteria
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl enable --now hysteria-server.service >/dev/null 2>&1 || true
 
 # Instalar Servidor BHTTP Multi-Puerto
 if [[ -f "./wakkodev_bhttp_server.py" ]]; then
