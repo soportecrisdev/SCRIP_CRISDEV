@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  TCP TWEAKER & BBR ACCELERATOR — Optimizador de Red para SSH-CRIS / SSH-PLUS
+#  TCP TWEAKER / BBR MANAGER — Optimizador TCP para SSH-CRIS / HTTP Conexión
 # ==============================================================================
-set -e
 
 RED='\033[1;31m'
 GREEN='\033[1;32m'

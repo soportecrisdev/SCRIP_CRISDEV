@@ -2826,29 +2826,47 @@ PY
 			fi
 			;;
 			8 | 08)
-			if [[ -x /bin/hysteria2-manager || -x /usr/bin/hysteria2-manager ]]; then
-				hysteria2-manager
+			[[ -f /bin/hysteria2-manager && ! -s /bin/hysteria2-manager ]] && rm -f /bin/hysteria2-manager
+			if [[ -s /bin/hysteria2-manager && -x /bin/hysteria2-manager ]]; then
+				/bin/hysteria2-manager
+			elif [[ -s /usr/bin/hysteria2-manager && -x /usr/bin/hysteria2-manager ]]; then
+				/usr/bin/hysteria2-manager
 			elif [[ -f /opt/ssh-cris/Modulos/hysteria2-manager ]]; then
 				bash /opt/ssh-cris/Modulos/hysteria2-manager
 			else
 				clear
 				echo -e "\033[1;32mDescargando e iniciando Hysteria v2 Manager...\033[0m"
-				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager -o /bin/hysteria2-manager 2>/dev/null
+				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager -o /bin/hysteria2-manager 2>/dev/null || \
+				wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager" -O /bin/hysteria2-manager 2>/dev/null || true
 				chmod +x /bin/hysteria2-manager 2>/dev/null || true
-				hysteria2-manager
+				if [[ -s /bin/hysteria2-manager ]]; then
+					/bin/hysteria2-manager
+				else
+					echo -e "\033[1;31mError al descargar Hysteria v2 Manager. Verifique conexion o actualice el repositorio.\033[0m"
+					sleep 2
+				fi
 			fi
 			;;
 			9 | 09)
-			if [[ -x /bin/udp-custom-manager || -x /usr/bin/udp-custom-manager ]]; then
-				udp-custom-manager
+			[[ -f /bin/udp-custom-manager && ! -s /bin/udp-custom-manager ]] && rm -f /bin/udp-custom-manager
+			if [[ -s /bin/udp-custom-manager && -x /bin/udp-custom-manager ]]; then
+				/bin/udp-custom-manager
+			elif [[ -s /usr/bin/udp-custom-manager && -x /usr/bin/udp-custom-manager ]]; then
+				/usr/bin/udp-custom-manager
 			elif [[ -f /opt/ssh-cris/Modulos/udp-custom-manager ]]; then
 				bash /opt/ssh-cris/Modulos/udp-custom-manager
 			else
 				clear
 				echo -e "\033[1;32mDescargando e iniciando UDP Custom Manager...\033[0m"
-				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager -o /bin/udp-custom-manager 2>/dev/null
+				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager -o /bin/udp-custom-manager 2>/dev/null || \
+				wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager" -O /bin/udp-custom-manager 2>/dev/null || true
 				chmod +x /bin/udp-custom-manager 2>/dev/null || true
-				udp-custom-manager
+				if [[ -s /bin/udp-custom-manager ]]; then
+					/bin/udp-custom-manager
+				else
+					echo -e "\033[1;31mError al descargar UDP Custom Manager. Verifique conexion o actualice el repositorio.\033[0m"
+					sleep 2
+				fi
 			fi
 			;;
 			10 | 10)
@@ -2877,16 +2895,25 @@ PY
 			fi
 			;;
 			17 | 17)
-			if [[ -x /bin/hcr-manager || -x /usr/bin/hcr-manager ]]; then
-				hcr-manager
+			[[ -f /bin/hcr-manager && ! -s /bin/hcr-manager ]] && rm -f /bin/hcr-manager
+			if [[ -s /bin/hcr-manager && -x /bin/hcr-manager ]]; then
+				/bin/hcr-manager
+			elif [[ -s /usr/bin/hcr-manager && -x /usr/bin/hcr-manager ]]; then
+				/usr/bin/hcr-manager
 			elif [[ -f /opt/ssh-cris/Modulos/hcr-manager ]]; then
 				bash /opt/ssh-cris/Modulos/hcr-manager
 			else
 				clear
 				echo -e "\033[1;32mDescargando e iniciando HCR Manager...\033[0m"
-				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager -o /bin/hcr-manager 2>/dev/null
+				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager -o /bin/hcr-manager 2>/dev/null || \
+				wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager" -O /bin/hcr-manager 2>/dev/null || true
 				chmod +x /bin/hcr-manager 2>/dev/null || true
-				hcr-manager
+				if [[ -s /bin/hcr-manager ]]; then
+					/bin/hcr-manager
+				else
+					echo -e "\033[1;31mError al descargar HCR Manager. Verifique conexion o actualice el repositorio.\033[0m"
+					sleep 2
+				fi
 			fi
 			;;
 			18 | 18)
