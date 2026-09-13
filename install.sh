@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 #  SSH-CRIS v1 — Instalador Remoto Oficial
-#  Ejecución en VPS limpio (Debian / Ubuntu):
+#  Ejecución en VPS (Debian / Ubuntu):
 #    bash <(curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/install.sh)
 # ==============================================================================
 set -Euo pipefail
@@ -33,34 +33,50 @@ echo -e "${YELLOW}[1/4]${NC} Actualizando repositorios e instalando paquetes bas
 if command -v apt-get >/dev/null 2>&1; then
     DEBIAN_FRONTEND=noninteractive apt-get update -y -qq >/dev/null 2>&1 || true
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl wget git jq openssl stunnel4 ufw fail2ban \
-        socat netcat-openbsd python3 libssl-dev screen nano unzip iproute2 procps >/dev/null 2>&1 || true
+        socat netcat-openbsd python3 libssl-dev screen nano unzip iproute2 procps net-tools >/dev/null 2>&1 || true
 elif command -v yum >/dev/null 2>&1; then
-    yum install -y -q curl wget git jq openssl stunnel ufw fail2ban socat python3 screen nano unzip iproute procps-ng >/dev/null 2>&1 || true
+    yum install -y -q curl wget git jq openssl stunnel ufw fail2ban socat python3 screen nano unzip iproute procps-ng net-tools >/dev/null 2>&1 || true
 fi
-# Asegurar que dropbear no interfiera con los puertos de BHTTP
-systemctl stop dropbear 2>/dev/null || true
-systemctl disable dropbear 2>/dev/null || true
 echo -e "${GREEN}[✔]${NC} Dependencias listas."
 
 echo -e "${YELLOW}[2/4]${NC} Creando directorios y descargando SSH-CRIS Suite..."
-mkdir -p "$INSTALL_DIR"
-mkdir -p /etc/ssh-cris /etc/wakkodev-bhttp /etc/hysteria /etc/stunnel /etc/slowdns
+mkdir -p "$INSTALL_DIR" /etc/SSHPlus /etc/ssh-cris /etc/wakkodev-bhttp /etc/hysteria /etc/stunnel /etc/slowdns
 
-# Descargar script maestro si no existe localmente
+# Descargar script maestro
 if [[ -f "./ssh-cris.sh" ]]; then
     cp -a "./ssh-cris.sh" "$INSTALL_DIR/$BIN_NAME"
 else
     curl -fsSL "$REPO_RAW/ssh-cris.sh" -o "$INSTALL_DIR/$BIN_NAME" 2>/dev/null || \
     wget -q "$REPO_RAW/ssh-cris.sh" -O "$INSTALL_DIR/$BIN_NAME"
 fi
-
 chmod +x "$INSTALL_DIR/$BIN_NAME"
-echo -e "${GREEN}[✔]${NC} Script maestro instalado en $INSTALL_DIR/$BIN_NAME."
 
-echo -e "${YELLOW}[3/4]${NC} Creando accesos directos globales en el sistema..."
+# Descargar modulos python autenticos
+if [[ -f "./proxy.py" ]]; then
+    cp -a "./proxy.py" /etc/SSHPlus/proxy.py
+else
+    curl -fsSL "$REPO_RAW/proxy.py" -o /etc/SSHPlus/proxy.py 2>/dev/null || \
+    wget -q "$REPO_RAW/proxy.py" -O /etc/SSHPlus/proxy.py 2>/dev/null || true
+fi
+chmod +x /etc/SSHPlus/proxy.py 2>/dev/null || true
+
+if [[ -f "./wsproxy.py" ]]; then
+    cp -a "./wsproxy.py" /etc/SSHPlus/wsproxy.py
+else
+    curl -fsSL "$REPO_RAW/wsproxy.py" -o /etc/SSHPlus/wsproxy.py 2>/dev/null || \
+    wget -q "$REPO_RAW/wsproxy.py" -O /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+fi
+chmod +x /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+
+echo -e "${GREEN}[✔]${NC} Archivos instalados en $INSTALL_DIR y /etc/SSHPlus/."
+
+echo -e "${YELLOW}[3/4]${NC} Creando accesos directos globales..."
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/ssh-cris
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/cris
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/menu
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/menu 2>/dev/null || true
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/connection 2>/dev/null || true
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/conexao 2>/dev/null || true
 echo -e "${GREEN}[✔]${NC} Comandos 'ssh-cris', 'cris' y 'menu' registrados."
 
 echo -e "${YELLOW}[4/4]${NC} Optimizando puertos SSH base..."

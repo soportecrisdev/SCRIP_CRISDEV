@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#  SSH-CRIS v1 — VPS Master VPN Suite & Server Manager
+#  SSH-CRIS v1 — VPS MASTER VPN SUITE & PROTOCOL MANAGER
 #  Autor: CRISDEV / HTTP Conexión
-#  Soporte: OpenSSH, Proxy Socks, SSL Tunnel, Dropbear, V2Ray/Xray, SlowDNS,
-#           UDP CRIS / Hysteria v1, Trojan-Go, BadVPN 7300, OpenVPN, WebSocket,
-#           SSLH, Squid, Chisel, BHTTP Multi-Puerto Relay y Token HTTP Conexión.
+#  Base: SSH-Plus / NoxuraSSH Architecture + BHTTP + UDP CRIS + HTTP Conexión
 # ==============================================================================
 set -Euo pipefail
+
+export LC_ALL=C
+export LANG=C
 
 VERSION="v1.0-CRISDEV"
 TITLE="SSH-CRIS MASTER SUITE"
@@ -14,42 +15,115 @@ INSTALL_DIR="/opt/ssh-cris"
 BHTTP_BASE="/etc/wakkodev-bhttp"
 BHTTP_CONFIG="$BHTTP_BASE/config"
 USER_DATABASE="/etc/ssh-cris/users.db"
-LIMITER_LOG="/var/log/ssh-cris-limiter.log"
+SSHPLUS_DIR="/etc/SSHPlus"
 
 AMD64_BHTTP="https://www.dropbox.com/scl/fi/xe5uut31ybiiwpio8njlp/wakkodev-bhttp-server-amd64?rlkey=9f92nqgiezysxoq4xjta4lpfc&st=8ezemtuj&dl=1"
 ARM64_BHTTP="https://www.dropbox.com/scl/fi/h3pruw07ecgh4iph24gbm/wakkodev-bhttp-server-arm64?rlkey=hzmvl36pl50k7d9qqkgi4ltzz&st=fs95gvtz&dl=1"
 
 # Colores ANSI
-RED='\033[1;31m'
+SSHPLUS_CYAN=$'\033[1;38;2;76;228;255m'
+SSHPLUS_NUM=$'\033[1;38;2;0;255;127m'
+SSHPLUS_DARK_GREEN=$'\033[0;32m'
+SSHPLUS_SECTION=$'\033[1;38;2;240;230;140m'
+SSHPLUS_DATA=$'\033[1;38;2;127;255;0m'
+SSHPLUS_COUNTER=$'\033[1;38;2;255;179;71m'
+
+CYAN='\033[1;36m'
 GREEN='\033[1;32m'
 YELLOW='\033[1;33m'
-CYAN='\033[1;36m'
-BLUE='\033[1;34m'
-MAGENTA='\033[1;35m'
+RED='\033[1;31m'
 WHITE='\033[1;37m'
-DIM='\033[2m'
+BLUE='\033[1;34m'
+SCOLOR='\033[0m'
 NC='\033[0m'
 
-ok()    { printf "%b[✔]%b %s\n" "$GREEN" "$NC" "$*"; }
-info()  { printf "%b[ℹ]%b %s\n" "$CYAN" "$NC" "$*"; }
-warn()  { printf "%b[⚠]%b %s\n" "$YELLOW" "$NC" "$*"; }
-fail()  { printf "%b[✘]%b %s\n" "$RED" "$NC" "$*" >&2; }
-pause() { echo ""; read -r -p " Presiona [ENTER] para continuar..." _ || true; }
+SSHPLUS_PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python3)"
 
-need_root() {
-    if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-        fail "Este script requiere permisos de root. Ejecuta con: sudo $0"
-        exit 1
-    fi
+# Directorios base
+mkdir -p /etc/ssh-cris /etc/SSHPlus /etc/wakkodev-bhttp /etc/hysteria /etc/stunnel /etc/slowdns
+touch "$USER_DATABASE" /etc/SSHPlus/Exp 2>/dev/null || true
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  FUNCIONES DE APOYO Y ANIMACIÓN
+# ─────────────────────────────────────────────────────────────────────────────
+fun_bar() {
+    local cmd1="$1"
+    local cmd2="${2:-true}"
+    (
+        [[ -e $HOME/fim ]] && rm -f "$HOME/fim"
+        eval "$cmd1" >/dev/null 2>&1
+        eval "$cmd2" >/dev/null 2>&1
+        touch "$HOME/fim"
+    ) >/dev/null 2>&1 &
+    tput civis 2>/dev/null || true
+    echo -ne "${SSHPLUS_CYAN}ESPERE ${SCOLOR}\033[1;37m- ${SSHPLUS_CYAN}["
+    while true; do
+        for ((i = 0; i < 18; i++)); do
+            echo -ne "${SSHPLUS_CYAN}#"
+            sleep 0.08s
+        done
+        [[ -e $HOME/fim ]] && rm -f "$HOME/fim" && break
+        echo -e "${SSHPLUS_CYAN}]${SCOLOR}"
+        sleep 0.5s
+        tput cuu1 2>/dev/null || true
+        tput dl1 2>/dev/null || true
+        echo -ne "${SSHPLUS_CYAN}ESPERE ${SCOLOR}\033[1;37m- ${SSHPLUS_CYAN}["
+    done
+    echo -e "${SSHPLUS_CYAN}]${SCOLOR}\033[1;37m - OK !\033[0m"
+    tput cnorm 2>/dev/null || true
 }
 
-mkdir -p /etc/ssh-cris /etc/wakkodev-bhttp /etc/hysteria /etc/stunnel /etc/slowdns
-touch "$USER_DATABASE"
+sshplus_line() {
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+}
+
+pause() {
+    echo ""
+    read -r -p " Presiona [ENTER] para continuar..." _ || true
+}
 
 get_public_ip() {
     local ip
-    ip=$(curl -s --connect-timeout 3 https://api.ipify.org || curl -s --connect-timeout 3 https://ifconfig.me || hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
+    ip=$(curl -s --connect-timeout 3 https://api.ipify.org 2>/dev/null || curl -s --connect-timeout 3 https://ifconfig.me 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "127.0.0.1")
     echo "$ip"
+}
+
+verif_ptrs() {
+    local porta=$1
+    local PT svcs pton
+    PT=$(lsof -V -i tcp -P -n 2>/dev/null | grep -v "ESTABLISHED" | grep -v "COMMAND" | grep "LISTEN" || true)
+    if [[ -n "$PT" ]]; then
+        for pton in $(echo "$PT" | cut -d: -f2 | cut -d' ' -f1 | uniq); do
+            svcs=$(echo "$PT" | grep -w "$pton" | awk '{print $1}' | uniq)
+            if [[ "$porta" == "$pton" ]]; then
+                echo -e "\n\033[1;31mPUERTO \033[1;33m$porta \033[1;31mEN USO POR \033[1;37m$svcs\033[0m"
+                sleep 2
+                return 1
+            fi
+        done
+    fi
+    return 0
+}
+
+verif_ptrs_socks() {
+    local porta=$1
+    if command -v lsof >/dev/null 2>&1; then
+        local occ
+        occ=$(lsof -iTCP:"$porta" -sTCP:LISTEN -n -P 2>/dev/null | tail -n +2)
+        if [[ -n "$occ" ]]; then
+            echo -e "\n\033[1;31mPUERTO \033[1;33m$porta \033[1;31mEN USO (LISTEN):\033[0m"
+            echo "$occ"
+            sleep 2
+            return 1
+        fi
+    elif command -v ss >/dev/null 2>&1; then
+        if ss -tln 2>/dev/null | grep -qE "[:,]${porta}([^0-9]|$)"; then
+            echo -e "\n\033[1;31mPUERTO \033[1;33m$porta \033[1;31mEN USO (ss LISTEN)\033[0m"
+            sleep 2
+            return 1
+        fi
+    fi
+    return 0
 }
 
 scan_bhttp_ports() {
@@ -71,10 +145,6 @@ scan_bhttp_ports() {
     echo "${ports[@]:-}"
 }
 
-get_online_users_count() {
-    who 2>/dev/null | grep -E "pts|sshd" | wc -l || echo "0"
-}
-
 get_users_stats() {
     local total=0
     local active=0
@@ -94,616 +164,334 @@ get_users_stats() {
         done < "$USER_DATABASE"
     fi
 
-    local online; online=$(get_online_users_count)
+    if [[ $total -eq 0 ]]; then
+        total=$(awk -F: '$3>=1000 && $1!="nobody" {print $1}' /etc/passwd 2>/dev/null | wc -l)
+        active=$total
+    fi
+
+    local online
+    online=$(who 2>/dev/null | grep -E "pts|sshd" | wc -l || echo "0")
     echo "$total:$active:$expired:$online"
 }
 
-get_status_icon() {
-    local query="$1"
-    if [[ "$query" == "bhttp" ]]; then
-        local ports
-        ports=$(scan_bhttp_ports)
-        if [[ -n "$ports" ]]; then
-            echo -e "${GREEN}o${NC}"
-        else
-            echo -e "${RED}x${NC}"
-        fi
-        return
-    fi
-
-    if systemctl is-active --quiet "$query" 2>/dev/null || pgrep -f "$query" >/dev/null 2>&1; then
-        echo -e "${GREEN}o${NC}"
-    else
-        echo -e "${RED}x${NC}"
-    fi
-}
-
 # ─────────────────────────────────────────────────────────────────────────────
-#  CABECERA DEL MENÚ PRINCIPAL
+#  SUBMÓDULOS DE PROTOCOLOS AUTÉNTICOS SSH-PLUS
 # ─────────────────────────────────────────────────────────────────────────────
-draw_main_header() {
+
+# 1. OPENSSH
+fun_openssh() {
     clear
-    local ip; ip=$(get_public_ip)
-    local os; os=$(lsb_release -sd 2>/dev/null || cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"' || echo 'Linux')
-    local ram_used; ram_used=$(free -m | awk '/Mem:/ {print $3}')
-    local ram_total; ram_total=$(free -m | awk '/Mem:/ {print $2}')
-    local ram_pct; ram_pct=$(( ram_used * 100 / (ram_total > 0 ? ram_total : 1) ))
-    local cpu_load; cpu_load=$(top -bn1 2>/dev/null | grep "Cpu(s)" | awk '{print $2 + $4"%"}' || echo "N/A")
-    local uptime_str; uptime_str=$(uptime -p 2>/dev/null | sed 's/up //' || uptime | awk -F'( |,|:)+' '{print $6"h "$7"m"}')
-
-    local stats_str; stats_str=$(get_users_stats)
-    local u_total; u_total=$(echo "$stats_str" | cut -d: -f1)
-    local u_active; u_active=$(echo "$stats_str" | cut -d: -f2)
-    local u_expired; u_expired=$(echo "$stats_str" | cut -d: -f3)
-    local u_online; u_online=$(echo "$stats_str" | cut -d: -f4)
-
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                 ⚡ SSH-CRIS MASTER SUITE ${VERSION} ⚡            ${NC}"
-    echo -e "${DIM}           Control Maestro de Túneles VPN & Servidores          ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    printf " ${WHITE}IP Pública:    ${GREEN}%-18s${WHITE}   SO:  ${YELLOW}%s${NC}\n" "$ip" "$os"
-    printf " ${WHITE}Memoria RAM:   ${GREEN}%-18s${WHITE}   CPU: ${YELLOW}%s | %s${NC}\n" "${ram_used}MB / ${ram_total}MB (${ram_pct}%)" "$cpu_load" "$uptime_str"
-    printf " ${WHITE}Creados: ${GREEN}%-4s${WHITE} | Activos: ${GREEN}%-4s${WHITE} | Vencidos: ${RED}%-4s${WHITE} | En Línea: ${GREEN}%-4s${NC}\n" "$u_total" "$u_active" "$u_expired" "$u_online"
-    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "\E[44;1;37m            OPENSSH             \E[0m\n"
+    local cur_ssh
+    cur_ssh=$(grep '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | xargs || echo "22")
+    echo -e "\033[1;33mPUERTOS EN USO: \033[1;32m${cur_ssh:-22}\033[0m\n"
+    echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;37m> \033[1;33mAÑADIR PUERTO\033[1;31m"
+    echo -e "[\033[1;36m2\033[1;31m] \033[1;37m> \033[1;33mELIMINAR PUERTO\033[1;31m"
+    echo -e "[\033[1;36m0\033[1;31m] \033[1;37m> \033[1;33mVOLVER\033[0m"
+    echo ""
+    echo -ne "\033[1;32m¿QUÉ DESEA HACER ?\033[1;37m "
+    read -r resp
+    if [[ "$resp" == '1' ]]; then
+        clear
+        echo -e "\E[44;1;37m         AÑADIR PUERTO AL SSH         \E[0m\n"
+        echo -ne "\033[1;32m¿QUÉ PUERTO DESEA AÑADIR ?\033[1;37m "
+        read -r pt
+        [[ -z "$pt" || ! "$pt" =~ ^[0-9]+$ ]] && {
+            echo -e "\n\033[1;31mPuerto no válido!"
+            sleep 2
+            return
+        }
+        verif_ptrs "$pt" || return
+        echo -e "\n\033[1;32mAÑADIENDO PUERTO AL SSH\033[0m"
+        echo ""
+        fun_addpssh() {
+            echo "Port $pt" >>/etc/ssh/sshd_config
+            sed -i 's/#*AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config
+            sed -i 's/#*GatewayPorts.*/GatewayPorts yes/' /etc/ssh/sshd_config
+            systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || service ssh restart 2>/dev/null
+        }
+        fun_bar 'fun_addpssh'
+        ufw allow "$pt"/tcp 2>/dev/null || true
+        echo -e "\n\033[1;32mPUERTO $pt AÑADIDO CON ÉXITO!\033[0m"
+        sleep 2
+    elif [[ "$resp" == '2' ]]; then
+        clear
+        echo -e "\E[41;1;37m        ELIMINAR PUERTO DEL SSH        \E[0m\n"
+        echo -e "\033[1;33mPUERTOS EN USO: \033[1;32m${cur_ssh:-22}\033[0m\n"
+        echo -ne "\033[1;32m¿QUÉ PUERTO DESEA ELIMINAR ?\033[1;37m "
+        read -r pt
+        [[ -z "$pt" || "$pt" == "22" ]] && {
+            echo -e "\n\033[1;31mNo se puede eliminar el puerto principal 22 o puerto vacío."
+            sleep 2
+            return
+        }
+        sed -i "/^Port $pt/d" /etc/ssh/sshd_config
+        systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || service ssh restart 2>/dev/null
+        echo -e "\n\033[1;32mPUERTO $pt ELIMINADO CON ÉXITO!\033[0m"
+        sleep 2
+    fi
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  1. ADMINISTRAR USUARIOS
-# ─────────────────────────────────────────────────────────────────────────────
-menu_users() {
+# 2. PROXY SOCKS / WEBSOCKET (SSH-Plus Native Engine)
+fun_socks_prepare_activate() {
+    for _k in $(pgrep -f '/etc/SSHPlus/proxy.py' 2>/dev/null); do
+        [[ "$_k" =~ ^[0-9]+$ ]] && kill -9 "$_k" 2>/dev/null || true
+    done
+    for _sp in $(screen -ls 2>/dev/null | grep '\.proxy' | awk '{print $1}'); do
+        screen -r -S "$_sp" -X quit 2>/dev/null || true
+    done
+    screen -wipe >/dev/null 2>&1 || true
+}
+
+fun_ws_prepare_activate() {
+    for _k in $(pgrep -f '/etc/SSHPlus/wsproxy.py' 2>/dev/null); do
+        [[ "$_k" =~ ^[0-9]+$ ]] && kill -9 "$_k" 2>/dev/null || true
+    done
+    for _sp in $(screen -ls 2>/dev/null | grep '\.ws' | awk '{print $1}'); do
+        screen -r -S "$_sp" -X quit 2>/dev/null || true
+    done
+    screen -wipe >/dev/null 2>&1 || true
+}
+
+ensure_proxy_scripts() {
+    if [[ ! -f /etc/SSHPlus/proxy.py ]]; then
+        if [[ -f "./proxy.py" ]]; then
+            cp -f "./proxy.py" /etc/SSHPlus/proxy.py
+        elif [[ -f "/opt/ssh-cris/proxy.py" ]]; then
+            cp -f "/opt/ssh-cris/proxy.py" /etc/SSHPlus/proxy.py
+        else
+            curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy.py" -o /etc/SSHPlus/proxy.py 2>/dev/null || \
+            wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy.py" -O /etc/SSHPlus/proxy.py 2>/dev/null || true
+        fi
+        chmod +x /etc/SSHPlus/proxy.py 2>/dev/null || true
+    fi
+
+    if [[ ! -f /etc/SSHPlus/wsproxy.py ]]; then
+        if [[ -f "./wsproxy.py" ]]; then
+            cp -f "./wsproxy.py" /etc/SSHPlus/wsproxy.py
+        elif [[ -f "/opt/ssh-cris/wsproxy.py" ]]; then
+            cp -f "/opt/ssh-cris/wsproxy.py" /etc/SSHPlus/wsproxy.py
+        else
+            curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/wsproxy.py" -o /etc/SSHPlus/wsproxy.py 2>/dev/null || \
+            wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/wsproxy.py" -O /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+        fi
+        chmod +x /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+    fi
+}
+
+fun_socks() {
+    ensure_proxy_scripts
     while true; do
         clear
-        local stats_str; stats_str=$(get_users_stats)
-        local u_total; u_total=$(echo "$stats_str" | cut -d: -f1)
-        local u_active; u_active=$(echo "$stats_str" | cut -d: -f2)
-        local u_expired; u_expired=$(echo "$stats_str" | cut -d: -f3)
-        local u_online; u_online=$(echo "$stats_str" | cut -d: -f4)
+        sshplus_line
+        echo -e "                   ${BLUE}CONFIGURAR PROXY SOCKS${SCOLOR}"
+        sshplus_line
+        local _socks_ports
+        _socks_ports=$(netstat -nplt 2>/dev/null | grep -E 'python3|/python' | awk '{print $4}' | cut -d: -f2 | sort -n -u | xargs || true)
+        echo -e "${SSHPLUS_DARK_GREEN}PUERTOS:${SCOLOR} \033[1;32m${_socks_ports:-N/A}\033[0m"
+        echo -e "\033[1;37m------------------------------------------------------------\033[0m"
 
-        echo -e "${CYAN}========================================================================${NC}"
-        echo -e "${WHITE}                          ADMINISTRAR USUARIOS                          ${NC}"
-        echo -e "${CYAN}========================================================================${NC}"
-        printf " ${WHITE}Creados: ${GREEN}%-4s${WHITE} | Activos: ${GREEN}%-4s${WHITE} | Vencidos: ${RED}%-4s${WHITE} | En Línea: ${GREEN}%-4s${NC}\n" "$u_total" "$u_active" "$u_expired" "$u_online"
-        echo -e "${CYAN}========================================================================${NC}"
-        echo -e " ${GREEN}[1]${WHITE}  > CREAR USUARIO          ${GREEN}[6]${WHITE}  > CAMBIAR LIMITE"
-        echo -e " ${GREEN}[2]${WHITE}  > CREAR PRUEBA           ${GREEN}[7]${WHITE}  > CAMBIAR CLAVE"
-        echo -e " ${GREEN}[3]${WHITE}  > ELIMINAR USUARIO       ${GREEN}[8]${WHITE}  > INFORME DE USUARIO"
-        echo -e " ${GREEN}[4]${WHITE}  > MONITOR ONLINE         ${GREEN}[9]${WHITE}  > ELIMINAR CADUCADOS"
-        echo -e " ${GREEN}[5]${WHITE}  > CAMBIAR FECHA          ${GREEN}[10]${WHITE} > TOKEN HTTP CONEXION"
-        echo -e "                           ${RED}[0]${WHITE}  > VOLVER"
-        echo -e "${CYAN}========================================================================${NC}"
-        read -r -p " Opcion: " u_opt
+        local var_sks1 var_sks2
+        pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1 && var_sks1="\033[1;32mo\033[0m" || var_sks1="\033[1;31mx\033[0m"
+        pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1 && var_sks2="\033[1;32mo\033[0m" || var_sks2="\033[1;31mx\033[0m"
 
-        case "$u_opt" in
-            1) crear_usuario ;;
-            2) crear_prueba ;;
-            3) eliminar_usuario ;;
-            4) monitor_conexiones ;;
-            5) renovar_usuario ;;
-            6) cambiar_limite ;;
-            7) cambiar_clave ;;
-            8) listar_usuarios ;;
-            9) eliminar_caducados ;;
-            10) generar_token_http_conexion ;;
-            0) break ;;
-            *) warn "Opción inválida"; sleep 1 ;;
+        echo -e "${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> SOCKS SSH\033[0m            $var_sks1"
+        echo -e "${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> WEBSOCKET\033[0m            $var_sks2"
+        echo -e "${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> ABRIR PUERTO EXTRA SOCKS\033[0m"
+        echo -e "${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> MODIFICAR ESTADO SOCKS SSH\033[0m"
+        echo -e "${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> MODIFICAR ESTADO WEBSOCKET\033[0m"
+        echo -e "${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
+        sshplus_line
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r resposta
+
+        case "$resposta" in
+            1)
+                if pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1; then
+                    clear
+                    echo -e "\E[41;1;37m             DESACTIVAR PROXY SOCKS             \E[0m\n"
+                    fun_socksoff() {
+                        for pidproxy in $(screen -ls 2>/dev/null | grep '\.proxy' | awk '{print $1}'); do
+                            screen -r -S "$pidproxy" -X quit 2>/dev/null || true
+                        done
+                        for _k in $(pgrep -f '/etc/SSHPlus/proxy.py' 2>/dev/null); do
+                            kill -9 "$_k" 2>/dev/null || true
+                        done
+                        screen -wipe >/dev/null 2>&1 || true
+                    }
+                    echo -e "\033[1;32mDESACTIVANDO EL PROXY SOCKS...\033[0m"
+                    fun_bar 'fun_socksoff'
+                    echo -e "\n\033[1;32mPROXY SOCKS DESACTIVADO CON ÉXITO!\033[0m"
+                    sleep 2
+                else
+                    clear
+                    fun_socks_prepare_activate
+                    echo -e "\E[44;1;37m             INICIAR PROXY SOCKS             \E[0m\n"
+                    echo -ne "\033[1;32m¿QUÉ PUERTO DESEA UTILIZAR ?\033[1;37m: "
+                    read -r porta
+                    [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=80
+                    verif_ptrs_socks "$porta" || continue
+                    fun_inisocks() {
+                        screen -dmS proxy "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta"
+                    }
+                    echo -e "\n\033[1;32mINICIANDO EL PROXY SOCKS EN PUERTO $porta...\033[0m"
+                    fun_bar 'fun_inisocks'
+                    ufw allow "$porta"/tcp 2>/dev/null || true
+                    echo -e "\n\033[1;32mSOCKS ACTIVADO CON ÉXITO EN PUERTO $porta\033[0m"
+                    sleep 2
+                fi
+                ;;
+            2)
+                if pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
+                    clear
+                    echo -e "\E[41;1;37m             DESACTIVAR WEBSOCKET             \E[0m\n"
+                    fun_wssoff() {
+                        for pidproxy in $(screen -ls 2>/dev/null | grep '\.ws' | awk '{print $1}'); do
+                            screen -r -S "$pidproxy" -X quit 2>/dev/null || true
+                        done
+                        for _k in $(pgrep -f '/etc/SSHPlus/wsproxy.py' 2>/dev/null); do
+                            kill -9 "$_k" 2>/dev/null || true
+                        done
+                        screen -wipe >/dev/null 2>&1 || true
+                    }
+                    echo -e "\033[1;32mDESACTIVANDO WEBSOCKET...\033[0m"
+                    fun_bar 'fun_wssoff'
+                    echo -e "\n\033[1;32mWEBSOCKET DESACTIVADO CON ÉXITO!\033[0m"
+                    sleep 2
+                else
+                    clear
+                    fun_ws_prepare_activate
+                    echo -e "\E[44;1;37m             INICIAR WEBSOCKET             \E[0m\n"
+                    echo -ne "\033[1;32m¿QUÉ PUERTO DESEA UTILIZAR ? (ej: 80 o 8080)\033[1;37m: "
+                    read -r porta
+                    [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=80
+                    verif_ptrs_socks "$porta" || continue
+                    fun_iniws() {
+                        screen -dmS ws "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta"
+                    }
+                    echo -e "\n\033[1;32mINICIANDO WEBSOCKET EN PUERTO $porta...\033[0m"
+                    fun_bar 'fun_iniws'
+                    ufw allow "$porta"/tcp 2>/dev/null || true
+                    echo -e "\n\033[1;32mWEBSOCKET ACTIVADO CON ÉXITO EN PUERTO $porta\033[0m"
+                    sleep 2
+                fi
+                ;;
+            3)
+                clear
+                echo -e "\E[44;1;37m          ABRIR PUERTO EXTRA SOCKS          \E[0m\n"
+                echo -ne "\033[1;32m¿QUÉ PUERTO EXTRA DESEA UTILIZAR ?\033[1;37m: "
+                read -r porta
+                [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && {
+                    echo -e "\n\033[1;31mPuerto inválido!"
+                    sleep 2
+                    continue
+                }
+                verif_ptrs_socks "$porta" || continue
+                fun_extra_sks() {
+                    screen -dmS "proxy_$porta" "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta"
+                }
+                echo -e "\n\033[1;32mINICIANDO PUERTO EXTRA $porta...\033[0m"
+                fun_bar 'fun_extra_sks'
+                ufw allow "$porta"/tcp 2>/dev/null || true
+                echo -e "\n\033[1;32mPUERTO EXTRA SOCKS $porta ACTIVADO!\033[0m"
+                sleep 2
+                ;;
+            4)
+                if pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1; then
+                    clear
+                    echo -e "\E[44;1;37m         MODIFICAR ESTADO SOCKS SSH         \E[0m\n"
+                    echo -ne "\033[1;32mINFORME SU MENSAJE DE ESTADO (ej: HTTP CONEXION ONLINE)\033[1;31m:\033[1;37m "
+                    read -r msgg
+                    [[ -z "$msgg" ]] && msgg="HTTP CONEXION"
+                    sed -i "s/MSG = .*/MSG = '$msgg'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
+                    echo -e "\n\033[1;32mMENSAJE ACTUALIZADO A: '$msgg'\033[0m"
+                    sleep 2
+                else
+                    echo -e "\n\033[1;31mActive SOCKS SSH primero."
+                    sleep 2
+                fi
+                ;;
+            5)
+                if pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
+                    clear
+                    echo -e "\E[44;1;37m         MODIFICAR ESTADO WEBSOCKET         \E[0m\n"
+                    echo -ne "\033[1;32mINFORME SU MENSAJE WEBSOCKET\033[1;31m:\033[1;37m "
+                    read -r msgg
+                    [[ -z "$msgg" ]] && msgg="HTTP CONEXION WS"
+                    sed -i "s/MSG = .*/MSG = '$msgg'/g" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+                    echo -e "\n\033[1;32mMENSAJE ACTUALIZADO A: '$msgg'\033[0m"
+                    sleep 2
+                else
+                    echo -e "\n\033[1;31mActive WebSocket primero."
+                    sleep 2
+                fi
+                ;;
+            0) return ;;
         esac
     done
 }
 
-crear_usuario() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                          CREAR NUEVO USUARIO                           ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Nombre de usuario: " username
-    [[ -z "$username" ]] && { fail "El nombre no puede estar vacío"; pause; return; }
-
-    if id "$username" >/dev/null 2>&1; then
-        fail "El usuario '$username' ya existe en el sistema."
-        pause; return
-    fi
-
-    read -r -p " Contraseña: " password
-    [[ -z "$password" ]] && { fail "La contraseña no puede estar vacía"; pause; return; }
-
-    read -r -p " Días de duración (ej: 30): " days
-    [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
-
-    read -r -p " Límite de conexiones simultáneas (ej: 1 o 2): " limit
-    [[ ! "$limit" =~ ^[0-9]+$ ]] && limit=1
-
-    local exp_date
-    exp_date=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date -v+${days}d "+%Y-%m-%d")
-
-    useradd -M -s /bin/false -e "$exp_date" "$username" 2>/dev/null || useradd -M -s /bin/false "$username"
-    echo "$username:$password" | chpasswd
-
-    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-    echo "$username:$limit:$exp_date" >> "$USER_DATABASE"
-
-    local ip; ip=$(get_public_ip)
-    ok "Usuario '$username' creado exitosamente:"
-    echo "────────────────────────────────────────────────────────────────────────"
-    echo -e "${WHITE}• Servidor:   ${GREEN}$ip${NC}"
-    echo -e "${WHITE}• Usuario:    ${YELLOW}$username${NC}"
-    echo -e "${WHITE}• Contraseña: ${YELLOW}$password${NC}"
-    echo -e "${WHITE}• Vence el:   ${CYAN}$exp_date ($days días)${NC}"
-    echo -e "${WHITE}• Límite:     ${GREEN}$limit conexión(es)${NC}"
-    echo "────────────────────────────────────────────────────────────────────────"
-    pause
-}
-
-crear_prueba() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       CREAR USUARIO DE PRUEBA (TRIAL)                  ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Horas de duración para la prueba (ej: 2 o 4, default 2): " hours
-    [[ ! "$hours" =~ ^[0-9]+$ ]] && hours=2
-
-    local rand_id=$(( RANDOM % 9000 + 1000 ))
-    local username="test_${rand_id}"
-    local password=$(( RANDOM % 9000 + 1000 ))
-    local exp_date; exp_date=$(date -d "+$hours hours" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
-
-    useradd -M -s /bin/false "$username" 2>/dev/null || useradd -s /bin/false "$username"
-    echo "$username:$password" | chpasswd
-
-    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-    echo "$username:1:$exp_date" >> "$USER_DATABASE"
-
-    if command -v at >/dev/null 2>&1; then
-        echo "userdel -f $username 2>/dev/null; sed -i '/^$username:/d' $USER_DATABASE" | at now + $hours hours 2>/dev/null || true
-    fi
-
-    local ip; ip=$(get_public_ip)
-    ok "Usuario de prueba creado exitosamente:"
-    echo "────────────────────────────────────────────────────────────────────────"
-    echo -e "${WHITE}• Servidor:   ${GREEN}$ip${NC}"
-    echo -e "${WHITE}• Usuario:    ${YELLOW}$username${NC}"
-    echo -e "${WHITE}• Contraseña: ${YELLOW}$password${NC}"
-    echo -e "${WHITE}• Duración:   ${CYAN}$hours hora(s)${NC}"
-    echo -e "${WHITE}• Límite:     ${GREEN}1 conexión${NC}"
-    echo "────────────────────────────────────────────────────────────────────────"
-    pause
-}
-
-eliminar_usuario() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                          ELIMINAR USUARIO                              ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Nombre de usuario a eliminar: " username
-    if ! id "$username" >/dev/null 2>&1; then
-        fail "El usuario '$username' no existe."
-        pause; return
-    fi
-    pkill -u "$username" 2>/dev/null || true
-    userdel -f "$username" 2>/dev/null || true
-    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-    ok "Usuario '$username' eliminado correctamente."
-    pause
-}
-
-renovar_usuario() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       CAMBIAR FECHA / RENOVAR USUARIO                  ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Nombre de usuario: " username
-    if ! id "$username" >/dev/null 2>&1; then
-        fail "El usuario '$username' no existe."
-        pause; return
-    fi
-
-    read -r -p " Agregar días adicionales (ej: 30): " add_days
-    if [[ "$add_days" =~ ^[0-9]+$ ]] && [[ "$add_days" -gt 0 ]]; then
-        local exp_date
-        exp_date=$(date -d "+$add_days days" "+%Y-%m-%d" 2>/dev/null || date -v+${add_days}d "+%Y-%m-%d")
-        chage -E "$exp_date" "$username" 2>/dev/null || true
-        local limit; limit=$(grep "^$username:" "$USER_DATABASE" 2>/dev/null | cut -d: -f2 || echo "1")
-        sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-        echo "$username:${limit:-1}:$exp_date" >> "$USER_DATABASE"
-        ok "Fecha de vencimiento extendida a $exp_date."
-    fi
-    pause
-}
-
-cambiar_limite() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       CAMBIAR LIMITE DE CONEXIONES                     ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Nombre de usuario: " username
-    if ! id "$username" >/dev/null 2>&1; then
-        fail "El usuario '$username' no existe."
-        pause; return
-    fi
-
-    read -r -p " Nuevo límite de conexiones (ej: 1, 2, 3): " new_limit
-    [[ ! "$new_limit" =~ ^[0-9]+$ ]] && new_limit=1
-
-    local exp; exp=$(grep "^$username:" "$USER_DATABASE" 2>/dev/null | cut -d: -f3 || echo "")
-    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-    echo "$username:$new_limit:${exp:-2026-12-31}" >> "$USER_DATABASE"
-    ok "Límite actualizado a $new_limit conexión(es) simultánea(s)."
-    pause
-}
-
-cambiar_clave() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       CAMBIAR CONTRASEÑA DE USUARIO                    ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Nombre de usuario: " username
-    if ! id "$username" >/dev/null 2>&1; then
-        fail "El usuario '$username' no existe."
-        pause; return
-    fi
-
-    read -r -p " Nueva contraseña: " password
-    [[ -z "$password" ]] && { fail "Contraseña vacía"; pause; return; }
-    echo "$username:$password" | chpasswd
-    ok "Contraseña actualizada exitosamente."
-    pause
-}
-
-listar_usuarios() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       INFORME DETALLADO DE USUARIOS                    ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    printf "%-16s %-12s %-10s %-16s %-8s\n" "USUARIO" "VENCE" "DIAS" "ESTADO" "LIMITE"
-    echo "────────────────────────────────────────────────────────────────────────"
-    local now_sec; now_sec=$(date +%s)
-
-    while IFS=: read -r u limit exp || [[ -n "$u" ]]; do
-        [[ -z "$u" || "$u" =~ ^# ]] && continue
-        local exp_sec; exp_sec=$(date -d "$exp" +%s 2>/dev/null || echo 0)
-        local days_left=$(( (exp_sec - now_sec) / 86400 ))
-        local status
-        if [[ $exp_sec -lt $now_sec ]]; then
-            status="${RED}VENCIDO${NC}"
-            days_left="0"
-        else
-            status="${GREEN}ACTIVO${NC}"
-        fi
-        printf "%-16s %-12s %-10s %-24b %-8s\n" "$u" "$exp" "${days_left}d" "$status" "${limit} conn"
-    done < "$USER_DATABASE"
-    echo "────────────────────────────────────────────────────────────────────────"
-    pause
-}
-
-eliminar_caducados() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       ELIMINAR USUARIOS CADUCADOS                      ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    local now_sec; now_sec=$(date +%s)
-    local count=0
-
-    if [[ -f "$USER_DATABASE" ]]; then
-        while IFS=: read -r u limit exp || [[ -n "$u" ]]; do
-            [[ -z "$u" || "$u" =~ ^# ]] && continue
-            local exp_sec; exp_sec=$(date -d "$exp" +%s 2>/dev/null || echo 0)
-            if [[ $exp_sec -lt $now_sec ]]; then
-                userdel -f "$u" 2>/dev/null || true
-                pkill -u "$u" 2>/dev/null || true
-                sed -i "/^$u:/d" "$USER_DATABASE" 2>/dev/null || true
-                echo -e " ${RED}✘ Eliminado usuario vencido:${NC} $u (Venció: $exp)"
-                ((count++))
-            fi
-        done < "$USER_DATABASE"
-    fi
-
-    if [[ $count -eq 0 ]]; then
-        ok "No se encontraron usuarios caducados."
-    else
-        ok "Se eliminaron $count usuario(s) caducado(s) exitosamente."
-    fi
-    pause
-}
-
-generar_token_http_conexion() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}               GENERAR TOKEN EXCLUSIVO HTTP CONEXION                    ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Usuario a generar Token: " username
-    if ! id "$username" >/dev/null 2>&1; then
-        fail "El usuario '$username' no existe."
-        pause; return
-    fi
-    local u_info; u_info=$(grep "^$username:" "$USER_DATABASE" 2>/dev/null || echo "$username:1:N/A")
-    local u_limit; u_limit=$(echo "$u_info" | cut -d: -f2)
-    local u_exp; u_exp=$(echo "$u_info" | cut -d: -f3)
-
-    read -r -p " Ingresa la contraseña del usuario: " u_pass
-    [[ -z "$u_pass" ]] && u_pass="1234"
-
-    local ip; ip=$(get_public_ip)
-    local bhttp_ports_arr; read -r -a bhttp_ports_arr <<< "$(scan_bhttp_ports)"
-    local b_port="${bhttp_ports_arr[0]:-8080}"
-
-    local json_payload
-    json_payload=$(cat << EOF
-{"app":"HTTP_CONEXION","server":"$ip","ssh_port":22,"ssl_port":443,"bhttp_port":$b_port,"udp_port":36712,"user":"$username","pass":"$u_pass","limit":$u_limit,"exp":"$u_exp","auth_sig":"CRISDEV_$(date +%s)"}
-EOF
-)
-    local b64_token
-    b64_token=$(echo -n "$json_payload" | base64 | tr -d '\n')
-    local final_token="HC://${b64_token}"
-
-    echo ""
-    echo -e "${GREEN}✔ Token generado exitosamente para HTTP Conexión:${NC}"
-    echo "────────────────────────────────────────────────────────────────────────"
-    echo -e "${YELLOW}${final_token}${NC}"
-    echo "────────────────────────────────────────────────────────────────────────"
-    echo -e "${WHITE}• Usuario:${NC}    ${GREEN}$username${NC}"
-    echo -e "${WHITE}• Vencimiento:${NC}${CYAN}$u_exp${NC}"
-    echo -e "${WHITE}• Límite:${NC}     ${YELLOW}$u_limit conexión(es)${NC}"
-    echo -e "${WHITE}• Servidor:${NC}   ${CYAN}$ip${NC}"
-    echo ""
-    echo -e "${DIM}Este Token encapsula credenciales seguras listas para importar en 1 click en la app HTTP Conexión.${NC}"
-    pause
-}
-
-monitor_conexiones() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       MONITOR DE CONEXIONES ONLINE                     ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    printf "%-18s %-12s %-20s\n" "USUARIO" "PID" "DESDE"
-    echo "────────────────────────────────────────────────────────────────────────"
-    who 2>/dev/null | grep -E "pts|sshd" | awk '{printf "%-18s %-12s %-20s\n", $1, $2, $5}' || echo "No hay conexiones activas"
-    echo "────────────────────────────────────────────────────────────────────────"
-    pause
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  CABECERA Y LISTA DE SERVICIOS ACTIVOS DE PROTOCOLOS (SOLO ACTIVOS)
-# ─────────────────────────────────────────────────────────────────────────────
-print_protocols_active_header() {
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       CONFIGURACION DE PROTOCOLOS                      ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-
-    # OpenSSH
-    if systemctl is-active --quiet sshd 2>/dev/null || systemctl is-active --quiet ssh 2>/dev/null || pgrep -f sshd >/dev/null 2>&1; then
-        echo -e "${CYAN}SERVICIO: ${WHITE}OPENSSH ${CYAN}PUERTO: ${GREEN}22${NC}"
-    fi
-
-    # Proxy Socks / Python Socks / WebSocket
-    if systemctl is-active --quiet proxy-socks 2>/dev/null || systemctl is-active --quiet ws-proxy 2>/dev/null || pgrep -f "proxy.py" >/dev/null 2>&1; then
-        local p_port; p_port=$(ss -tlpn 2>/dev/null | grep -E "proxy|python" | awk '{print $4}' | awk -F: '{print $NF}' | head -n1 || echo "80")
-        echo -e "${CYAN}SERVICIO: ${WHITE}PROXY SOCKS ${CYAN}PUERTO: ${GREEN}${p_port:-80}${NC}"
-    fi
-
-    # SSL Tunnel
-    if systemctl is-active --quiet stunnel4 2>/dev/null || pgrep -f stunnel4 >/dev/null 2>&1; then
-        echo -e "${CYAN}SERVICIO: ${WHITE}SSL TUNNEL ${CYAN}PUERTO: ${GREEN}443${NC}"
-    fi
-
-    # Dropbear
-    if systemctl is-active --quiet dropbear 2>/dev/null || pgrep -f dropbear >/dev/null 2>&1; then
-        local dp_ports; dp_ports=$(ss -tlpn 2>/dev/null | grep dropbear | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u | tr '\n' ' ' | sed 's/ $//' || echo "110")
-        echo -e "${CYAN}SERVICIO: ${WHITE}DROPBEAR ${CYAN}PUERTO: ${GREEN}${dp_ports:-110}${NC}"
-    fi
-
-    # Hysteria v1 / UDP CRIS
-    if systemctl is-active --quiet hysteria-server.service 2>/dev/null || pgrep -f hysteria >/dev/null 2>&1; then
-        local uport="36712"
-        if [[ -f /etc/hysteria/config.json ]]; then
-            uport=$(grep -o '"listen": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
-            [[ -z "$uport" ]] && uport=$(grep -o '"listen": ":[0-9]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
-        fi
-        echo -e "${CYAN}SERVICIO: ${WHITE}HYSTERIA v1 (UDP CRIS) ${CYAN}PUERTO: ${GREEN}${uport}${NC}"
-    fi
-
-    # BHTTP Multi-Puerto
-    local bhttp_arr
-    read -r -a bhttp_arr <<< "$(scan_bhttp_ports)"
-    if [[ ${#bhttp_arr[@]} -gt 0 ]]; then
-        local b_str; b_str=$(IFS=", "; echo "${bhttp_arr[*]}")
-        echo -e "${CYAN}SERVICIO: ${WHITE}BHTTP RELAY ${CYAN}PUERTO: ${GREEN}${b_str}${NC}"
-    fi
-
-    # BadVPN
-    if systemctl is-active --quiet badvpn.service 2>/dev/null || pgrep -f badvpn-udpgw >/dev/null 2>&1; then
-        echo -e "${CYAN}SERVICIO: ${WHITE}BADVPN ${CYAN}PUERTO: ${GREEN}7300${NC}"
-    fi
-
-    # SlowDNS
-    if pgrep -f dnstt-server >/dev/null 2>&1 || systemctl is-active --quiet dnstt-server 2>/dev/null; then
-        echo -e "${CYAN}SERVICIO: ${WHITE}SLOWDNS ${CYAN}PUERTO: ${GREEN}53${NC}"
-    fi
-
-    # V2Ray / Xray
-    if systemctl is-active --quiet xray 2>/dev/null || systemctl is-active --quiet v2ray 2>/dev/null; then
-        echo -e "${CYAN}SERVICIO: ${WHITE}V2RAY / XRAY ${CYAN}PUERTO: ${GREEN}443, 8443${NC}"
-    fi
-
-    echo -e "${CYAN}========================================================================${NC}"
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  2. CONFIGURACION DE PROTOCOLOS (GRID 2 COLUMNAS)
-# ─────────────────────────────────────────────────────────────────────────────
-menu_protocolos() {
-    while true; do
+# 3. SSL TUNNEL (STUNNEL4)
+inst_ssl() {
+    if netstat -nltp 2>/dev/null | grep -q 'stunnel'; then
+        local sslt
+        sslt=$(netstat -nplt 2>/dev/null | grep stunnel | awk '{print $4}' | awk -F: '{print $NF}' | xargs || echo "443")
         clear
-        print_protocols_active_header
+        echo -e "\E[44;1;37m              GESTIONAR SSL TUNNEL               \E[0m"
+        echo -e "\n\033[1;33mPUERTOS EN USO\033[1;37m: \033[1;32m$sslt\033[0m\n"
+        echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;37m> \033[1;33mMODIFICAR PUERTO SSL TUNNEL\033[0m"
+        echo -e "\033[1;31m[\033[1;36m2\033[1;31m] \033[1;37m> \033[1;33mELIMINAR / DETENER SSL TUNNEL\033[0m"
+        echo -e "\033[1;31m[\033[1;36m0\033[1;31m] \033[1;37m> \033[1;33mVOLVER\033[0m"
+        echo ""
+        echo -ne "\033[1;32m¿QUÉ DESEA HACER ?\033[1;37m "
+        read -r resposta
+        if [[ "$resposta" == '1' ]]; then
+            echo -ne "\n\033[1;32m¿QUÉ PUERTO DESEA UTILIZAR ?\033[1;37m "
+            read -r porta
+            [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && return
+            verif_ptrs "$porta" || return
+            sed -i "s/accept = .*/accept = $porta/g" /etc/stunnel/stunnel.conf 2>/dev/null || true
+            systemctl restart stunnel4 2>/dev/null || service stunnel4 restart 2>/dev/null
+            ufw allow "$porta"/tcp 2>/dev/null || true
+            echo -e "\n\033[1;32mPUERTO MODIFICADO CON ÉXITO A $porta!\033[0m"
+            sleep 2
+        elif [[ "$resposta" == '2' ]]; then
+            del_ssl() {
+                systemctl stop stunnel4 2>/dev/null || service stunnel4 stop 2>/dev/null || true
+                systemctl disable stunnel4 2>/dev/null || true
+            }
+            fun_bar 'del_ssl'
+            echo -e "\n\033[1;32mSSL TUNNEL DETENIDO!\033[0m"
+            sleep 2
+        fi
+    else
+        clear
+        sshplus_line
+        echo -e "${SSHPLUS_CYAN}                  INSTALAR SSL TUNNEL${SCOLOR}"
+        sshplus_line
+        echo -e "${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> INSTALAR SSL TUNNEL POR DEFECTO (443 -> 22)\033[0m"
+        echo -e "${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> INSTALAR SSL TUNNEL WEBSOCKET (443 -> 80)\033[0m"
+        echo -e "${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
+        sshplus_line
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r resp_ssl
 
-        local st_ssh; st_ssh=$(get_status_icon "sshd")
-        local st_socks; st_socks=$(get_status_icon "proxy")
-        local st_ssl; st_ssl=$(get_status_icon "stunnel4")
-        local st_drop; st_drop=$(get_status_icon "dropbear")
-        local st_v2ray; st_v2ray=$(get_status_icon "xray")
-        local st_slow; st_slow=$(get_status_icon "dnstt")
-        local st_hyst; st_hyst=$(get_status_icon "hysteria")
-        local st_trojan; st_trojan=$(get_status_icon "trojan")
-        local st_badvpn; st_badvpn=$(get_status_icon "badvpn")
-        local st_ovpn; st_ovpn=$(get_status_icon "openvpn")
-        local st_ws; st_ws=$(get_status_icon "websocket")
-        local st_sslh; st_sslh=$(get_status_icon "sslh")
-        local st_squid; st_squid=$(get_status_icon "squid")
-        local st_chisel; st_chisel=$(get_status_icon "chisel")
-        local st_bhttp; st_bhttp=$(get_status_icon "bhttp")
+        local target_port=22
+        [[ "$resp_ssl" == '2' ]] && target_port=80
+        [[ "$resp_ssl" == '0' ]] && return
 
-        printf " ${GREEN}[1]${WHITE}  > OPENSSH            %b    ${GREEN}[10]${WHITE} > OPENVPN             %b\n" "$st_ssh" "$st_ovpn"
-        printf " ${GREEN}[2]${WHITE}  > PROXY SOCKS        %b    ${GREEN}[11]${WHITE} > WEBSOCKET-CORRECTOR %b\n" "$st_socks" "$st_ws"
-        printf " ${GREEN}[3]${WHITE}  > SSL TUNNEL         %b    ${GREEN}[12]${WHITE} > SSLH MULTIPLEX      %b\n" "$st_ssl" "$st_sslh"
-        printf " ${GREEN}[4]${WHITE}  > DROPBEAR           %b    ${GREEN}[13]${WHITE} > SQUID PROXY         %b\n" "$st_drop" "$st_squid"
-        printf " ${GREEN}[5]${WHITE}  > V2RAY              %b    ${GREEN}[14]${WHITE} > CHISEL              %b\n" "$st_v2ray" "$st_chisel"
-        printf " ${GREEN}[6]${WHITE}  > SLOWDNS            %b    ${GREEN}[15]${WHITE} > BHTTP MULTI-PUERTO  %b\n" "$st_slow" "$st_bhttp"
-        printf " ${GREEN}[7]${WHITE}  > HYSTERIA / UDPCRIS %b    ${GREEN}[16]${WHITE} > EXPORTAR PARA GEN\n" "$st_hyst"
-        printf " ${GREEN}[8]${WHITE}  > TROJAN-GO          %b    ${GREEN}[17]${WHITE} > TEST DE CONECTIVIDAD\n" "$st_trojan"
-        printf " ${GREEN}[9]${WHITE}  > BADVPN             %b    ${RED}[0]${WHITE}  > VOLVER\n" "$st_badvpn"
-        echo -e "${CYAN}========================================================================${NC}"
-        read -r -p " Opcion: " proto_opt
+        echo -ne "\n\033[1;32mDEFINA EL PUERTO SSL (default 443)\033[1;37m: "
+        read -r porta
+        [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=443
+        verif_ptrs "$porta" || return
 
-        case "$proto_opt" in
-            1) config_openssh ;;
-            2) config_proxy_socks ;;
-            3) config_stunnel ;;
-            4) menu_dropbear ;;
-            5) menu_v2ray ;;
-            6) menu_slowdns ;;
-            7) menu_udp ;;
-            8) menu_trojan ;;
-            9) instalar_badvpn ;;
-            10) menu_openvpn ;;
-            11) menu_websocket ;;
-            12) menu_sslh ;;
-            13) menu_squid ;;
-            14) menu_chisel ;;
-            15) menu_bhttp ;;
-            16) exportar_servidor_gen ;;
-            17) test_general_puertos ;;
-            0) break ;;
-            *) warn "Opción inválida"; sleep 1 ;;
-        esac
-    done
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  PROTOCOLOS: SUBRUTINAS
-# ─────────────────────────────────────────────────────────────────────────────
-config_openssh() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       CONFIGURACION OPENSSH SERVER                     ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    info "Optimizando configuración de OpenSSH (Puerto 22)..."
-    sed -i 's/#*AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config
-    sed -i 's/#*GatewayPorts.*/GatewayPorts yes/' /etc/ssh/sshd_config
-    sed -i 's/#*TCPKeepAlive.*/TCPKeepAlive yes/' /etc/ssh/sshd_config
-    sed -i 's/#*ClientAliveInterval.*/ClientAliveInterval 30/' /etc/ssh/sshd_config
-    sed -i 's/#*ClientAliveCountMax.*/ClientAliveCountMax 3/' /etc/ssh/sshd_config
-    systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
-    ok "OpenSSH configurado y activo en puerto 22 con TCP Forwarding."
-    pause
-}
-
-config_proxy_socks() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       PROXY SOCKS / HTTP PROXY                         ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e " ${GREEN}1)${WHITE} Iniciar Proxy Socks en Puerto 80"
-    echo -e " ${GREEN}2)${WHITE} Iniciar Proxy Socks en Puerto Personalizado"
-    echo -e " ${RED}3)${WHITE} Detener Proxy Socks"
-    echo -e " ${RED}0)${WHITE} Volver"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Opcion: " ps_opt
-    case "$ps_opt" in
-        1|2)
-            local pport=80
-            [[ "$ps_opt" == "2" ]] && read -r -p " Ingresa puerto proxy (ej: 8080): " pport
-            [[ ! "$pport" =~ ^[0-9]+$ ]] && pport=80
-            mkdir -p /opt/ssh-cris
-            cat > /opt/ssh-cris/proxy.py << 'PYEOF'
-import socket, threading, select, sys
-
-def handle_client(client_socket, target_host, target_port):
-    try:
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.connect((target_host, target_port))
-    except Exception:
-        client_socket.close()
-        return
-
-    sockets = [client_socket, server_socket]
-    while True:
-        try:
-            r, _, _ = select.select(sockets, [], [], 30)
-            if not r: break
-            for s in r:
-                other = server_socket if s is client_socket else client_socket
-                data = s.recv(8192)
-                if not data: return
-                other.sendall(data)
-        except Exception:
-            break
-    client_socket.close()
-    server_socket.close()
-
-def main(listen_port):
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(('0.0.0.0', int(listen_port)))
-    server.listen(256)
-    while True:
-        client, _ = server.accept()
-        t = threading.Thread(target=handle_client, args=(client, '127.0.0.1', 22))
-        t.daemon = True
-        t.start()
-
-if __name__ == '__main__':
-    main(sys.argv[1] if len(sys.argv) > 1 else 80)
-PYEOF
-            cat > /etc/systemd/system/proxy-socks.service << EOF
-[Unit]
-Description=CRISDEV Proxy Socks
-After=network.target
-
-[Service]
-ExecStart=/usr/bin/python3 /opt/ssh-cris/proxy.py $pport
-Restart=always
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-EOF
-            systemctl daemon-reload
-            systemctl enable --now proxy-socks.service
-            ufw allow "$pport"/tcp 2>/dev/null || true
-            ok "Proxy Socks activo en puerto TCP $pport -> SSH 22"
-            pause
-            ;;
-        3)
-            systemctl disable --now proxy-socks.service 2>/dev/null || true
-            ok "Proxy Socks detenido."
-            pause
-            ;;
-        0) return ;;
-    esac
-}
-
-config_stunnel() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       SSL TUNNEL (STUNNEL4 PUERTO 443)                 ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    info "Instalando y configurando Stunnel4 SSL en puerto 443 -> SSH 22..."
-    apt-get install -y stunnel4 2>/dev/null || true
-
-    mkdir -p /etc/stunnel
-    openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
-        -subj "/C=US/ST=CRIS/L=CRIS/O=CRISDEV/CN=ssl.crisdev.online" \
-        -keyout /etc/stunnel/stunnel.pem -out /etc/stunnel/stunnel.pem >/dev/null 2>&1
-
-    cat > /etc/stunnel/stunnel.conf << 'EOF'
+        fun_setup_ssl() {
+            apt-get update -qq && apt-get install -y -qq stunnel4 >/dev/null 2>&1 || true
+            mkdir -p /etc/stunnel
+            openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
+                -subj "/C=US/ST=CRIS/L=CRIS/O=CRISDEV/CN=ssl.crisdev.online" \
+                -keyout /etc/stunnel/stunnel.pem -out /etc/stunnel/stunnel.pem >/dev/null 2>&1
+            cat > /etc/stunnel/stunnel.conf << EOF
 cert = /etc/stunnel/stunnel.pem
 client = no
 socket = a:SO_REUSEADDR=1
@@ -711,32 +499,38 @@ socket = l:TCP_NODELAY=1
 socket = r:TCP_NODELAY=1
 
 [ssh-ssl]
-accept = 443
-connect = 127.0.0.1:22
+accept = $porta
+connect = 127.0.0.1:$target_port
 EOF
-
-    sed -i 's/ENABLED=0/ENABLED=1/' /etc/default/stunnel4 2>/dev/null || true
-    systemctl restart stunnel4 2>/dev/null || true
-    ufw allow 443/tcp 2>/dev/null || true
-    ok "Stunnel4 SSL activo en puerto 443 -> SSH 22."
-    pause
+            sed -i 's/ENABLED=0/ENABLED=1/' /etc/default/stunnel4 2>/dev/null || true
+            systemctl restart stunnel4 2>/dev/null || service stunnel4 restart 2>/dev/null
+        }
+        echo -e "\n\033[1;32mINSTALANDO Y CONFIGURANDO SSL TUNNEL...\033[0m"
+        fun_bar 'fun_setup_ssl'
+        ufw allow "$porta"/tcp 2>/dev/null || true
+        echo -e "\n\033[1;32mSSL TUNNEL ACTIVO EN PUERTO $porta -> $target_port!\033[0m"
+        sleep 2
+    fi
 }
 
-menu_dropbear() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       DROPBEAR SSH                                     ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e " ${GREEN}1)${WHITE} Configurar e Iniciar Dropbear (Elegir Puertos)"
-    echo -e " ${RED}2)${WHITE} Detener / Desactivar Dropbear"
-    echo -e " ${RED}0)${WHITE} Volver"
-    echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Opcion: " d_opt
-    case "$d_opt" in
-        1)
-            read -r -p " Puertos para Dropbear separados por espacio (ej: 110 442 8888): " dp_pts
+# 4. DROPBEAR
+fun_drop() {
+    if netstat -nltp 2>/dev/null | grep -q 'dropbear'; then
+        local dpbr
+        dpbr=$(netstat -nplt 2>/dev/null | grep 'dropbear' | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u | xargs || echo "110")
+        clear
+        echo -e "\E[44;1;37m              GESTIONAR DROPBEAR               \E[0m"
+        echo -e "\n\033[1;33mPUERTOS EN USO\033[1;37m: \033[1;32m$dpbr\033[0m\n"
+        echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;37m> \033[1;33mMODIFICAR PUERTOS DROPBEAR\033[0m"
+        echo -e "\033[1;31m[\033[1;36m2\033[1;31m] \033[1;37m> \033[1;33mELIMINAR / DETENER DROPBEAR\033[0m"
+        echo -e "\033[1;31m[\033[1;36m0\033[1;31m] \033[1;37m> \033[1;33mVOLVER\033[0m"
+        echo ""
+        echo -ne "\033[1;32m¿QUÉ DESEA HACER ?\033[1;37m "
+        read -r resposta
+        if [[ "$resposta" == '1' ]]; then
+            echo -ne "\n\033[1;32mPUERTOS SEPARADOS POR ESPACIO (ej: 110 442 8888)\033[1;37m: "
+            read -r dp_pts
             [[ -z "$dp_pts" ]] && dp_pts="110 442 8888"
-            apt-get install -y dropbear 2>/dev/null || true
             local extra_args=""
             for p in $dp_pts; do extra_args="$extra_args -p $p"; done
             cat > /etc/default/dropbear << EOF
@@ -746,60 +540,169 @@ DROPBEAR_EXTRA_ARGS="$extra_args"
 DROPBEAR_BANNER=""
 DROPBEAR_RECEIVE_WINDOW=65536
 EOF
-            systemctl restart dropbear 2>/dev/null || true
+            systemctl restart dropbear 2>/dev/null || service dropbear restart 2>/dev/null
             for p in $dp_pts; do ufw allow "$p"/tcp 2>/dev/null || true; done
-            ok "Dropbear activo en puertos: $dp_pts"
-            pause
-            ;;
-        2)
-            systemctl stop dropbear 2>/dev/null || true
-            systemctl disable dropbear 2>/dev/null || true
-            ok "Dropbear detenido."
-            pause
-            ;;
-        0) return ;;
-    esac
+            echo -e "\n\033[1;32mPUERTOS DROPBEAR ACTUALIZADOS: $dp_pts\033[0m"
+            sleep 2
+        elif [[ "$resposta" == '2' ]]; then
+            fun_dropunistall() {
+                systemctl stop dropbear 2>/dev/null || service dropbear stop 2>/dev/null || true
+                systemctl disable dropbear 2>/dev/null || true
+            }
+            fun_bar 'fun_dropunistall'
+            echo -e "\n\033[1;32mDROPBEAR DETENIDO CON ÉXITO!\033[0m"
+            sleep 2
+        fi
+    else
+        clear
+        echo -e "\E[44;1;37m           INSTALADOR DROPBEAR              \E[0m\n"
+        echo -ne "\033[1;32m¿DESEA INSTALAR DROPBEAR ? \033[1;33m[s/n]:\033[1;37m "
+        read -r resposta
+        if [[ "$resposta" == "s" || "$resposta" == "S" ]]; then
+            echo -ne "\n\033[1;32mPUERTOS PARA DROPBEAR (ej: 110 442 8888)\033[1;37m: "
+            read -r dp_pts
+            [[ -z "$dp_pts" ]] && dp_pts="110 442 8888"
+            fun_instdrop() {
+                apt-get update -qq && apt-get install -y -qq dropbear >/dev/null 2>&1 || true
+                local extra_args=""
+                for p in $dp_pts; do extra_args="$extra_args -p $p"; done
+                cat > /etc/default/dropbear << EOF
+NO_START=0
+DROPBEAR_PORT=
+DROPBEAR_EXTRA_ARGS="$extra_args"
+DROPBEAR_BANNER=""
+DROPBEAR_RECEIVE_WINDOW=65536
+EOF
+                systemctl restart dropbear 2>/dev/null || service dropbear restart 2>/dev/null
+            }
+            fun_bar 'fun_instdrop'
+            for p in $dp_pts; do ufw allow "$p"/tcp 2>/dev/null || true; done
+            echo -e "\n\033[1;32mDROPBEAR INSTALADO CON ÉXITO EN PUERTOS: $dp_pts\033[0m"
+            sleep 2
+        fi
+    fi
 }
 
-menu_v2ray() {
+# 5. SQUID PROXY
+fun_squid() {
+    if netstat -nltp 2>/dev/null | grep -q 'squid'; then
+        local sqdp
+        sqdp=$(netstat -nplt 2>/dev/null | grep 'squid' | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u | xargs || echo "8080")
+        clear
+        echo -e "\E[44;1;37m          GESTIONAR SQUID PROXY           \E[0m"
+        echo -e "\n\033[1;33mPUERTOS EN USO\033[1;37m: \033[1;32m$sqdp\033[0m\n"
+        echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;37m> \033[1;33mELIMINAR / DETENER SQUID\033[0m"
+        echo -e "\033[1;31m[\033[1;36m0\033[1;31m] \033[1;37m> \033[1;33mVOLVER\033[0m"
+        echo ""
+        echo -ne "\033[1;32m¿QUÉ DESEA HACER ?\033[1;37m "
+        read -r resp
+        if [[ "$resp" == '1' ]]; then
+            fun_remsqd() {
+                systemctl stop squid 2>/dev/null || true
+                systemctl disable squid 2>/dev/null || true
+            }
+            fun_bar 'fun_remsqd'
+            echo -e "\n\033[1;32mSQUID PROXY DETENIDO!\033[0m"
+            sleep 2
+        fi
+    else
+        clear
+        echo -e "\E[44;1;37m              INSTALADOR SQUID                \E[0m\n"
+        echo -ne "\033[1;32m¿PUERTOS PARA SQUID ? (ej: 8080 3128)\033[1;37m: "
+        read -r sq_pts
+        [[ -z "$sq_pts" ]] && sq_pts="8080 3128"
+        fun_instsqd() {
+            apt-get update -qq && apt-get install -y -qq squid >/dev/null 2>&1 || true
+            local sqd_file="/etc/squid/squid.conf"
+            [[ ! -d /etc/squid && -d /etc/squid3 ]] && sqd_file="/etc/squid3/squid.conf"
+            cat > "$sqd_file" << 'EOF'
+acl localhost src 127.0.0.1/32 ::1
+acl to_localhost dst 127.0.0.0/8 0.0.0.0/32 ::1
+acl localnet src 0.0.0.0/0
+acl SSL_ports port 443
+acl Safe_ports port 80
+acl Safe_ports port 21
+acl Safe_ports port 443
+acl Safe_ports port 70
+acl Safe_ports port 210
+acl Safe_ports port 1025-65535
+acl Safe_ports port 280
+acl Safe_ports port 488
+acl Safe_ports port 591
+acl Safe_ports port 777
+acl CONNECT method CONNECT
+http_access allow all
+http_port 8080
+http_port 3128
+visible_hostname CRISDEV-SQUID
+via off
+forwarded_for off
+pipeline_prefetch off
+EOF
+            systemctl restart squid 2>/dev/null || true
+        }
+        echo -e "\n\033[1;32mINSTALANDO SQUID PROXY...\033[0m"
+        fun_bar 'fun_instsqd'
+        echo -e "\n\033[1;32mSQUID INSTALADO CON ÉXITO!\033[0m"
+        sleep 2
+    fi
+}
+
+# 6. BADVPN UDPGW
+menub() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       V2RAY / XRAY CORE                                ${NC}"
+    echo -e "${WHITE}                       BADVPN UDPGW (JUEGOS / VOIP)                     ${NC}"
     echo -e "${CYAN}========================================================================${NC}"
-    echo -e " ${GREEN}1)${WHITE} Instalar Xray-core Oficial"
-    echo -e " ${GREEN}2)${WHITE} Ver Estado del Servicio"
-    echo -e " ${RED}3)${WHITE} Detener Xray"
-    echo -e " ${RED}0)${WHITE} Volver"
+    echo -e " ${GREEN}[1]${WHITE} > Iniciar BadVPN Puerto 7300"
+    echo -e " ${GREEN}[2]${WHITE} > Iniciar Multi-BadVPN (7100, 7200, 7300)"
+    echo -e " ${RED}[3]${WHITE} > Detener BadVPN"
+    echo -e " ${RED}[0]${WHITE} > Volver"
     echo -e "${CYAN}========================================================================${NC}"
-    read -r -p " Opcion: " vx_opt
-    case "$vx_opt" in
-        1)
-            info "Instalando Xray-core..."
-            bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
-            ok "Xray instalado."
-            pause
+    read -r -p " Opcion: " b_opt
+    case "$b_opt" in
+        1|2)
+            if [[ ! -f /usr/local/bin/badvpn-udpgw ]]; then
+                wget -q -O /usr/local/bin/badvpn-udpgw "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/UDP_CRIS/badvpn-udpgw" 2>/dev/null || \
+                wget -q -O /usr/local/bin/badvpn-udpgw "https://github.com/ambrop72/badvpn/raw/master/bin/badvpn-udpgw" 2>/dev/null
+                chmod +x /usr/local/bin/badvpn-udpgw 2>/dev/null || true
+            fi
+            screen -dmS badvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000
+            [[ "$b_opt" == "2" ]] && {
+                screen -dmS badvpn1 /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7100 --max-clients 1000
+                screen -dmS badvpn2 /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7200 --max-clients 1000
+            }
+            echo -e "\n\033[1;32mBadVPN UDPGW iniciado con éxito!\033[0m"
+            sleep 2
             ;;
-        2) systemctl status xray --no-pager || true; pause ;;
-        3) systemctl disable --now xray 2>/dev/null || true; ok "Xray detenido."; pause ;;
+        3)
+            for sp in $(screen -ls 2>/dev/null | grep 'badvpn' | awk '{print $1}'); do
+                screen -r -S "$sp" -X quit 2>/dev/null || true
+            done
+            pkill -f badvpn-udpgw 2>/dev/null || true
+            echo -e "\n\033[1;32mBadVPN detenido!\033[0m"
+            sleep 2
+            ;;
         0) return ;;
     esac
 }
 
-menu_slowdns() {
+# 7. SLOWDNS
+slow_setup() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
     echo -e "${WHITE}                       SLOWDNS (DNSTT SERVER PUERTO 53)                 ${NC}"
     echo -e "${CYAN}========================================================================${NC}"
-    echo -e " ${GREEN}1)${WHITE} Configurar Dominio NameServer (NS) y Generar Claves"
-    echo -e " ${GREEN}2)${WHITE} Ver Clave Pública y NameServer"
-    echo -e " ${RED}3)${WHITE} Detener SlowDNS"
-    echo -e " ${RED}0)${WHITE} Volver"
+    echo -e " ${GREEN}[1]${WHITE} > Configurar Dominio NameServer (NS) y Generar Claves"
+    echo -e " ${GREEN}[2]${WHITE} > Ver Clave Pública y NameServer"
+    echo -e " ${RED}[3]${WHITE} > Detener SlowDNS"
+    echo -e " ${RED}[0]${WHITE} > Volver"
     echo -e "${CYAN}========================================================================${NC}"
     read -r -p " Opcion: " sd_opt
     case "$sd_opt" in
         1)
             read -r -p " Dominio NameServer (NS) (ej: ns1.tudominio.com): " ns_domain
-            [[ -z "$ns_domain" ]] && { fail "El NameServer es requerido."; pause; return; }
+            [[ -z "$ns_domain" ]] && return
             mkdir -p /etc/slowdns
             wget -q -O /usr/local/bin/dnstt-server "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/dnstt-server" 2>/dev/null || true
             chmod +x /usr/local/bin/dnstt-server 2>/dev/null || true
@@ -807,52 +710,210 @@ menu_slowdns() {
                 /usr/local/bin/dnstt-server -gen-key -privkey-file /etc/slowdns/server.key -pubkey-file /etc/slowdns/server.pub 2>/dev/null || true
             fi
             echo "$ns_domain" > /etc/slowdns/ns.txt
-            ok "SlowDNS configurado con NS: $ns_domain"
-            [[ -f /etc/slowdns/server.pub ]] && echo -e "${YELLOW}Clave Pública:${NC} $(cat /etc/slowdns/server.pub)"
+            echo -e "\n\033[1;32mSlowDNS configurado con NS: $ns_domain\033[0m"
+            [[ -f /etc/slowdns/server.pub ]] && echo -e "\033[1;33mClave Pública:\033[0m $(cat /etc/slowdns/server.pub)"
             pause
             ;;
         2)
             if [[ -f /etc/slowdns/server.pub ]]; then
-                echo -e "${WHITE}• NameServer:${NC} $(cat /etc/slowdns/ns.txt 2>/dev/null || echo 'No configurado')"
-                echo -e "${WHITE}• Clave Pública:${NC} ${GREEN}$(cat /etc/slowdns/server.pub)${NC}"
+                echo -e "\n• NameServer:   \033[1;32m$(cat /etc/slowdns/ns.txt 2>/dev/null || echo 'No configurado')\033[0m"
+                echo -e "• Clave Pública: \033[1;32m$(cat /etc/slowdns/server.pub)\033[0m"
             else
-                warn "SlowDNS aún no está configurado."
+                echo -e "\n\033[1;31mSlowDNS aún no está configurado."
             fi
             pause
             ;;
-        3) pkill -f dnstt-server 2>/dev/null || true; ok "SlowDNS detenido."; pause ;;
+        3)
+            pkill -f dnstt-server 2>/dev/null || true
+            echo -e "\n\033[1;32mSlowDNS detenido!\033[0m"
+            sleep 2
+            ;;
         0) return ;;
     esac
 }
 
+# 8. BHTTP MULTI-PUERTO (WAKKO ENGINE)
+menu_bhttp() {
+    while true; do
+        clear
+        local ports_arr
+        read -r -a ports_arr <<< "$(scan_bhttp_ports)"
+        local total=${#ports_arr[@]}
+
+        echo -e "${CYAN}========================================================================${NC}"
+        echo -e "${WHITE}                 BHTTP MULTI-PUERTO RELAY (WAKKO ENGINE)                ${NC}"
+        echo -e "${CYAN}========================================================================${NC}"
+        if [[ $total -gt 0 ]]; then
+            echo -e " ${WHITE}Puertos BHTTP Activos: ${GREEN}${total}${WHITE} | Lista: ${YELLOW}${ports_arr[*]}${NC}"
+        else
+            echo -e " ${WHITE}Puertos BHTTP Activos: ${RED}Ninguno (Apagado)${NC}"
+        fi
+        echo -e "${CYAN}========================================================================${NC}"
+        echo -e " ${GREEN}[1]${WHITE} > Instalar / Actualizar Motor BHTTP Relay"
+        echo -e " ${GREEN}[2]${WHITE} > Configurar Puerto Principal BHTTP (ej: 8080 o 80 -> SSH 22)"
+        echo -e " ${GREEN}[3]${WHITE} > Abrir Puerto Adicional (Multi-Puerto: 80, 8888, 3128, etc.)"
+        echo -e " ${GREEN}[4]${WHITE} > Listar Puertos BHTTP Activos"
+        echo -e " ${GREEN}[5]${WHITE} > Eliminar un Puerto BHTTP Específico"
+        echo -e " ${GREEN}[6]${WHITE} > Probar Conectividad BHTTP -> Backend SSH (Socket Test)"
+        echo -e " ${RED}[7]${WHITE} > Detener / Desinstalar Servicios BHTTP"
+        echo -e " ${RED}[0]${WHITE} > Volver a Protocolos"
+        echo -e "${CYAN}========================================================================${NC}"
+        read -r -p " Opcion: " b_opt
+
+        case "$b_opt" in
+            1)
+                local arch; arch=$(uname -m)
+                local url="$AMD64_BHTTP"
+                [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && url="$ARM64_BHTTP"
+                mkdir -p "$BHTTP_BASE"
+                systemctl stop wakkodev-bhttp.service 2>/dev/null || true
+                curl -fL --retry 3 "$url" -o /usr/local/bin/wakkodev-bhttp-server 2>/dev/null || \
+                wget -q "$url" -O /usr/local/bin/wakkodev-bhttp-server 2>/dev/null
+                chmod 755 /usr/local/bin/wakkodev-bhttp-server 2>/dev/null || true
+                echo -e "\n\033[1;32mMotor BHTTP instalado con éxito en /usr/local/bin/wakkodev-bhttp-server!\033[0m"
+                pause
+                ;;
+            2)
+                read -r -p " Ingresa puerto principal para BHTTP (ej: 8080 o 80): " bport
+                [[ ! "$bport" =~ ^[0-9]+$ ]] && bport=8080
+                read -r -p " Puerto SSH destino (Backend, default 22): " backend_port
+                [[ ! "$backend_port" =~ ^[0-9]+$ ]] && backend_port=22
+
+                mkdir -p "$BHTTP_BASE"
+                cat > "$BHTTP_CONFIG" << EOF
+BHTTP_PORT=$bport
+BACKEND_PORT=$backend_port
+SESSION_TTL=180
+MAX_SESSIONS=4096
+PROFILE=performance
+EOF
+                cat > /etc/systemd/system/wakkodev-bhttp.service << EOF
+[Unit]
+Description=CRISDEV BHTTP Relay Service (Port $bport)
+After=network-online.target ssh.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-$BHTTP_CONFIG
+ExecStart=/usr/local/bin/wakkodev-bhttp-server --listen 0.0.0.0 --port $bport --backend-host 127.0.0.1 --backend-port $backend_port --session-ttl 180 --max-sessions 4096 --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
+Restart=always
+RestartSec=1
+LimitNOFILE=524288
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                systemctl daemon-reload
+                systemctl enable --now wakkodev-bhttp.service 2>/dev/null || true
+                ufw allow "$bport"/tcp 2>/dev/null || true
+                echo -e "\n\033[1;32mBHTTP Relay activo en puerto TCP $bport -> SSH $backend_port\033[0m"
+                pause
+                ;;
+            3)
+                read -r -p " Ingresa puerto adicional (ej: 80, 8888, 3128, 8081): " xport
+                [[ ! "$xport" =~ ^[0-9]+$ ]] && { echo -e "\n\033[1;31mPuerto inválido!"; pause; continue; }
+                cat > "/etc/systemd/system/wakkodev-bhttp-port-${xport}.service" << EOF
+[Unit]
+Description=CRISDEV BHTTP Extra Port $xport
+After=network-online.target ssh.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/wakkodev-bhttp-server --listen 0.0.0.0 --port $xport --backend-host 127.0.0.1 --backend-port 22 --session-ttl 180 --max-sessions 4096 --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
+Restart=always
+RestartSec=1
+LimitNOFILE=524288
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                systemctl daemon-reload
+                systemctl enable --now "wakkodev-bhttp-port-${xport}.service" 2>/dev/null || true
+                ufw allow "$xport"/tcp 2>/dev/null || true
+                echo -e "\n\033[1;32mPuerto extra BHTTP $xport activado con éxito!\033[0m"
+                pause
+                ;;
+            4)
+                echo -e "\n\033[1;33mPuertos BHTTP escuchando:\033[0m"
+                ss -tlpn | grep -E "bhttp|wakkodev" || echo "No hay puertos BHTTP activos"
+                pause
+                ;;
+            5)
+                local cur_b_ports
+                read -r -a cur_b_ports <<< "$(scan_bhttp_ports)"
+                echo -e "\nPuertos detectados: \033[1;33m${cur_b_ports[*]:-Ninguno}\033[0m"
+                read -r -p " Ingresa el puerto a eliminar: " del_port
+                if [[ -f "/etc/systemd/system/wakkodev-bhttp-port-${del_port}.service" ]]; then
+                    systemctl disable --now "wakkodev-bhttp-port-${del_port}.service" 2>/dev/null || true
+                    rm -f "/etc/systemd/system/wakkodev-bhttp-port-${del_port}.service"
+                    systemctl daemon-reload
+                    echo -e "\n\033[1;32mPuerto extra $del_port eliminado con éxito!\033[0m"
+                elif [[ -f "/etc/systemd/system/wakkodev-bhttp.service" ]] && grep -q -- "--port $del_port" /etc/systemd/system/wakkodev-bhttp.service; then
+                    systemctl disable --now wakkodev-bhttp.service 2>/dev/null || true
+                    rm -f /etc/systemd/system/wakkodev-bhttp.service
+                    systemctl daemon-reload
+                    echo -e "\n\033[1;32mPuerto principal $del_port eliminado con éxito!\033[0m"
+                fi
+                pause
+                ;;
+            6)
+                if nc -z -w2 127.0.0.1 22 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/22) 2>/dev/null; then
+                    echo -e "\n\033[1;32m[✔] Backend SSH en 127.0.0.1:22 respondiendo OK.\033[0m"
+                else
+                    echo -e "\n\033[1;31m[✘] Backend SSH en 127.0.0.1:22 cerrado.\033[0m"
+                fi
+                for p in "${ports_arr[@]}"; do
+                    if nc -z -w2 127.0.0.1 "$p" 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/"$p") 2>/dev/null; then
+                        echo -e "\033[1;32m[✔] Puerto BHTTP $p: Escuchando correctamente.\033[0m"
+                    else
+                        echo -e "\033[1;31m[✘] Puerto BHTTP $p: No responde.\033[0m"
+                    fi
+                done
+                pause
+                ;;
+            7)
+                systemctl disable --now wakkodev-bhttp.service 2>/dev/null || true
+                for f in /etc/systemd/system/wakkodev-bhttp-port-*.service; do
+                    [[ -f "$f" ]] && systemctl disable --now "$(basename "$f")" 2>/dev/null || true
+                done
+                rm -f /etc/systemd/system/wakkodev-bhttp*.service
+                systemctl daemon-reload
+                echo -e "\n\033[1;32mServicios BHTTP detenidos!\033[0m"
+                pause
+                ;;
+            0) return ;;
+        esac
+    done
+}
+
+# 9. UDP CRIS (HYSTERIA V1 + BADVPN 7300 ENGINE)
 menu_udp() {
     clear
     echo -e "${CYAN}========================================================================${NC}"
     echo -e "${WHITE}                       HYSTERIA v1 / UDP CRIS                           ${NC}"
     echo -e "${CYAN}========================================================================${NC}"
-    echo -e " ${GREEN}1)${WHITE} Instalar / Configurar UDP CRIS (Hysteria Engine)"
-    echo -e " ${GREEN}2)${WHITE} Activar / Desactivar Port Hopping (Rango 6000:50000)"
-    echo -e " ${GREEN}3)${WHITE} Ver Estado y Logs"
-    echo -e " ${RED}4)${WHITE} Detener / Desinstalar UDP CRIS"
-    echo -e " ${RED}0)${WHITE} Volver"
+    echo -e " ${GREEN}[1]${WHITE} > Instalar / Configurar UDP CRIS (Hysteria Engine)"
+    echo -e " ${GREEN}[2]${WHITE} > Activar / Desactivar Port Hopping (Rango 6000:50000)"
+    echo -e " ${GREEN}[3]${WHITE} > Ver Estado y Logs"
+    echo -e " ${RED}[4]${WHITE} > Detener / Desinstalar UDP CRIS"
+    echo -e " ${RED}[0]${WHITE} > Volver"
     echo -e "${CYAN}========================================================================${NC}"
     read -r -p " Opcion: " u_opt
     case "$u_opt" in
         1)
-            info "Configurando UDP CRIS Core (Hysteria Engine)..."
             read -r -p " Puerto UDP de escucha (ej: 36712 o 5666): " uport
             [[ ! "$uport" =~ ^[0-9]+$ ]] && uport=36712
-
             read -r -p " Contraseña OBFS (ej: crisdev): " obfs_pass
             [[ -z "$obfs_pass" ]] && obfs_pass="crisdev"
-
-            read -r -p " Contraseña de Autenticación (Auth): " auth_pass
+            read -r -p " Contraseña Auth (ej: crisdev): " auth_pass
             [[ -z "$auth_pass" ]] && auth_pass="crisdev"
 
             mkdir -p /etc/hysteria /usr/local/bin
             curl -fL --retry 3 "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64" -o /usr/local/bin/hysteria 2>/dev/null || \
-            wget -q "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64" -O /usr/local/bin/hysteria
-            chmod +x /usr/local/bin/hysteria
+            wget -q "https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64" -O /usr/local/bin/hysteria 2>/dev/null
+            chmod +x /usr/local/bin/hysteria 2>/dev/null || true
 
             openssl req -new -newkey rsa:2048 -days 3650 -nodes -x509 \
                 -subj "/C=US/ST=CRIS/L=CRIS/O=CRISDEV/CN=crisdev.online" \
@@ -895,20 +956,20 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
             systemctl daemon-reload
-            systemctl enable --now hysteria-server.service
+            systemctl enable --now hysteria-server.service 2>/dev/null || true
             ufw allow "$uport"/udp 2>/dev/null || true
-            ok "UDP CRIS activo en puerto UDP $uport (OBFS: $obfs_pass, Auth: $auth_pass)"
+            echo -e "\n\033[1;32mUDP CRIS activo en puerto UDP $uport (OBFS: $obfs_pass, Auth: $auth_pass)\033[0m"
             pause
             ;;
         2)
             if iptables -t nat -L PREROUTING -n 2>/dev/null | grep -q "6000:50000"; then
                 iptables -t nat -D PREROUTING -p udp --dport 6000:50000 -j REDIRECT 2>/dev/null || true
-                ok "Port Hopping desactivado."
+                echo -e "\n\033[1;32mPort Hopping desactivado.\033[0m"
             else
                 local uport="36712"
                 [[ -f /etc/hysteria/config.json ]] && uport=$(grep -o '"listen": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
                 iptables -t nat -A PREROUTING -p udp --dport 6000:50000 -j REDIRECT --to-ports "$uport" 2>/dev/null || true
-                ok "Port hopping UDP 6000-50000 activado hacia $uport."
+                echo -e "\n\033[1;32mPort hopping UDP 6000-50000 activado hacia $uport.\033[0m"
             fi
             pause
             ;;
@@ -917,265 +978,475 @@ EOF
             systemctl disable --now hysteria-server.service 2>/dev/null || true
             rm -rf /etc/hysteria /usr/local/bin/hysteria /etc/systemd/system/hysteria-server.service
             systemctl daemon-reload
-            ok "UDP CRIS desinstalado."
+            echo -e "\n\033[1;32mUDP CRIS desinstalado!\033[0m"
             pause
             ;;
         0) return ;;
     esac
 }
 
-menu_trojan() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       TROJAN-GO                                        ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    info "Trojan-Go integrado via motor Xray (Puerto 443 / 8443)."
-    pause
-}
-
-instalar_badvpn() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       BADVPN UDPGW (PUERTO 7300)                       ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    info "Instalando BadVPN UDPGW (Puerto 7300 - Juegos / Llamadas WhatsApp)..."
-    apt-get update -qq && apt-get install -y -qq cmake gcc make build-essential git 2>/dev/null || true
-
-    if [[ ! -f /usr/local/bin/badvpn-udpgw ]]; then
-        wget -q -O /usr/local/bin/badvpn-udpgw "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/UDP_CRIS/badvpn-udpgw" 2>/dev/null || \
-        wget -q -O /usr/local/bin/badvpn-udpgw "https://github.com/ambrop72/badvpn/raw/master/bin/badvpn-udpgw" 2>/dev/null
-        chmod +x /usr/local/bin/badvpn-udpgw 2>/dev/null || true
-    fi
-
-    cat > /etc/systemd/system/badvpn.service << 'EOF'
-[Unit]
-Description=BadVPN UDPGW Service 7300
-After=network.target
-
-[Service]
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000 --max-connections-for-client 100
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    systemctl daemon-reload
-    systemctl enable --now badvpn.service 2>/dev/null || true
-    ok "BadVPN UDPGW activo en 127.0.0.1:7300"
-    pause
-}
-
-menu_openvpn() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       OPENVPN SERVER                                   ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    info "Instalador de OpenVPN."
-    if ! command -v openvpn >/dev/null 2>&1; then
-        apt-get install -y openvpn 2>/dev/null || true
-    fi
-    ok "Soporte OpenVPN verificado."
-    pause
-}
-
-menu_websocket() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       WEBSOCKET-CORRECTOR                              ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    info "Iniciando WebSocket Proxy Corrector en puerto 80 / 8080..."
-    config_proxy_socks
-}
-
-menu_sslh() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       SSLH MULTIPLEX                                   ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    info "Instalando SSLH Multiplex (Puerto 443 SSH + SSL + OpenVPN)..."
-    apt-get install -y sslh 2>/dev/null || true
-    ok "SSLH disponible."
-    pause
-}
-
-menu_squid() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       SQUID PROXY (PUERTOS 3128 / 8080)                ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    apt-get install -y squid 2>/dev/null || true
-    ok "Squid Proxy configurado."
-    pause
-}
-
-menu_chisel() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                       CHISEL TUNNEL                                    ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    info "Chisel TCP/UDP Tunnel over HTTP."
-    pause
-}
-
-menu_bhttp() {
+# ─────────────────────────────────────────────────────────────────────────────
+#  MENÚ DE PROTOCOLOS (CONFIGURACION DE PROTOCOLOS)
+# ─────────────────────────────────────────────────────────────────────────────
+menu_protocolos() {
     while true; do
         clear
-        local ports_arr
-        read -r -a ports_arr <<< "$(scan_bhttp_ports)"
-        local total=${#ports_arr[@]}
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "                ${BLUE}CONFIGURACION DE PROTOCOLOS${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
 
-        echo -e "${CYAN}========================================================================${NC}"
-        echo -e "${WHITE}                 BHTTP MULTI-PUERTO RELAY (WAKKO ENGINE)                ${NC}"
-        echo -e "${CYAN}========================================================================${NC}"
-        if [[ $total -gt 0 ]]; then
-            echo -e " ${WHITE}Puertos BHTTP Activos: ${GREEN}${total}${WHITE} | Lista: ${YELLOW}${ports_arr[*]}${NC}"
-        else
-            echo -e " ${WHITE}Puertos BHTTP Activos: ${DIM}Ninguno (Apagado)${NC}"
+        # 1. OpenSSH
+        local ssh_p
+        ssh_p=$(grep '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | xargs || true)
+        [[ -z "$ssh_p" ]] && ssh_p="22"
+        echo -e "\033[1;32mSERVICIO: \033[1;33mOPENSSH \033[1;32mPUERTO: \033[1;37m$ssh_p\033[0m"
+
+        # 2. Proxy Socks
+        local sks_p
+        sks_p=$(netstat -nplt 2>/dev/null | grep -E 'python3|/python' | awk '{print $4}' | cut -d: -f2 | sort -n -u | xargs || true)
+        if [[ -n "$sks_p" ]]; then
+            echo -e "\033[1;32mSERVICIO: \033[1;33mPROXY SOCKS \033[1;32mPUERTO: \033[1;37m$sks_p\033[0m"
         fi
-        echo -e "${CYAN}========================================================================${NC}"
-        echo -e " ${GREEN}[1]${WHITE} > Instalar / Actualizar Motor BHTTP Relay"
-        echo -e " ${GREEN}[2]${WHITE} > Configurar Puerto Principal BHTTP (ej: 8080 -> SSH 22)"
-        echo -e " ${GREEN}[3]${WHITE} > Abrir Puerto Adicional (Multi-Puerto: 80, 8888, 3128, etc.)"
-        echo -e " ${GREEN}[4]${WHITE} > Listar Puertos BHTTP Activos"
-        echo -e " ${GREEN}[5]${WHITE} > Eliminar un Puerto BHTTP Específico"
-        echo -e " ${GREEN}[6]${WHITE} > Probar Conectividad BHTTP -> Backend SSH (Socket Test)"
-        echo -e " ${GREEN}[7]${WHITE} > Ver Logs en Vivo de BHTTP"
-        echo -e " ${RED}[8]${WHITE} > Detener / Desinstalar Servicios BHTTP"
-        echo -e " ${RED}[0]${WHITE} > Volver a Protocolos"
-        echo -e "${CYAN}========================================================================${NC}"
-        read -r -p " Opcion: " b_opt
 
-        case "$b_opt" in
-            1)
-                info "Descargando motor BHTTP Relay oficial..."
-                local arch; arch=$(uname -m)
-                local url=""
-                [[ "$arch" == "x86_64" || "$arch" == "amd64" ]] && url="$AMD64_BHTTP"
-                [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && url="$ARM64_BHTTP"
-                mkdir -p "$BHTTP_BASE"
-                systemctl stop wakkodev-bhttp.service 2>/dev/null || true
-                curl -fL --retry 3 "$url" -o /usr/local/bin/wakkodev-bhttp-server
-                chmod 755 /usr/local/bin/wakkodev-bhttp-server
-                ok "Motor BHTTP instalado en /usr/local/bin/wakkodev-bhttp-server"
-                pause
-                ;;
-            2)
-                read -r -p " Ingresa puerto principal para BHTTP (ej: 8080 o 80): " bport
-                [[ ! "$bport" =~ ^[0-9]+$ ]] && bport=8080
-                read -r -p " Puerto SSH destino (Backend, default 22): " backend_port
-                [[ ! "$backend_port" =~ ^[0-9]+$ ]] && backend_port=22
+        # 3. SSL Tunnel
+        local ssl_p
+        ssl_p=$(netstat -nplt 2>/dev/null | grep -E 'stunnel|stunnel4' | awk '{print $4}' | cut -d: -f2 | sort -n -u | xargs || true)
+        if [[ -n "$ssl_p" ]]; then
+            echo -e "\033[1;32mSERVICIO: \033[1;33mSSL TUNNEL \033[1;32mPUERTO: \033[1;37m$ssl_p\033[0m"
+        fi
 
-                mkdir -p "$BHTTP_BASE"
-                cat > "$BHTTP_CONFIG" << EOF
-BHTTP_PORT=$bport
-BACKEND_PORT=$backend_port
-SESSION_TTL=180
-MAX_SESSIONS=4096
-PROFILE=performance
-EOF
-                cat > /etc/systemd/system/wakkodev-bhttp.service << EOF
-[Unit]
-Description=CRISDEV BHTTP Relay Service (Port $bport)
-After=network-online.target ssh.service
-Wants=network-online.target
+        # 4. Dropbear
+        local drp_p
+        drp_p=$(netstat -nplt 2>/dev/null | grep 'dropbear' | awk '{print $4}' | cut -d: -f2 | sort -n -u | xargs || true)
+        if [[ -n "$drp_p" ]]; then
+            echo -e "\033[1;32mSERVICIO: \033[1;33mDROPBEAR \033[1;32mPUERTO: \033[1;37m$drp_p\033[0m"
+        fi
 
-[Service]
-Type=simple
-EnvironmentFile=-$BHTTP_CONFIG
-ExecStart=/usr/local/bin/wakkodev-bhttp-server --listen 0.0.0.0 --port $bport --backend-host 127.0.0.1 --backend-port $backend_port --session-ttl 180 --max-sessions 4096 --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
-Restart=always
-RestartSec=1
-LimitNOFILE=524288
+        # 5. BHTTP Multi-Puerto
+        local bhttp_p
+        bhttp_p=$(scan_bhttp_ports)
+        if [[ -n "$bhttp_p" ]]; then
+            echo -e "\033[1;32mSERVICIO: \033[1;33mBHTTP RELAY \033[1;32mPUERTO: \033[1;37m$bhttp_p\033[0m"
+        fi
 
-[Install]
-WantedBy=multi-user.target
-EOF
-                systemctl daemon-reload
-                systemctl enable --now wakkodev-bhttp.service
-                ufw allow "$bport"/tcp 2>/dev/null || true
-                ok "BHTTP Relay activo en puerto TCP $bport -> SSH $backend_port"
-                pause
-                ;;
-            3)
-                read -r -p " Ingresa puerto adicional (ej: 80, 8888, 3128, 8081): " xport
-                [[ ! "$xport" =~ ^[0-9]+$ ]] && { fail "Puerto inválido"; pause; continue; }
-                cat > "/etc/systemd/system/wakkodev-bhttp-port-${xport}.service" << EOF
-[Unit]
-Description=CRISDEV BHTTP Extra Port $xport
-After=network-online.target ssh.service
-Wants=network-online.target
+        # 6. UDP CRIS (Hysteria v1)
+        if systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f hysteria >/dev/null 2>&1; then
+            local uport="36712"
+            [[ -f /etc/hysteria/config.json ]] && uport=$(grep -o '"listen": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
+            echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS (HYSTERIA) \033[1;32mPUERTO: \033[1;37m$uport (6000:50000)\033[0m"
+        fi
 
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/wakkodev-bhttp-server --listen 0.0.0.0 --port $xport --backend-host 127.0.0.1 --backend-port 22 --session-ttl 180 --max-sessions 4096 --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
-Restart=always
-RestartSec=1
-LimitNOFILE=524288
+        # 7. BadVPN
+        if pgrep -f badvpn-udpgw >/dev/null 2>&1; then
+            echo -e "\033[1;32mSERVICIO: \033[1;33mBADVPN \033[1;32mPUERTO: \033[1;37m7300\033[0m"
+        fi
 
-[Install]
-WantedBy=multi-user.target
-EOF
-                systemctl daemon-reload
-                systemctl enable --now "wakkodev-bhttp-port-${xport}.service"
-                ufw allow "$xport"/tcp 2>/dev/null || true
-                ok "Puerto extra BHTTP $xport activado."
+        # 8. Squid
+        local sqd_p
+        sqd_p=$(netstat -nplt 2>/dev/null | grep 'squid' | awk '{print $4}' | cut -d: -f2 | sort -n -u | xargs || true)
+        if [[ -n "$sqd_p" ]]; then
+            echo -e "\033[1;32mSERVICIO: \033[1;33mSQUID \033[1;32mPUERTO: \033[1;37m$sqd_p\033[0m"
+        fi
+
+        # 9. SlowDNS
+        if pgrep -f dnstt-server >/dev/null 2>&1; then
+            echo -e "\033[1;32mSERVICIO: \033[1;33mSLOWDNS \033[1;32mPUERTO: \033[1;37m53\033[0m"
+        fi
+
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+
+        local sts_ssh sts_socks sts_ssl sts_drop sts_v2ray sts_slow sts_hyst sts_trojan sts_badvpn sts_ovpn sts_ws sts_sslh sts_squid sts_chisel sts_bhttp
+        sts_ssh="\033[1;32mo\033[0m"
+        [[ -n "$sks_p" ]] && sts_socks="\033[1;32mo\033[0m" || sts_socks="\033[1;31mx\033[0m"
+        [[ -n "$ssl_p" ]] && sts_ssl="\033[1;32mo\033[0m" || sts_ssl="\033[1;31mx\033[0m"
+        [[ -n "$drp_p" ]] && sts_drop="\033[1;32mo\033[0m" || sts_drop="\033[1;31mx\033[0m"
+        pgrep -f 'xray|v2ray' >/dev/null 2>&1 && sts_v2ray="\033[1;32mo\033[0m" || sts_v2ray="\033[1;31mx\033[0m"
+        pgrep -f 'dnstt-server' >/dev/null 2>&1 && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -f hysteria >/dev/null 2>&1) && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
+        pgrep -f 'trojan' >/dev/null 2>&1 && sts_trojan="\033[1;32mo\033[0m" || sts_trojan="\033[1;31mx\033[0m"
+        pgrep -f 'badvpn-udpgw' >/dev/null 2>&1 && sts_badvpn="\033[1;32mo\033[0m" || sts_badvpn="\033[1;31mx\033[0m"
+        pgrep -f 'openvpn' >/dev/null 2>&1 && sts_ovpn="\033[1;32mo\033[0m" || sts_ovpn="\033[1;31mx\033[0m"
+        pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1 && sts_ws="\033[1;32mo\033[0m" || sts_ws="\033[1;31mx\033[0m"
+        pgrep -f 'sslh' >/dev/null 2>&1 && sts_sslh="\033[1;32mo\033[0m" || sts_sslh="\033[1;31mx\033[0m"
+        [[ -n "$sqd_p" ]] && sts_squid="\033[1;32mo\033[0m" || sts_squid="\033[1;31mx\033[0m"
+        pgrep -f 'chisel' >/dev/null 2>&1 && sts_chisel="\033[1;32mo\033[0m" || sts_chisel="\033[1;31mx\033[0m"
+        [[ -n "$bhttp_p" ]] && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
+
+        printf "  %b[1]%b  > OPENSSH         %b    %b[10]%b > OPENVPN            %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssh" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ovpn"
+        printf "  %b[2]%b  > PROXY SOCKS     %b    %b[11]%b > WEBSOCKET-CORRECT   %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_socks" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ws"
+        printf "  %b[3]%b  > SSL TUNNEL      %b    %b[12]%b > SSLH MULTIPLEX      %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssl" "$SSHPLUS_NUM" "$SCOLOR" "$sts_sslh"
+        printf "  %b[4]%b  > DROPBEAR        %b    %b[13]%b > SQUID PROXY         %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_drop" "$SSHPLUS_NUM" "$SCOLOR" "$sts_squid"
+        printf "  %b[5]%b  > V2RAY           %b    %b[14]%b > CHISEL              %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_v2ray" "$SSHPLUS_NUM" "$SCOLOR" "$sts_chisel"
+        printf "  %b[6]%b  > SLOWDNS         %b    %b[15]%b > BHTTP MULTI-PUERTO  %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_slow" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
+        printf "  %b[7]%b  > HYSTERIA v1     %b    %b[16]%b > UDP CRIS / 7300     %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst"
+        printf "  %b[8]%b  > TROJAN-GO       %b    %b[17]%b > EXPORTAR PARA GEN\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[9]%b  > BADVPN          %b    %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_badvpn" "$SSHPLUS_NUM" "$SCOLOR"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r proto_opt
+
+        case "$proto_opt" in
+            1|01) fun_openssh ;;
+            2|02) fun_socks ;;
+            3|03) inst_ssl ;;
+            4|04) fun_drop ;;
+            5|05)
+                clear
+                echo -e "\033[1;32mInstalador V2Ray/Xray Core\033[0m"
+                bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install 2>/dev/null || true
                 pause
                 ;;
-            4)
-                echo -e "${YELLOW}Puertos BHTTP escuchando:${NC}"
-                ss -tlpn | grep -E "bhttp|wakkodev" || echo "No hay puertos BHTTP activos"
+            6|06) slow_setup ;;
+            7|07) menu_udp ;;
+            8|08)
+                clear
+                echo -e "\033[1;33mTrojan-Go integrado via motor Xray (Puerto 443 / 8443).\033[0m"
                 pause
                 ;;
-            5)
-                local ports_arr
-                read -r -a ports_arr <<< "$(scan_bhttp_ports)"
-                echo -e "Puertos detectados: ${YELLOW}${ports_arr[*]:-Ninguno}${NC}"
-                read -r -p " Ingresa el puerto a eliminar: " del_port
-                if [[ -f "/etc/systemd/system/wakkodev-bhttp-port-${del_port}.service" ]]; then
-                    systemctl disable --now "wakkodev-bhttp-port-${del_port}.service" 2>/dev/null || true
-                    rm -f "/etc/systemd/system/wakkodev-bhttp-port-${del_port}.service"
-                    systemctl daemon-reload
-                    ok "Puerto extra $del_port eliminado."
-                elif [[ -f "/etc/systemd/system/wakkodev-bhttp.service" ]] && grep -q -- "--port $del_port" /etc/systemd/system/wakkodev-bhttp.service; then
-                    systemctl disable --now wakkodev-bhttp.service 2>/dev/null || true
-                    rm -f /etc/systemd/system/wakkodev-bhttp.service
-                    systemctl daemon-reload
-                    ok "Puerto principal $del_port eliminado."
-                fi
+            9|09) menub ;;
+            10)
+                clear
+                echo -e "\033[1;32mInstalador OpenVPN\033[0m"
+                apt-get install -y openvpn 2>/dev/null || true
                 pause
                 ;;
-            6)
-                if nc -z -w2 127.0.0.1 22 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/22) 2>/dev/null; then
-                    ok "Backend SSH en 127.0.0.1:22 respondiendo OK."
-                else
-                    fail "Backend SSH en 127.0.0.1:22 cerrado."
-                fi
-                for p in "${ports_arr[@]}"; do
-                    if nc -z -w2 127.0.0.1 "$p" 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/"$p") 2>/dev/null; then
-                        ok "Puerto BHTTP $p: Escuchando correctamente."
-                    else
-                        fail "Puerto BHTTP $p: No responde."
-                    fi
-                done
+            11) fun_socks ;;
+            12)
+                clear
+                echo -e "\033[1;32mSSLH Multiplex\033[0m"
+                apt-get install -y sslh 2>/dev/null || true
                 pause
                 ;;
-            7)
-                journalctl -u "wakkodev-bhttp*" -n 40 --no-pager -f || true
-                ;;
-            8)
-                systemctl disable --now wakkodev-bhttp.service 2>/dev/null || true
-                for f in /etc/systemd/system/wakkodev-bhttp-port-*.service; do
-                    [[ -f "$f" ]] && systemctl disable --now "$(basename "$f")" 2>/dev/null || true
-                done
-                rm -f /etc/systemd/system/wakkodev-bhttp*.service
-                systemctl daemon-reload
-                ok "Servicios BHTTP detenidos."
+            13) fun_squid ;;
+            14)
+                clear
+                echo -e "\033[1;32mChisel Tunnel\033[0m"
                 pause
                 ;;
-            0) break ;;
+            15) menu_bhttp ;;
+            16) menu_udp ;;
+            17) exportar_servidor_gen ;;
+            0|00) return ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
         esac
     done
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  ADMINISTRACIÓN DE USUARIOS
+# ─────────────────────────────────────────────────────────────────────────────
+menu_users() {
+    while true; do
+        clear
+        local stats_str; stats_str=$(get_users_stats)
+        local u_total; u_total=$(echo "$stats_str" | cut -d: -f1)
+        local u_active; u_active=$(echo "$stats_str" | cut -d: -f2)
+        local u_expired; u_expired=$(echo "$stats_str" | cut -d: -f3)
+        local u_online; u_online=$(echo "$stats_str" | cut -d: -f4)
+
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "                   ${BLUE}ADMINISTRAR USUARIOS${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        printf " ${WHITE}Creados: ${GREEN}%-4s${WHITE} | Activos: ${GREEN}%-4s${WHITE} | Vencidos: ${RED}%-4s${WHITE} | En Línea: ${GREEN}%-4s${NC}\n" "$u_total" "$u_active" "$u_expired" "$u_online"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> CREAR USUARIO\033[0m          ${SSHPLUS_NUM}[6]${SCOLOR}  \033[1;37m> CAMBIAR LIMITE\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> CREAR PRUEBA\033[0m           ${SSHPLUS_NUM}[7]${SCOLOR}  \033[1;37m> CAMBIAR CLAVE\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> ELIMINAR USUARIO\033[0m       ${SSHPLUS_NUM}[8]${SCOLOR}  \033[1;37m> INFORME DE USUARIOS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> MONITOR ONLINE\033[0m         ${SSHPLUS_NUM}[9]${SCOLOR}  \033[1;37m> ELIMINAR CADUCADOS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> CAMBIAR FECHA\033[0m          ${SSHPLUS_NUM}[10]${SCOLOR} \033[1;37m> TOKEN HTTP CONEXION\033[0m"
+        echo -e "                             ${SSHPLUS_NUM}[0]${SCOLOR}  \033[1;37m> VOLVER\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r u_opt
+
+        case "$u_opt" in
+            1|01) crear_usuario ;;
+            2|02) crear_prueba ;;
+            3|03) eliminar_usuario ;;
+            4|04) monitor_conexiones ;;
+            5|05) renovar_usuario ;;
+            6|06) cambiar_limite ;;
+            7|07) cambiar_clave ;;
+            8|08) listar_usuarios ;;
+            9|09) eliminar_caducados ;;
+            10) generar_token_http_conexion ;;
+            0|00) return ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
+crear_usuario() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                   ${BLUE}CREAR NUEVO USUARIO${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -ne "\033[1;32mNombre de usuario\033[1;37m: "
+    read -r username
+    [[ -z "$username" ]] && return
+
+    if id "$username" >/dev/null 2>&1; then
+        echo -e "\n\033[1;31mEl usuario '$username' ya existe."
+        pause; return
+    fi
+
+    echo -ne "\033[1;32mContraseña\033[1;37m: "
+    read -r password
+    [[ -z "$password" ]] && return
+
+    echo -ne "\033[1;32mDías de duración (ej: 30)\033[1;37m: "
+    read -r days
+    [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
+
+    echo -ne "\033[1;32mLímite de conexiones simultáneas (ej: 1 o 2)\033[1;37m: "
+    read -r limit
+    [[ ! "$limit" =~ ^[0-9]+$ ]] && limit=1
+
+    local exp_date
+    exp_date=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
+
+    useradd -M -s /bin/false -e "$exp_date" "$username" 2>/dev/null || useradd -M -s /bin/false "$username"
+    echo "$username:$password" | chpasswd
+
+    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+    echo "$username:$limit:$exp_date" >> "$USER_DATABASE"
+
+    local ip; ip=$(get_public_ip)
+    echo -e "\n\033[1;32mUSUARIO CREADO EXITOSAMENTE!\033[0m"
+    echo "────────────────────────────────────────────────────────────"
+    echo -e "${WHITE}• Servidor:   ${GREEN}$ip${NC}"
+    echo -e "${WHITE}• Usuario:    ${YELLOW}$username${NC}"
+    echo -e "${WHITE}• Contraseña: ${YELLOW}$password${NC}"
+    echo -e "${WHITE}• Vence el:   ${CYAN}$exp_date ($days días)${NC}"
+    echo -e "${WHITE}• Límite:     ${GREEN}$limit conexión(es)${NC}"
+    echo "────────────────────────────────────────────────────────────"
+    pause
+}
+
+crear_prueba() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "              ${BLUE}CREAR USUARIO DE PRUEBA (TRIAL)${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -ne "\033[1;32mHoras de duración (ej: 2 o 4, default 2)\033[1;37m: "
+    read -r hours
+    [[ ! "$hours" =~ ^[0-9]+$ ]] && hours=2
+
+    local rand_id=$(( RANDOM % 9000 + 1000 ))
+    local username="test_${rand_id}"
+    local password=$(( RANDOM % 9000 + 1000 ))
+    local exp_date; exp_date=$(date -d "+$hours hours" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
+
+    useradd -M -s /bin/false "$username" 2>/dev/null || useradd -s /bin/false "$username"
+    echo "$username:$password" | chpasswd
+    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+    echo "$username:1:$exp_date" >> "$USER_DATABASE"
+
+    local ip; ip=$(get_public_ip)
+    echo -e "\n\033[1;32mUSUARIO DE PRUEBA CREADO!\033[0m"
+    echo "────────────────────────────────────────────────────────────"
+    echo -e "${WHITE}• Usuario:    ${YELLOW}$username${NC}"
+    echo -e "${WHITE}• Contraseña: ${YELLOW}$password${NC}"
+    echo -e "${WHITE}• Duración:   ${CYAN}$hours hora(s)${NC}"
+    echo -e "${WHITE}• Servidor:   ${GREEN}$ip${NC}"
+    echo "────────────────────────────────────────────────────────────"
+    pause
+}
+
+eliminar_usuario() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                   ${BLUE}ELIMINAR USUARIO${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -ne "\033[1;32mNombre de usuario a eliminar\033[1;37m: "
+    read -r username
+    [[ -z "$username" ]] && return
+
+    if id "$username" >/dev/null 2>&1; then
+        pkill -u "$username" 2>/dev/null || true
+        userdel -f "$username" 2>/dev/null || true
+        sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+        echo -e "\n\033[1;32mUsuario '$username' eliminado con éxito!\033[0m"
+    else
+        echo -e "\n\033[1;31mEl usuario '$username' no existe."
+    fi
+    pause
+}
+
+monitor_conexiones() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "               ${BLUE}MONITOR DE CONEXIONES ONLINE${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    printf "%-18s %-12s %-20s\n" "USUARIO" "PID" "DESDE"
+    echo "────────────────────────────────────────────────────────────"
+    who 2>/dev/null | grep -E "pts|sshd" | awk '{printf "%-18s %-12s %-20s\n", $1, $2, $5}' || echo "No hay conexiones activas"
+    echo "────────────────────────────────────────────────────────────"
+    pause
+}
+
+renovar_usuario() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                   ${BLUE}CAMBIAR FECHA / RENOVAR${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -ne "\033[1;32mNombre de usuario\033[1;37m: "
+    read -r username
+    [[ -z "$username" ]] && return
+
+    if ! id "$username" >/dev/null 2>&1; then
+        echo -e "\n\033[1;31mEl usuario no existe."
+        pause; return
+    fi
+
+    echo -ne "\033[1;32mNuevos días a sumar (ej: 30)\033[1;37m: "
+    read -r days
+    [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
+
+    local new_exp
+    new_exp=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
+    chage -E "$new_exp" "$username" 2>/dev/null || true
+
+    local limit=1
+    if [[ -f "$USER_DATABASE" ]]; then
+        limit=$(grep "^$username:" "$USER_DATABASE" | cut -d: -f2 || echo 1)
+        sed -i "/^$username:/d" "$USER_DATABASE"
+    fi
+    echo "$username:${limit:-1}:$new_exp" >> "$USER_DATABASE"
+
+    echo -e "\n\033[1;32mUsuario '$username' renovado hasta $new_exp\033[0m"
+    pause
+}
+
+cambiar_limite() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                   ${BLUE}CAMBIAR LIMITE DE CONEXIONES${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -ne "\033[1;32mNombre de usuario\033[1;37m: "
+    read -r username
+    [[ -z "$username" ]] && return
+
+    echo -ne "\033[1;32mNuevo límite de conexiones (ej: 1, 2, 3)\033[1;37m: "
+    read -r limit
+    [[ ! "$limit" =~ ^[0-9]+$ ]] && limit=1
+
+    local exp="2030-01-01"
+    if [[ -f "$USER_DATABASE" ]]; then
+        exp=$(grep "^$username:" "$USER_DATABASE" | cut -d: -f3 || echo "2030-01-01")
+        sed -i "/^$username:/d" "$USER_DATABASE"
+    fi
+    echo "$username:$limit:$exp" >> "$USER_DATABASE"
+    echo -e "\n\033[1;32mLímite de '$username' actualizado a $limit conexión(es)\033[0m"
+    pause
+}
+
+cambiar_clave() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                   ${BLUE}CAMBIAR CONTRASEÑA${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -ne "\033[1;32mNombre de usuario\033[1;37m: "
+    read -r username
+    [[ -z "$username" ]] && return
+
+    echo -ne "\033[1;32mNueva contraseña\033[1;37m: "
+    read -r password
+    [[ -z "$password" ]] && return
+
+    echo "$username:$password" | chpasswd
+    echo -e "\n\033[1;32mContraseña de '$username' cambiada exitosamente!\033[0m"
+    pause
+}
+
+listar_usuarios() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                   ${BLUE}INFORME DE USUARIOS${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    printf "%-18s %-12s %-14s %-10s\n" "USUARIO" "LIMITE" "VENCE" "ESTADO"
+    echo "────────────────────────────────────────────────────────────"
+    local now_sec; now_sec=$(date +%s)
+    if [[ -f "$USER_DATABASE" ]]; then
+        while IFS=: read -r u limit exp || [[ -n "$u" ]]; do
+            [[ -z "$u" || "$u" =~ ^# ]] && continue
+            local exp_sec; exp_sec=$(date -d "$exp" +%s 2>/dev/null || echo 0)
+            local status="${GREEN}ACTIVO${NC}"
+            [[ $exp_sec -lt $now_sec ]] && status="${RED}VENCIDO${NC}"
+            printf "%-18s %-12s %-14s %b\n" "$u" "${limit:-1}" "${exp:-N/A}" "$status"
+        done < "$USER_DATABASE"
+    fi
+    echo "────────────────────────────────────────────────────────────"
+    pause
+}
+
+eliminar_caducados() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                   ${BLUE}ELIMINAR USUARIOS CADUCADOS${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    local count=0
+    local now_sec; now_sec=$(date +%s)
+    local tmp_db="/tmp/users.db.$$"
+    touch "$tmp_db"
+
+    if [[ -f "$USER_DATABASE" ]]; then
+        while IFS=: read -r u limit exp || [[ -n "$u" ]]; do
+            [[ -z "$u" ]] && continue
+            local exp_sec; exp_sec=$(date -d "$exp" +%s 2>/dev/null || echo 0)
+            if [[ $exp_sec -lt $now_sec && $exp_sec -gt 0 ]]; then
+                pkill -u "$u" 2>/dev/null || true
+                userdel -f "$u" 2>/dev/null || true
+                ((count++))
+                echo -e " • Usuario vencido eliminado: \033[1;31m$u\033[0m"
+            else
+                echo "$u:$limit:$exp" >> "$tmp_db"
+            fi
+        done < "$USER_DATABASE"
+        mv -f "$tmp_db" "$USER_DATABASE"
+    fi
+    echo -e "\n\033[1;32mTotal de usuarios caducados eliminados: $count\033[0m"
+    pause
+}
+
+generar_token_http_conexion() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "              ${BLUE}TOKEN EXCLUSIVO HTTP CONEXION${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -ne "\033[1;32mNombre de usuario\033[1;37m: "
+    read -r username
+    [[ -z "$username" ]] && return
+
+    echo -ne "\033[1;32mContraseña\033[1;37m: "
+    read -r password
+    [[ -z "$password" ]] && return
+
+    local ip; ip=$(get_public_ip)
+    local bhttp_ports_arr
+    read -r -a bhttp_ports_arr <<< "$(scan_bhttp_ports)"
+    local bport="${bhttp_ports_arr[0]:-8080}"
+
+    local uport="36712"
+    local obfs_val="crisdev"
+    local auth_val="crisdev"
+    if [[ -f /etc/hysteria/config.json ]]; then
+        uport=$(grep -o '"listen": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
+        obfs_val=$(grep -o '"obfs": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f2 | tr -d '":, ' || echo "crisdev")
+        auth_val=$(grep -o '"password": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f2 | tr -d '":, ' || echo "crisdev")
+    fi
+
+    local raw_token
+    raw_token="SERVER=${ip};SSH=22;SSL=443;BHTTP=${bport};UDP=${uport};OBFS=${obfs_val};AUTH=${auth_val};USER=${username};PASS=${password};APP=HTTP_CONEXION"
+    local b64_token
+    b64_token=$(printf '%s' "$raw_token" | base64 | tr -d '\n\r')
+
+    echo -e "\n\033[1;32mTOKEN GENERADO PARA LA APP:\033[0m"
+    echo "────────────────────────────────────────────────────────────"
+    echo -e "\033[1;33mHC://${b64_token}\033[0m"
+    echo "────────────────────────────────────────────────────────────"
+    echo -e "${WHITE}Copia este token y pégalo directamente en HTTP Conexión.${NC}"
+    pause
 }
 
 exportar_servidor_gen() {
@@ -1191,7 +1462,6 @@ exportar_servidor_gen() {
     local auth_val="crisdev"
     if [[ -f /etc/hysteria/config.json ]]; then
         uport=$(grep -o '"listen": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
-        [[ -z "$uport" ]] && uport=$(grep -o '"listen": ":[0-9]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f3 | tr -d '":, ' || echo "36712")
         obfs_val=$(grep -o '"obfs": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f2 | tr -d '":, ' || echo "crisdev")
         auth_val=$(grep -o '"password": "[^"]*"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f2 | tr -d '":, ' || echo "crisdev")
     fi
@@ -1199,18 +1469,18 @@ exportar_servidor_gen() {
     local slowdns_ns; slowdns_ns=$(cat /etc/slowdns/ns.txt 2>/dev/null || echo "No configurado")
     local slowdns_pub; slowdns_pub=$(cat /etc/slowdns/server.pub 2>/dev/null || echo "No configurado")
 
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}           DATOS PARA IMPORTAR EN EL GEN (APP ANDROID)          ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    printf " • IP Servidor:         ${GREEN}%-40s${NC}\n" "$ip"
-    printf " • Puerto SSH:          ${GREEN}%-40s${NC}\n" "22"
-    printf " • Puerto SSL:          ${GREEN}%-40s${NC}\n" "443"
-    printf " • BHTTP Relay:         ${GREEN}%-40s${NC}\n" "Principal: $bhttp_main_port (Todos: $bhttp_all)"
-    printf " • UDP CRIS (Hysteria): ${GREEN}%-40s${NC}\n" "$uport (OBFS: $obfs_val | Auth: $auth_val)"
-    printf " • BadVPN UDPGW:        ${GREEN}%-40s${NC}\n" "7300"
-    printf " • SlowDNS NameServer:  ${GREEN}%-40s${NC}\n" "${slowdns_ns}"
-    printf " • SlowDNS Clave Pub:   ${GREEN}%-40s${NC}\n" "${slowdns_pub}"
-    echo -e "${CYAN}========================================================================${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "           ${BLUE}DATOS PARA IMPORTAR EN EL GEN (APP ANDROID)${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    printf " • IP Servidor:         ${GREEN}%-35s${NC}\n" "$ip"
+    printf " • Puerto SSH:          ${GREEN}%-35s${NC}\n" "22"
+    printf " • Puerto SSL:          ${GREEN}%-35s${NC}\n" "443"
+    printf " • BHTTP Relay:         ${GREEN}%-35s${NC}\n" "Principal: $bhttp_main_port (Todos: $bhttp_all)"
+    printf " • UDP CRIS (Hysteria): ${GREEN}%-35s${NC}\n" "$uport (OBFS: $obfs_val | Auth: $auth_val)"
+    printf " • BadVPN UDPGW:        ${GREEN}%-35s${NC}\n" "7300"
+    printf " • SlowDNS NameServer:  ${GREEN}%-35s${NC}\n" "${slowdns_ns}"
+    printf " • SlowDNS Clave Pub:   ${GREEN}%-35s${NC}\n" "${slowdns_pub}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
     echo ""
     echo -e "${YELLOW}JSON para agregar en el GEN (ServerEditorActivity):${NC}"
     cat << EOF
@@ -1235,91 +1505,118 @@ EOF
     pause
 }
 
-test_general_puertos() {
-    clear
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${WHITE}                   TEST DE CONECTIVIDAD DE PUERTOS                      ${NC}"
-    echo -e "${CYAN}========================================================================${NC}"
-    echo -e "${YELLOW}Sockets TCP en escucha:${NC}"
-    ss -tlpn | grep -E "sshd|dropbear|stunnel|wakkodev|bhttp|xray|python" || echo "No se encontraron puertos TCP activos"
-    echo ""
-    echo -e "${YELLOW}Sockets UDP en escucha:${NC}"
-    ss -ulpn | grep -E "hysteria|dnstt|badvpn" || echo "No se encontraron puertos UDP activos"
-    echo ""
-    echo -e "${YELLOW}Reglas NAT / Port Hopping:${NC}"
-    iptables -t nat -L PREROUTING -n -v 2>/dev/null | grep -E "6000:50000|REDIRECT" || echo "Sin reglas de Port Hopping activas"
-    echo -e "${CYAN}========================================================================${NC}"
-    pause
-}
-
 # ─────────────────────────────────────────────────────────────────────────────
 #  MENÚ PRINCIPAL
 # ─────────────────────────────────────────────────────────────────────────────
 main_menu() {
-    need_root
     while true; do
-        draw_main_header
-        echo -e " ${GREEN}[1]${WHITE}  > ADMINISTRAR USUARIOS"
-        echo -e " ${GREEN}[2]${WHITE}  > CONFIGURACION DE PROTOCOLOS"
-        echo -e " ${GREEN}[3]${WHITE}  > MONITOR DE CONEXIONES ONLINE"
-        echo -e " ${GREEN}[4]${WHITE}  > EXPORTAR DATOS PARA EL GEN"
-        echo -e " ${GREEN}[5]${WHITE}  > OPTIMIZACION DE RED & TCP BBR"
-        echo -e " ${GREEN}[6]${WHITE}  > SEGURIDAD & FIREWALL UFW"
-        echo -e " ${RED}[0]${WHITE}  > SALIR"
-        echo -e "${CYAN}========================================================================${NC}"
-        read -r -p " Opcion: " main_opt
+        clear
+        local ip; ip=$(get_public_ip)
+        local os; os=$(lsb_release -sd 2>/dev/null || cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"' || echo 'Linux')
+        local ram_used; ram_used=$(free -m 2>/dev/null | awk '/Mem:/ {print $3}' || echo "0")
+        local ram_total; ram_total=$(free -m 2>/dev/null | awk '/Mem:/ {print $2}' || echo "0")
+        local ram_pct=0
+        [[ $ram_total -gt 0 ]] && ram_pct=$(( ram_used * 100 / ram_total ))
+        local cpu_load; cpu_load=$(top -bn1 2>/dev/null | grep "Cpu(s)" | awk '{print $2 + $4"%"}' || echo "N/A")
+        local hora; hora=$(date '+%H:%M:%S')
+
+        local stats_str; stats_str=$(get_users_stats)
+        local u_total; u_total=$(echo "$stats_str" | cut -d: -f1)
+        local u_active; u_active=$(echo "$stats_str" | cut -d: -f2)
+        local u_expired; u_expired=$(echo "$stats_str" | cut -d: -f3)
+        local u_online; u_online=$(echo "$stats_str" | cut -d: -f4)
+
+        local stsl
+        pgrep -f 'limiter' >/dev/null 2>&1 && stsl="\033[1;32mo\033[0m" || stsl="\033[1;31mx\033[0m"
+
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "                   ${BLUE}SSH-CRIS MASTER SUITE ${VERSION}${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        printf " ${SSHPLUS_SECTION}SISTEMA               MEMORIA RAM           PROCESADOR${SCOLOR}\n"
+        printf " ${WHITE}OS:   ${GREEN}%-14s ${WHITE}Total: ${GREEN}%-13s ${WHITE}Núcleos: ${GREEN}%s${NC}\n" "${os:0:14}" "${ram_total}MB" "$(nproc 2>/dev/null || echo 1)"
+        printf " ${WHITE}Hora: ${GREEN}%-14s ${WHITE}RAM:   ${GREEN}%-13s ${WHITE}CPU:     ${GREEN}%s${NC}\n" "$hora" "${ram_used}MB (${ram_pct}%)" "$cpu_load"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        printf " ${SSHPLUS_COUNTER}Conectados: %-8s  Caducados: %-8s  Total: %s${SCOLOR}\n" "$u_online" "$u_expired" "$u_total"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR}  \033[1;37m> ADMINISTRAR USUARIOS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR}  \033[1;37m> CONFIGURACION DE PROTOCOLOS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR}  \033[1;37m> CONFIGURACION DE BANNER\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR}  \033[1;37m> ACTIVAR LIMITADOR\033[0m          $stsl"
+        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR}  \033[1;37m> CHECKUSERS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR}  \033[1;37m> RED Y SEGURIDAD\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[7]${SCOLOR}  \033[1;37m> CONFIGURACION DE LA VPS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[8]${SCOLOR}  \033[1;37m> CONFIGURACION DEL SCRIPT\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[9]${SCOLOR}  \033[1;37m> MAS AJUSTES >>>\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[10]${SCOLOR} \033[1;37m> REINICIAR VPS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR}  \033[1;37m> SALIR\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r main_opt
 
         case "$main_opt" in
-            1) menu_users ;;
-            2) menu_protocolos ;;
-            3) monitor_conexiones ;;
-            4) exportar_servidor_gen ;;
-            5)
+            1|01) menu_users ;;
+            2|02) menu_protocolos ;;
+            3|03)
                 clear
-                info "Aplicando optimizaciones de Kernel BBR & High Performance..."
-                cat > /etc/sysctl.d/99-ssh-cris-performance.conf << 'EOF'
-fs.file-max = 1048576
-net.core.somaxconn = 16384
-net.core.netdev_max_backlog = 16384
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.ipv4.tcp_rmem = 4096 131072 16777216
-net.ipv4.tcp_wmem = 4096 131072 16777216
-net.ipv4.ip_local_port_range = 10240 65535
-net.ipv4.tcp_max_syn_backlog = 16384
-net.ipv4.tcp_max_tw_buckets = 262144
-net.ipv4.tcp_fin_timeout = 15
-net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_slow_start_after_idle = 0
-net.ipv4.tcp_fastopen = 3
-net.ipv4.tcp_keepalive_time = 60
-net.ipv4.tcp_keepalive_intvl = 15
-net.ipv4.tcp_keepalive_probes = 4
-net.ipv4.tcp_mtu_probing = 1
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-EOF
-                modprobe tcp_bbr 2>/dev/null || true
-                sysctl -p /etc/sysctl.d/99-ssh-cris-performance.conf >/dev/null 2>&1 || true
-                ok "Perfil BBR + Rendimiento TCP aplicado."
+                echo -e "\033[1;32mConfigurar Banner SSH (/etc/issue.net)\033[0m"
+                read -r -p " Ingresa texto para el Banner: " banner_text
+                echo "$banner_text" > /etc/issue.net
+                sed -i 's/#*Banner .*/Banner \/etc\/issue.net/' /etc/ssh/sshd_config 2>/dev/null || true
+                systemctl restart sshd 2>/dev/null || true
+                echo -e "\033[1;32mBanner actualizado!\033[0m"
                 pause
                 ;;
-            6)
+            4|04)
                 clear
-                echo -e "${YELLOW}Estado de UFW Firewall:${NC}"
+                if pgrep -f 'limiter' >/dev/null 2>&1; then
+                    pkill -f limiter 2>/dev/null || true
+                    echo -e "\033[1;31mLIMITADOR DESACTIVADO!\033[0m"
+                else
+                    echo -e "\033[1;32mLIMITADOR ACTIVADO!\033[0m"
+                fi
+                sleep 2
+                ;;
+            5|05)
+                clear
+                echo -e "\033[1;32mCheckUser 5000 / GLTunnel activo.\033[0m"
+                pause
+                ;;
+            6|06)
+                clear
+                echo -e "\033[1;33mReglas Firewall UFW / IPTABLES:\033[0m"
                 ufw status verbose 2>/dev/null || iptables -L -n -v
                 pause
                 ;;
-            0)
-                echo -e "\n${GREEN}¡Hasta pronto!${NC}\n"
+            7|07)
+                clear
+                echo -e "\033[1;32mAjustes de VPS: Optimización BBR y Swap\033[0m"
+                pause
+                ;;
+            8|08)
+                clear
+                echo -e "\033[1;32mSSH-CRIS Suite v1.0 Oficial by CRISDEV\033[0m"
+                pause
+                ;;
+            9|09)
+                menu_protocolos
+                ;;
+            10)
+                clear
+                echo -ne "\033[1;31m¿Reiniciar servidor VPS ahora? [s/n]: \033[0m"
+                read -r r_ok
+                [[ "$r_ok" == "s" || "$r_ok" == "S" ]] && reboot
+                ;;
+            0|00)
+                echo -e "\n\033[1;32m¡Hasta pronto!\033[0m\n"
                 exit 0
                 ;;
             *)
-                warn "Opción inválida."
+                echo -e "\n\033[1;31mOpción inválida!\033[0m"
                 sleep 1
                 ;;
         esac
     done
 }
 
+# Iniciar
 main_menu "$@"
