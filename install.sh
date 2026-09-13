@@ -191,6 +191,41 @@ chmod 755 /usr/local/bin/dnstt-server 2>/dev/null || true
 ln -sfn /usr/local/bin/dnstt-server /bin/dnstt-server 2>/dev/null || true
 chmod 755 /bin/dnstt-server 2>/dev/null || true
 
+# Instalar Core Chisel Tunnel (jpillora/chisel)
+echo -e "${YELLOW}[*]${NC} Descargando Core Chisel Tunnel..."
+if [[ ! -x /usr/local/bin/chisel && ! -x /bin/chisel ]]; then
+    if [[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]]; then
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-amd64" -o /usr/local/bin/chisel 2>/dev/null || \
+        wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-amd64" -O /usr/local/bin/chisel 2>/dev/null || true
+        if [[ ! -s /usr/local/bin/chisel ]]; then
+            curl -fsSL "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_amd64.gz" -o /tmp/chisel.gz 2>/dev/null || \
+            wget -q "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_amd64.gz" -O /tmp/chisel.gz 2>/dev/null || true
+            if [[ -s /tmp/chisel.gz ]]; then
+                gzip -dc /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || gunzip -c /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || true
+                rm -f /tmp/chisel.gz 2>/dev/null || true
+            fi
+        fi
+    elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-arm64" -o /usr/local/bin/chisel 2>/dev/null || \
+        wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-arm64" -O /usr/local/bin/chisel 2>/dev/null || true
+        if [[ ! -s /usr/local/bin/chisel ]]; then
+            curl -fsSL "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_arm64.gz" -o /tmp/chisel.gz 2>/dev/null || \
+            wget -q "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_arm64.gz" -O /tmp/chisel.gz 2>/dev/null || true
+            if [[ -s /tmp/chisel.gz ]]; then
+                gzip -dc /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || gunzip -c /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || true
+                rm -f /tmp/chisel.gz 2>/dev/null || true
+            fi
+        fi
+    fi
+    if [[ ! -s /usr/local/bin/chisel ]]; then
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel" -o /usr/local/bin/chisel 2>/dev/null || true
+    fi
+fi
+chmod 755 /usr/local/bin/chisel 2>/dev/null || true
+ln -sfn /usr/local/bin/chisel /usr/bin/chisel 2>/dev/null || true
+ln -sfn /usr/local/bin/chisel /bin/chisel 2>/dev/null || true
+chmod 755 /bin/chisel /usr/bin/chisel 2>/dev/null || true
+
 # Configuración base inicial de Hysteria v1 para que arranque activo
 mkdir -p /etc/hysteria
 if [[ ! -f /etc/hysteria/server.crt || ! -f /etc/hysteria/server.key ]]; then

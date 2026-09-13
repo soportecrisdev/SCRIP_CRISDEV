@@ -2350,6 +2350,222 @@ menu_udp() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  CHISEL TUNNEL MANAGER (NATIVO SYSTEMD)
+# ─────────────────────────────────────────────────────────────────────────────
+install_chisel_binary() {
+    if [[ -x /usr/local/bin/chisel || -x /bin/chisel || -x /usr/bin/chisel ]]; then
+        return 0
+    fi
+    echo -e "${YELLOW}Descargando binario oficial de Chisel...${NC}"
+    local arch; arch=$(uname -m)
+    if [[ "$arch" == "x86_64" || "$arch" == "amd64" ]]; then
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-amd64" -o /usr/local/bin/chisel 2>/dev/null || \
+        wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-amd64" -O /usr/local/bin/chisel 2>/dev/null || true
+        if [[ ! -s /usr/local/bin/chisel ]]; then
+            curl -fsSL "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_amd64.gz" -o /tmp/chisel.gz 2>/dev/null || \
+            wget -q "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_amd64.gz" -O /tmp/chisel.gz 2>/dev/null || true
+            if [[ -s /tmp/chisel.gz ]]; then
+                gzip -dc /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || gunzip -c /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || true
+                rm -f /tmp/chisel.gz 2>/dev/null || true
+            fi
+        fi
+    elif [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-arm64" -o /usr/local/bin/chisel 2>/dev/null || \
+        wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-arm64" -O /usr/local/bin/chisel 2>/dev/null || true
+        if [[ ! -s /usr/local/bin/chisel ]]; then
+            curl -fsSL "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_arm64.gz" -o /tmp/chisel.gz 2>/dev/null || \
+            wget -q "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_arm64.gz" -O /tmp/chisel.gz 2>/dev/null || true
+            if [[ -s /tmp/chisel.gz ]]; then
+                gzip -dc /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || gunzip -c /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || true
+                rm -f /tmp/chisel.gz 2>/dev/null || true
+            fi
+        fi
+    fi
+    if [[ ! -s /usr/local/bin/chisel ]]; then
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel" -o /usr/local/bin/chisel 2>/dev/null || true
+    fi
+    chmod 755 /usr/local/bin/chisel 2>/dev/null || true
+    ln -sfn /usr/local/bin/chisel /usr/bin/chisel 2>/dev/null || true
+    ln -sfn /usr/local/bin/chisel /bin/chisel 2>/dev/null || true
+    chmod 755 /bin/chisel /usr/bin/chisel 2>/dev/null || true
+    [[ -x /usr/local/bin/chisel || -x /bin/chisel ]]
+}
+
+fun_chisel() {
+    while true; do
+        clear
+        local ch_active=false ch_status="${RED}DESACTIVADO${NC}" ch_port="8088" ch_user="admin" ch_pass="admin"
+        mkdir -p /etc/chisel
+        [[ -f /etc/chisel/port ]] && ch_port=$(cat /etc/chisel/port 2>/dev/null)
+        [[ -f /etc/chisel/user ]] && ch_user=$(cat /etc/chisel/user 2>/dev/null)
+        [[ -f /etc/chisel/pass ]] && ch_pass=$(cat /etc/chisel/pass 2>/dev/null)
+        
+        if systemctl is-active chisel >/dev/null 2>&1 || pgrep -x chisel >/dev/null 2>&1; then
+            ch_active=true
+            ch_status="${GREEN}ACTIVADO${NC}"
+        fi
+        
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "                   ${BLUE}GESTIONAR CHISEL TUNNEL${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${WHITE}SERVICIO : ${ch_status}"
+        echo -e "  ${WHITE}PUERTO   : ${YELLOW}${ch_port}${NC}"
+        [[ "$ch_active" == "true" ]] && echo -e "  ${WHITE}USUARIO  : ${GREEN}${ch_user}${NC} | ${WHITE}CLAVE : ${GREEN}${ch_pass}${NC}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        if [[ "$ch_active" == "true" ]]; then
+            echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> RECONFIGURAR / CAMBIAR PUERTO Y CLAVE\033[0m"
+            echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> DETENER / DESACTIVAR CHISEL\033[0m"
+            echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> VER DATOS Y COMANDOS DE CONEXION\033[0m"
+            echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> REINICIAR SERVICIO CHISEL\033[0m"
+            echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> DESINSTALAR CHISEL\033[0m"
+        else
+            echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> ACTIVAR / INICIAR CHISEL\033[0m"
+            echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> VER DATOS Y COMANDOS DE CONEXION\033[0m"
+            echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> DESINSTALAR CHISEL\033[0m"
+        fi
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r ch_opt
+        
+        case "$ch_opt" in
+            1|01)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "                   ${BLUE}CONFIGURAR CHISEL SERVER${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                
+                install_chisel_binary
+                if [[ ! -x /usr/local/bin/chisel && ! -x /bin/chisel ]]; then
+                    echo -e "\033[1;31mError: No se pudo instalar el binario de Chisel.\033[0m"
+                    pause
+                    continue
+                fi
+                
+                echo -ne "${WHITE}Puerto para Chisel [Enter = ${ch_port}]: ${NC}"
+                read -r new_p
+                [[ -n "$new_p" ]] && ch_port="$new_p"
+                
+                echo -ne "${WHITE}Usuario de autenticación [Enter = ${ch_user}]: ${NC}"
+                read -r new_u
+                [[ -n "$new_u" ]] && ch_user="$new_u"
+                
+                echo -ne "${WHITE}Contraseña de autenticación [Enter = ${ch_pass}]: ${NC}"
+                read -r new_pwd
+                [[ -n "$new_pwd" ]] && ch_pass="$new_pwd"
+                
+                mkdir -p /etc/chisel
+                echo "$ch_port" > /etc/chisel/port
+                echo "$ch_user" > /etc/chisel/user
+                echo "$ch_pass" > /etc/chisel/pass
+                
+                # Crear servicio systemd nativo
+                cat > /etc/systemd/system/chisel.service << EOF_CHISEL_SVC
+[Unit]
+Description=HTTP Conexion Chisel Tunnel Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/chisel server --port ${ch_port} --socks5 --reverse --auth "${ch_user}:${ch_pass}"
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF_CHISEL_SVC
+
+                systemctl daemon-reload >/dev/null 2>&1
+                systemctl unmask chisel 2>/dev/null || true
+                systemctl enable --now chisel >/dev/null 2>&1
+                systemctl restart chisel >/dev/null 2>&1
+                
+                # Abrir puerto en firewall si ufw o iptables estan activos
+                iptables -I INPUT -p tcp --dport "$ch_port" -j ACCEPT 2>/dev/null || true
+                
+                if systemctl is-active chisel >/dev/null 2>&1 || pgrep -x chisel >/dev/null 2>&1; then
+                    echo -e "\n\033[1;32m⚡ Chisel Server Iniciado y Activo en el puerto ${ch_port}! ⚡\033[0m"
+                else
+                    echo -e "\n\033[1;31mError al iniciar Chisel. Verifique con: systemctl status chisel\033[0m"
+                fi
+                pause
+                ;;
+            2|02)
+                if [[ "$ch_active" == "true" ]]; then
+                    echo -e "\n${YELLOW}Deteniendo servicio Chisel...${NC}"
+                    systemctl stop chisel >/dev/null 2>&1 || true
+                    systemctl disable chisel >/dev/null 2>&1 || true
+                    pkill -9 -f chisel >/dev/null 2>&1 || true
+                    echo -e "\033[1;32mChisel detenido correctamente.\033[0m"
+                    pause
+                else
+                    ver_datos_chisel "$ch_port" "$ch_user" "$ch_pass"
+                fi
+                ;;
+            3|03)
+                if [[ "$ch_active" == "true" ]]; then
+                    ver_datos_chisel "$ch_port" "$ch_user" "$ch_pass"
+                else
+                    desinstalar_chisel
+                fi
+                ;;
+            4|04)
+                if [[ "$ch_active" == "true" ]]; then
+                    systemctl restart chisel >/dev/null 2>&1
+                    echo -e "\n\033[1;32mServicio Chisel reiniciado.\033[0m"
+                    pause
+                fi
+                ;;
+            5|05)
+                if [[ "$ch_active" == "true" ]]; then
+                    desinstalar_chisel
+                fi
+                ;;
+            0|00) return ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
+ver_datos_chisel() {
+    local p="$1" u="$2" pwd="$3"
+    local ip; ip=$(get_public_ip)
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                   ${BLUE}DATOS DE CONEXION CHISEL${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    printf "  \033[1;32m%-18s\033[0m \033[1;37m%s\033[0m\n" "HOST / IP VPS:" "$ip"
+    printf "  \033[1;32m%-18s\033[0m \033[1;37m%s\033[0m\n" "PUERTO SERVER:" "$p"
+    printf "  \033[1;32m%-18s\033[0m \033[1;37m%s\033[0m\n" "USUARIO:" "$u"
+    printf "  \033[1;32m%-18s\033[0m \033[1;37m%s\033[0m\n" "CONTRASEÑA:" "$pwd"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "\033[1;33mCOMANDO PARA CLIENTE (Crea Proxy SOCKS5 Local en 1080):\033[0m"
+    echo -e "\033[1;36mchisel client --auth \"${u}:${pwd}\" ${ip}:${p} socks\033[0m"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    pause
+}
+
+desinstalar_chisel() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -e "                   ${RED}DESINSTALAR CHISEL${SCOLOR}"
+    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    echo -ne "${WHITE}¿Está seguro de desinstalar Chisel? [s/n]: ${NC}"
+    read -r resp
+    [[ "$resp" != @(s|S|si|SI) ]] && return
+    systemctl stop chisel >/dev/null 2>&1 || true
+    systemctl disable chisel >/dev/null 2>&1 || true
+    pkill -9 -f chisel >/dev/null 2>&1 || true
+    rm -f /etc/systemd/system/chisel.service /usr/local/bin/chisel /usr/bin/chisel /bin/chisel
+    rm -rf /etc/chisel
+    systemctl daemon-reload >/dev/null 2>&1
+    echo -e "\n\033[1;32mChisel desinstalado completamente del sistema.\033[0m"
+    pause
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  MENÚ DE PROTOCOLOS (CONFIGURACION DE PROTOCOLOS)
 # ─────────────────────────────────────────────────────────────────────────────
 menu_protocolos() {
@@ -2434,12 +2650,19 @@ menu_protocolos() {
             echo -e "\033[1;32mSERVICIO: \033[1;33mSLOWDNS \033[1;32mPUERTO: \033[1;37m$_slow_pt\033[0m"
         fi
 
+        # 10. Chisel
+        if systemctl is-active --quiet chisel 2>/dev/null || pgrep -f 'chisel' >/dev/null 2>&1; then
+            local _ch_pt="8088"
+            [[ -f /etc/chisel/port ]] && _ch_pt=$(cat /etc/chisel/port 2>/dev/null)
+            echo -e "\033[1;32mSERVICIO: \033[1;33mCHISEL \033[1;32mPUERTO: \033[1;37m$_ch_pt\033[0m"
+        fi
+
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
 
         local sts_ssh sts_socks sts_ssl sts_drop sts_v2ray sts_slow sts_hyst sts_trojan sts_badvpn sts_ovpn sts_ws sts_sslh sts_squid sts_chisel sts_bhttp
         sts_ssh="\033[1;32mo\033[0m"
-        (pgrep -f 'proxy.py' >/dev/null 2>&1 || [[ -n "$sks_p" ]]) && sts_socks="\033[1;32mo\033[0m" || sts_socks="\033[1;31mx\033[0m"
-        (pgrep -f 'stunnel' >/dev/null 2>&1 || [[ -n "$ssl_p" ]]) && sts_ssl="\033[1;32mo\033[0m" || sts_ssl="\033[1;31mx\033[0m"
+        (pgrep -f 'proxy\.py|wsproxy\.py' >/dev/null 2>&1 || [[ -n "$sks_p" ]]) && sts_socks="\033[1;32mo\033[0m" || sts_socks="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet stunnel4 2>/dev/null || pgrep -f 'stunnel' >/dev/null 2>&1 || [[ -n "$ssl_p" ]]) && sts_ssl="\033[1;32mo\033[0m" || sts_ssl="\033[1;31mx\033[0m"
         (pgrep -f 'dropbear' >/dev/null 2>&1 || [[ -n "$drp_p" ]]) && sts_drop="\033[1;32mo\033[0m" || sts_drop="\033[1;31mx\033[0m"
         pgrep -f 'xray|v2ray' >/dev/null 2>&1 && sts_v2ray="\033[1;32mo\033[0m" || sts_v2ray="\033[1;31mx\033[0m"
         (systemctl is-active --quiet slowdns 2>/dev/null || pgrep -f 'dnstt-server' >/dev/null 2>&1 || ss -ulpn 2>/dev/null | grep -qE 'dnstt-server|:5300 ') && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
@@ -2450,7 +2673,7 @@ menu_protocolos() {
         pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1 && sts_ws="\033[1;32mo\033[0m" || sts_ws="\033[1;31mx\033[0m"
         pgrep -f 'sslh' >/dev/null 2>&1 && sts_sslh="\033[1;32mo\033[0m" || sts_sslh="\033[1;31mx\033[0m"
         (pgrep -f 'squid' >/dev/null 2>&1 || [[ -n "$sqd_p" ]]) && sts_squid="\033[1;32mo\033[0m" || sts_squid="\033[1;31mx\033[0m"
-        pgrep -f 'chisel' >/dev/null 2>&1 && sts_chisel="\033[1;32mo\033[0m" || sts_chisel="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet chisel 2>/dev/null || pgrep -f 'chisel' >/dev/null 2>&1) && sts_chisel="\033[1;32mo\033[0m" || sts_chisel="\033[1;31mx\033[0m"
         [[ -n "$bhttp_p" ]] && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
 
         printf "  %b[1]%b  > OPENSSH         %b    %b[10]%b > BADVPN             %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssh" "$SSHPLUS_NUM" "$SCOLOR" "$sts_badvpn"
@@ -2507,11 +2730,7 @@ menu_protocolos() {
                 pause
                 ;;
             14) fun_squid ;;
-            15)
-                clear
-                echo -e "\033[1;32mChisel Tunnel\033[0m"
-                pause
-                ;;
+            15) fun_chisel ;;
             16) menu_bhttp ;;
             17) exportar_servidor_gen ;;
             0|00) return ;;

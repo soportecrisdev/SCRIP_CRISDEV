@@ -701,137 +701,144 @@ ensure_licence_conexao
 		echo -e "\E[44;1;37m            GESTIONAR CHISEL             \E[0m"
 		echo ""
 
+		local ch_port="8088" ch_user="admin" ch_pass="admin"
+		mkdir -p /etc/chisel
+		[[ -f /etc/chisel/port ]] && ch_port=$(cat /etc/chisel/port 2>/dev/null)
+		[[ -f /etc/chisel/user ]] && ch_user=$(cat /etc/chisel/user 2>/dev/null)
+		[[ -f /etc/chisel/pass ]] && ch_pass=$(cat /etc/chisel/pass 2>/dev/null)
 
-		[[ "$(netstat -tlpn | grep 'docker' | wc -l)" != '0' ]] && {
+		if systemctl is-active chisel >/dev/null 2>&1 || pgrep -x chisel >/dev/null 2>&1; then
 			sks='\033[1;32mON'
-			echo -e "\033[1;33mPUERTOS\033[1;37m: \033[1;32m$(netstat -nplt | grep 'docker' | awk {'print $4'} | cut -d: -f2 | xargs)"
-		} || {
+			chiselsts="\033[1;32mo "
+			echo -e "\033[1;33mPUERTOS\033[1;37m: \033[1;32m${ch_port}\033[0m"
+		else
 			sks='\033[1;31mOFF'
-		}
-        [[ "$(netstat -tlpn | grep 'docker' | wc -l)" != '0' ]] && {
-				chiselsts="\033[1;32mo "
-			} || {
-				chiselsts="\033[1;31mx "
-			}
+			chiselsts="\033[1;31mx "
+		fi
+
 		echo ""
-		echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;37m• \033[1;33mACTIVAR CHISEL $chiselsts \033[0m"
-		echo -e "\033[1;31m[\033[1;36m2\033[1;31m] \033[1;37m• \033[1;33mREINICIAR CHISEL\033[0m"
+		echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;37m• \033[1;33mACTIVAR / CONFIGURAR CHISEL $chiselsts \033[0m"
+		echo -e "\033[1;31m[\033[1;36m2\033[1;31m] \033[1;37m• \033[1;33mDETENER CHISEL\033[0m"
+		echo -e "\033[1;31m[\033[1;36m3\033[1;31m] \033[1;37m• \033[1;33mREINICIAR CHISEL\033[0m"
+		echo -e "\033[1;31m[\033[1;36m4\033[1;31m] \033[1;37m• \033[1;33mDATOS DE CONEXIÓN\033[0m"
 		echo -e "\033[1;31m[\033[1;36m0\033[1;31m] \033[1;37m• \033[1;33mVOLVER\033[0m"
 		echo ""
 		echo -ne "\033[1;32m¿QUÉ DESEA HACER \033[1;33m?\033[1;37m "
 		read resposta
 		if [[ "$resposta" = '1' ]]; then
-			if netstat -nltp | grep 'docker' 1>/dev/null 2>/dev/null; then
-				clear
-				echo -e "\E[41;1;37m             CHISEL              \E[0m"
-				echo ""
-				fun_chiseloff() {
-					docker stop chisel
-                    docker rm chisel
-					docker.io stop chisel
-                    docker.io rm chisel
-
-				}
-				echo -e "\033[1;32mDESACTIVANDO CHISEL\033[1;33m"
-				echo ""
-				fun_bar 'fun_chiseloff'
-				echo ""
-				echo -e "\033[1;32mCHISEL DESACTIVADO CON ÉXITO!\033[1;33m"
-				sleep 3
-				fun_chisel
-			else
-                clear
-                fun_installdocker() {
-                    _pacotes=("docker" "docker.io")
-                    for _prog in ${_pacotes[@]}; do
-                    apt install $_prog -y
-                    done
-                }
-                echo -e "\n${YELLOW}TENGA EN CUENTA QUE ESTE MÉTODO ES INESTABLE\nPUEDE O NO FUNCIONAR EN SU MÁQUINA\nASUMA LOS RIESGOS ! ${SCOLOR}\n"
-                echo -ne "${GREEN}¿CONTINUAR CON LA INSTALACIÓN? ${YELLOW}[s/n]:${SCOLOR} "
-                read resp
-                [[ "$resp" != @(s|sim|S|SIM) ]] && {
-                    echo -e "\n${RED}Volviendo...${SCOLOR}"
-                    sleep 2
-                    connection
-                }
-                echo -e "\n\033[1;32mCompatible con Ubuntu 16+\033[1;33m"
-                echo -e "\n\033[1;32mINSTALANDO CHISEL !\033[1;33m"
-				echo ""
-				fun_bar 'fun_installdocker'
-				clear
-				echo -e "\E[44;1;37m             CHISEL              \E[0m"
-				echo ""
-				echo -ne "\033[1;32m¿QUÉ PUERTO DESEA UTILIZAR \033[1;33m?\033[1;37m: "
-				read porta
-				[[ -z "$porta" ]] && {
-					echo ""
-					echo -e "\033[1;31mPuerto no valido!"
-					sleep 3
-					clear
-					fun_chisel
-				}
-				verif_ptrs $porta
-                clear
-                echo -ne "\033[1;32mNombre de usuario:\033[1;37m ";read username
-                [[ -z $username ]] && {
-                    echo -e "\n${cor1}Nombre de usuario vacío o inválido!${scor}\n"
-                    fun_chisel
-                }
-                [[ ${username} != ?(+|-)+([a-zA-Z0-9]) ]] && {
-                    echo -e "\n${cor1}Introdujiste un nombre de usuario inválido!${scor}"
-                    echo -e "${cor1}No uses espacios, acentos ni caracteres especiales!${scor}\n"
-                    fun_chisel
-                }
-                sizemin=$(echo ${#username})
-                [[ $sizemin -lt 2 ]] && {
-                    echo -e "\n${cor1}El nombre de usuario es demasiado corto${scor}"
-                    echo -e "${cor1}use no mínimo dois caracteres!${scor}\n"
-                    fun_chisel
-                }
-                sizemax=$(echo ${#username})
-                [[ $sizemax -gt 10 ]] && {
-                    echo -e "\n${cor1}El nombre de usuario es demasiado largo"
-                    echo -e "${cor1}use no máximo 10 caracteres!${scor}\n"
-                    fun_chisel
-                }
-                echo -ne "\033[1;32mSenha:\033[1;37m ";read password
-                [[ -z $password ]] && {
-                    echo -e "\n${cor1}Clave vacia o no valida!${scor}\n"
-                    fun_chisel 
-                }
-                sizepass=$(echo ${#password})
-                [[ $sizepass -lt 4 ]] && {
-                    echo -e "\n${cor1}Senha curta!, use no mínimo 4 caracteres${scor}\n"
-                    fun_chisel        
-                }
-                echo -e "\n\033[1;32mCONFIGURANDO CHISEL !\033[0m"
-				echo ""
-                fun_inichisel() {
-                    docker run --name chisel -p $porta:$porta -d --restart always jpillora/chisel server -p $porta --socks5 --key supersecret --auth "$username:$password"
-                    docker.io run --name chisel -p $porta:$porta -d --restart always jpillora/chisel server -p $porta --socks5 --key supersecret --auth "$username:$password"
-                }
-                fun_bar 'fun_inichisel'
-                clear
-                echo -e "\n\033[1;32mCHISEL INSTALADO CON ÉXITO !\033[1;31m PUERTO: \033[1;33m${porta}\033[0m"
-				sleep 3
-				clear
-				fun_chisel
-            fi
-        elif [[ "$resposta" = '2' ]]; then
-            clear
-            echo -e "\n\033[1;32mREINICIANDO CHISEL !\033[1;33m"
+			clear
+			echo -e "\E[44;1;37m             CONFIGURAR CHISEL              \E[0m"
 			echo ""
-            fun_attchisel() {
-                docker restart chisel
-                docker.io restart chisel
-            }
-            fun_attchisel
-            clear
-            echo -e "\n\033[1;32mCHISEL REINICIANDO CON ÉXITO !\033[1;33m"
-            sleep 1
-            fun_chisel
-        elif [[ "$resposta" = '0' ]]; then
+			if [[ ! -x /usr/local/bin/chisel && ! -x /bin/chisel ]]; then
+				echo -e "\033[1;32mDescargando Core Chisel Tunnel oficial...\033[0m"
+				local arch; arch=$(uname -m)
+				if [[ "$arch" == "x86_64" || "$arch" == "amd64" ]]; then
+					curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-amd64" -o /usr/local/bin/chisel 2>/dev/null || \
+					wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-amd64" -O /usr/local/bin/chisel 2>/dev/null || true
+					if [[ ! -s /usr/local/bin/chisel ]]; then
+						curl -fsSL "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_amd64.gz" -o /tmp/chisel.gz 2>/dev/null || \
+						wget -q "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_amd64.gz" -O /tmp/chisel.gz 2>/dev/null || true
+						if [[ -s /tmp/chisel.gz ]]; then
+							gzip -dc /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || gunzip -c /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || true
+							rm -f /tmp/chisel.gz 2>/dev/null || true
+						fi
+					fi
+				elif [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
+					curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-arm64" -o /usr/local/bin/chisel 2>/dev/null || \
+					wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel-arm64" -O /usr/local/bin/chisel 2>/dev/null || true
+					if [[ ! -s /usr/local/bin/chisel ]]; then
+						curl -fsSL "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_arm64.gz" -o /tmp/chisel.gz 2>/dev/null || \
+						wget -q "https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_arm64.gz" -O /tmp/chisel.gz 2>/dev/null || true
+						if [[ -s /tmp/chisel.gz ]]; then
+							gzip -dc /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || gunzip -c /tmp/chisel.gz > /usr/local/bin/chisel 2>/dev/null || true
+							rm -f /tmp/chisel.gz 2>/dev/null || true
+						fi
+					fi
+				fi
+				if [[ ! -s /usr/local/bin/chisel ]]; then
+					curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/chisel" -o /usr/local/bin/chisel 2>/dev/null || true
+				fi
+				chmod 755 /usr/local/bin/chisel 2>/dev/null || true
+				ln -sfn /usr/local/bin/chisel /usr/bin/chisel 2>/dev/null || true
+				ln -sfn /usr/local/bin/chisel /bin/chisel 2>/dev/null || true
+				chmod 755 /bin/chisel /usr/bin/chisel 2>/dev/null || true
+			fi
+			if [[ ! -x /usr/local/bin/chisel && ! -x /bin/chisel ]]; then
+				echo -e "\033[1;31mError al descargar el binario de Chisel.\033[0m"
+				sleep 2
+				fun_chisel
+				return
+			fi
+			echo -ne "\033[1;32m¿QUÉ PUERTO DESEA UTILIZAR [Enter = ${ch_port}] \033[1;33m?\033[1;37m: "
+			read porta
+			[[ -n "$porta" ]] && ch_port="$porta"
+			verif_ptrs "$ch_port"
+			echo -ne "\033[1;32mNombre de usuario [Enter = ${ch_user}]:\033[1;37m "; read username
+			[[ -n "$username" ]] && ch_user="$username"
+			echo -ne "\033[1;32mContraseña [Enter = ${ch_pass}]:\033[1;37m "; read password
+			[[ -n "$password" ]] && ch_pass="$password"
+
+			mkdir -p /etc/chisel
+			echo "$ch_port" > /etc/chisel/port
+			echo "$ch_user" > /etc/chisel/user
+			echo "$ch_pass" > /etc/chisel/pass
+
+			cat > /etc/systemd/system/chisel.service << EOF_CHISEL_SVC2
+[Unit]
+Description=HTTP Conexion Chisel Tunnel Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/chisel server --port ${ch_port} --socks5 --reverse --auth "${ch_user}:${ch_pass}"
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF_CHISEL_SVC2
+			systemctl daemon-reload >/dev/null 2>&1
+			systemctl unmask chisel 2>/dev/null || true
+			systemctl enable --now chisel >/dev/null 2>&1
+			systemctl restart chisel >/dev/null 2>&1
+			iptables -I INPUT -p tcp --dport "$ch_port" -j ACCEPT 2>/dev/null || true
+
+			echo ""
+			echo -e "\033[1;32m⚡ CHISEL INSTALADO Y ACTIVADO CON ÉXITO EN EL PUERTO \033[1;33m${ch_port}\033[1;32m! ⚡\033[0m"
+			sleep 2
+			fun_chisel
+		elif [[ "$resposta" = '2' ]]; then
+			clear
+			echo -e "\E[41;1;37m             DETENIENDO CHISEL              \E[0m"
+			echo ""
+			systemctl stop chisel >/dev/null 2>&1 || true
+			systemctl disable chisel >/dev/null 2>&1 || true
+			pkill -9 -f chisel >/dev/null 2>&1 || true
+			echo -e "\033[1;32mCHISEL DESACTIVADO CON ÉXITO!\033[0m"
+			sleep 2
+			fun_chisel
+		elif [[ "$resposta" = '3' ]]; then
+			clear
+			echo -e "\n\033[1;32mREINICIANDO CHISEL !\033[1;33m"
+			systemctl restart chisel >/dev/null 2>&1
+			echo -e "\n\033[1;32mCHISEL REINICIADO CON ÉXITO !\033[1;33m"
+			sleep 2
+			fun_chisel
+		elif [[ "$resposta" = '4' ]]; then
+			clear
+			local ip; ip=$(cat /etc/IP 2>/dev/null || cat /etc/SSHPlus/IP 2>/dev/null || curl -s4 icanhazip.com || echo "127.0.0.1")
+			echo -e "\E[44;1;37m            DATOS DE CONEXION CHISEL            \E[0m"
+			echo -e "  \033[1;32mHOST/IP VPS:\033[0m \033[1;37m$ip\033[0m"
+			echo -e "  \033[1;32mPUERTO     :\033[0m \033[1;37m$ch_port\033[0m"
+			echo -e "  \033[1;32mUSUARIO    :\033[0m \033[1;37m$ch_user\033[0m"
+			echo -e "  \033[1;32mCLAVE      :\033[0m \033[1;37m$ch_pass\033[0m"
+			echo -e "\033[1;33mComando cliente:\033[0m \033[1;36mchisel client --auth \"${ch_user}:${ch_pass}\" ${ip}:${ch_port} socks\033[0m"
+			echo ""
+			echo -e "\033[1;37m* \033[1;33mEnter para continuar\033[0m" && read enter
+			fun_chisel
+		elif [[ "$resposta" = '0' ]]; then
 			echo ""
 			echo -e "\033[1;31mVolviendo...\033[0m"
 			sleep 1
@@ -2609,12 +2616,15 @@ PY
 			echo -e "${SSHPLUS_CYAN}                 CONFIGURACION DE PROTOCOLOS${SCOLOR}"
 			sshplus_line
 			echo -e "\033[1;32mSERVICIO: \033[1;33mOPENSSH \033[1;32mPUERTO: \033[1;37m$(grep 'Port' /etc/ssh/sshd_config | cut -d' ' -f2 | grep -v 'no' | xargs)" && sts6="\033[1;32mo "
-			[[ "$(netstat -tlpn | grep 'docker' | wc -l)" != '0' ]] && {
-				echo -e "\033[1;32mSERVICIO: \033[1;33mCHISEL: \033[1;32mPUERTO: \033[1;37m$(netstat -nplt | grep 'docker' | awk {'print $4'} | cut -d: -f2 | xargs)"
+			if systemctl is-active chisel >/dev/null 2>&1 || pgrep -x chisel >/dev/null 2>&1 || pgrep -f 'chisel server' >/dev/null 2>&1; then
+				_ch_pt=""
+				[[ -f /etc/chisel/port ]] && _ch_pt=$(cat /etc/chisel/port 2>/dev/null)
+				[[ -z "${_ch_pt// }" ]] && _ch_pt="$(netstat -tunlp 2>/dev/null | grep 'chisel' | awk '{print $4}' | cut -d: -f2 | head -1)"
+				echo -e "\033[1;32mSERVICIO: \033[1;33mCHISEL \033[1;32mPUERTO: \033[1;37m${_ch_pt:-8088}"
 				sts8="\033[1;32mo "
-			} || {
+			else
 				sts8="\033[1;31mx "
-			}
+			fi
 			[[ "$(systemctl is-active slowdns 2>/dev/null)" = "active" || "$(pgrep -f 'dnstt-server.*slowdns|dnstt-server.*server.key' 2>/dev/null | wc -l)" != "0" ]] && {
 				_slow_pt=""
 				[[ -f /etc/slowdns/slowdns.conf ]] && _slow_pt="$(grep '^SLOW_PORT=' /etc/slowdns/slowdns.conf 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
