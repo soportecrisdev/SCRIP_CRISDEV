@@ -4386,6 +4386,97 @@ ecualizar_horario() {
     pause
 }
 
+menu_autoclean_ram() {
+    while true; do
+        clear
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "           ${BLUE}AUTO LIBERAR MEMORIA RAM Y SWAP${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        
+        local ram_tot ram_use swap_use swp_val cron_st
+        ram_tot=$(LC_ALL=C LANG=C free -h 2>/dev/null | awk '$1 == "Mem:" {print $2; exit}' || echo "N/A")
+        ram_use=$(LC_ALL=C LANG=C free -h 2>/dev/null | awk '$1 == "Mem:" {print $3; exit}' || echo "N/A")
+        swap_use=$(LC_ALL=C LANG=C free -h 2>/dev/null | awk '$1 == "Swap:" {print $3; exit}' || echo "0B")
+        swp_val=$(cat /proc/sys/vm/swappiness 2>/dev/null || echo "60")
+        
+        cron_st="\033[1;31m[ DESACTIVADO ]\033[0m"
+        if [[ -f /etc/cron.d/auto_opt_vps ]] || crontab -l 2>/dev/null | grep -q 'optimizar_vps.sh'; then
+            local freq="1 hora"
+            if grep -q '\*/30' /etc/cron.d/auto_opt_vps 2>/dev/null; then freq="30 min"
+            elif grep -q '\*/2 ' /etc/cron.d/auto_opt_vps 2>/dev/null; then freq="2 horas"
+            elif grep -q '\*/6 ' /etc/cron.d/auto_opt_vps 2>/dev/null; then freq="6 horas"
+            fi
+            cron_st="\033[1;32m[ ACTIVO - Cada ${freq} ]\033[0m"
+        fi
+        
+        printf "  \033[1;37m%-16s\033[0m \033[1;32m%s / %s\033[0m\n" "RAM EN USO:" "$ram_use" "$ram_tot"
+        printf "  \033[1;37m%-16s\033[0m \033[1;33m%s\033[0m  |  \033[1;37mSwappiness:\033[0m \033[1;36m%s\033[0m\n" "SWAP EN USO:" "$swap_use" "$swp_val"
+        printf "  \033[1;37m%-16s\033[0m %b\n" "AUTO-LIMPIEZA:" "$cron_st"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> LIBERAR MEMORIA AHORA MISMO\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> ACTIVAR AUTO-LIMPIEZA CADA 30 MINUTOS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> ACTIVAR AUTO-LIMPIEZA CADA 1 HORA (RECOMENDADO)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> ACTIVAR AUTO-LIMPIEZA CADA 2 HORAS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> ACTIVAR AUTO-LIMPIEZA CADA 6 HORAS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR} \033[1;37m> DESACTIVAR AUTO-LIMPIEZA PROGRAMADA\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        read -r ram_opt
+        case "$ram_opt" in
+            1)
+                clear
+                echo -e "\033[1;32m[*] Sincronizando sistema y liberando memoria...\033[0m"
+                sync
+                echo 3 > /proc/sys/vm/drop_caches
+                sysctl -w vm.swappiness=10 >/dev/null 2>&1
+                sleep 1.5
+                echo -e "\033[1;32m[✔] ¡Memoria RAM y caché liberadas con éxito!\033[0m"
+                pause
+                ;;
+            2|3|4|5)
+                local cron_expr="0 * * * *"
+                local txt="1 hora"
+                [[ "$ram_opt" == "2" ]] && { cron_expr="*/30 * * * *"; txt="30 minutos"; }
+                [[ "$ram_opt" == "4" ]] && { cron_expr="0 */2 * * *"; txt="2 horas"; }
+                [[ "$ram_opt" == "5" ]] && { cron_expr="0 */6 * * *"; txt="6 horas"; }
+                
+                mkdir -p /usr/local/bin /bin
+                cat > /usr/local/bin/optimizar_vps.sh <<'EOFOPT'
+#!/bin/bash
+sync
+echo 3 > /proc/sys/vm/drop_caches
+sysctl -w vm.swappiness=10 >/dev/null 2>&1
+EOFOPT
+                chmod +x /usr/local/bin/optimizar_vps.sh
+                cp -f /usr/local/bin/optimizar_vps.sh /bin/optimizar_vps.sh 2>/dev/null || true
+                
+                echo "${cron_expr} root /usr/local/bin/optimizar_vps.sh >/dev/null 2>&1" > /etc/cron.d/auto_opt_vps
+                chmod 644 /etc/cron.d/auto_opt_vps
+                systemctl restart cron 2>/dev/null || systemctl restart crond 2>/dev/null || service cron restart 2>/dev/null || true
+                
+                if [[ -f /etc/sysctl.conf ]] && ! grep -q "^vm.swappiness" /etc/sysctl.conf 2>/dev/null; then
+                    echo "vm.swappiness=10" >> /etc/sysctl.conf
+                fi
+                
+                clear
+                echo -e "\033[1;32m[✔] Auto-limpieza de memoria programada con éxito cada ${txt}!\033[0m"
+                pause
+                ;;
+            6)
+                rm -f /etc/cron.d/auto_opt_vps
+                crontab -l 2>/dev/null | grep -v 'optimizar_vps.sh' | crontab - 2>/dev/null || true
+                systemctl restart cron 2>/dev/null || systemctl restart crond 2>/dev/null || service cron restart 2>/dev/null || true
+                clear
+                echo -e "\033[1;33m[✔] Auto-limpieza programada desactivada.\033[0m"
+                pause
+                ;;
+            0|00) break ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
 menu_vps_settings() {
     while true; do
         clear
@@ -4396,6 +4487,7 @@ menu_vps_settings() {
         echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> OPTIMIZAR SISTEMA (BBR, Buffers y Kernel)\033[0m"
         echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> RESPALDO / RESTAURACION DE USUARIOS\033[0m"
         echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> ECUALIZAR / CONFIGURAR ZONA HORARIA (HORARIO)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> AUTO LIBERAR MEMORIA RAM Y SWAP (CRON)\033[0m"
         echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
@@ -4446,6 +4538,9 @@ menu_vps_settings() {
                 ;;
             4|04)
                 ecualizar_horario
+                ;;
+            5|05)
+                menu_autoclean_ram
                 ;;
             0|00) break ;;
             *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;

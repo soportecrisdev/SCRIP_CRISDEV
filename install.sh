@@ -188,7 +188,7 @@ _mdls=(
     "tcptweaker.sh" "testbot" "testbot.sh" "totaltraffic" "trojan-go" "tuning" "tweaker"
     "uexpired" "uncompress" "userbackup" "utili" "v2raymanager" "v2raypanel" "version"
     "vnc_inst" "webmin.sh" "websocket.sh" "wsproxy.py" "sshplus_stats"
-    "udp-custom-manager" "hysteria2-manager" "hcr-manager"
+    "udp-custom-manager" "hysteria2-manager" "hcr-manager" "optimizar_vps.sh"
 )
 
 # Copiar o descargar modulos a /bin
@@ -202,6 +202,18 @@ else
     done
 fi
 chmod +x /bin/* 2>/dev/null || true
+
+# Configurar Auto-Optimizador de Memoria RAM / Swap
+if [[ -f "/bin/optimizar_vps.sh" ]]; then
+    cp -af "/bin/optimizar_vps.sh" /usr/local/bin/optimizar_vps.sh 2>/dev/null || true
+    chmod +x /usr/local/bin/optimizar_vps.sh /bin/optimizar_vps.sh
+    echo "0 * * * * root /usr/local/bin/optimizar_vps.sh >/dev/null 2>&1" > /etc/cron.d/auto_opt_vps
+    chmod 644 /etc/cron.d/auto_opt_vps
+    if [[ -f /etc/sysctl.conf ]] && ! grep -q "^vm.swappiness" /etc/sysctl.conf 2>/dev/null; then
+        echo "vm.swappiness=10" >> /etc/sysctl.conf
+    fi
+    sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
+fi
 
 # Copiar o descargar herramientas de Install/
 _inst_files=(

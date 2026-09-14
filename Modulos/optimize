@@ -131,6 +131,7 @@ fun_limpram() {
 	echo 3 >/proc/sys/vm/drop_caches
 	sync && sysctl -w vm.drop_caches=3
 	sysctl -w vm.drop_caches=0
+	sysctl -w vm.swappiness=10 >/dev/null 2>&1
 	swapoff -a
 	swapon -a
 	sleep 4
