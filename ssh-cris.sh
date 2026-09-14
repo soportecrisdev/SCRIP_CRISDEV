@@ -3027,8 +3027,8 @@ menu_protocolos() {
         fi
 
         # 6.1 HYSTERIA V2
-        local _hy2_pt; _hy2_pt=$(scan_hysteria2_port)
-        if systemctl is-active --quiet hysteria2 2>/dev/null || pgrep -x hysteria2 >/dev/null 2>&1 || [[ -n "$_hy2_pt" ]]; then
+        if systemctl is-active --quiet hysteria2 2>/dev/null || pgrep -x hysteria2 >/dev/null 2>&1; then
+            local _hy2_pt; _hy2_pt=$(scan_hysteria2_port)
             echo -e "\033[1;32mSERVICIO: \033[1;33mHYSTERIA V2 \033[1;32mPUERTO: \033[1;37m${_hy2_pt:-443}/udp\033[0m"
         fi
 
@@ -3080,8 +3080,8 @@ menu_protocolos() {
         fi
 
         # 13. UDP CUSTOM
-        local _udpc_pt; _udpc_pt=$(scan_udpcustom_port)
-        if systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1 || [[ -n "$_udpc_pt" ]]; then
+        if systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1; then
+            local _udpc_pt; _udpc_pt=$(scan_udpcustom_port)
             echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CUSTOM \033[1;32mPUERTO: \033[1;37m${_udpc_pt:-7100}/udp\033[0m"
         fi
 
@@ -3102,7 +3102,7 @@ menu_protocolos() {
 
         (systemctl is-active --quiet slowdns 2>/dev/null || pgrep -x dnstt-server >/dev/null 2>&1 || pgrep -f 'dnstt-server' >/dev/null 2>&1) && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
         (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -x hysteria1 >/dev/null 2>&1 || pgrep -x hysteria >/dev/null 2>&1) && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet hysteria2 2>/dev/null || pgrep -x hysteria2 >/dev/null 2>&1 || [[ -n "$_hy2_pt" ]]) && sts_hy2="\033[1;32mo\033[0m" || sts_hy2="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet hysteria2 2>/dev/null || pgrep -x hysteria2 >/dev/null 2>&1) && sts_hy2="\033[1;32mo\033[0m" || sts_hy2="\033[1;31mx\033[0m"
         pgrep -f 'trojan' >/dev/null 2>&1 && sts_trojan="\033[1;32mo\033[0m" || sts_trojan="\033[1;31mx\033[0m"
         (systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -x badvpn-udpgw >/dev/null 2>&1 || pgrep -x udpvpn >/dev/null 2>&1) && sts_badvpn="\033[1;32mo\033[0m" || sts_badvpn="\033[1;31mx\033[0m"
         pgrep -f 'openvpn' >/dev/null 2>&1 && sts_ovpn="\033[1;32mo\033[0m" || sts_ovpn="\033[1;31mx\033[0m"
@@ -3111,8 +3111,8 @@ menu_protocolos() {
         (pgrep -f 'squid' >/dev/null 2>&1 || [[ -n "$sqd_p" ]]) && sts_squid="\033[1;32mo\033[0m" || sts_squid="\033[1;31mx\033[0m"
         (systemctl is-active --quiet chisel 2>/dev/null || pgrep -f 'chisel' >/dev/null 2>&1) && sts_chisel="\033[1;32mo\033[0m" || sts_chisel="\033[1;31mx\033[0m"
         (systemctl is-active --quiet bhttp 2>/dev/null || systemctl is-active --quiet bhttp-tls 2>/dev/null || pgrep -f 'bhttp-server|xhttp-server|bilola' >/dev/null 2>&1 || [[ -n "$_b_pts" || -n "$_bx_pt" ]]) && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
-        (pgrep -f 'hcr-server' >/dev/null 2>&1 || [[ -n "$_hcr_pts" ]]) && sts_hcr="\033[1;32mo\033[0m" || sts_hcr="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1 || [[ -n "$_udpc_pt" ]]) && sts_udpc="\033[1;32mo\033[0m" || sts_udpc="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet hcr-* 2>/dev/null || pgrep -f 'hcr-server' >/dev/null 2>&1 || [[ -n "$_hcr_pts" ]]) && sts_hcr="\033[1;32mo\033[0m" || sts_hcr="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1) && sts_udpc="\033[1;32mo\033[0m" || sts_udpc="\033[1;31mx\033[0m"
 
         printf "  %b[1]%b  > OPENSSH         %b    %b[10]%b > BADVPN             %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssh" "$SSHPLUS_NUM" "$SCOLOR" "$sts_badvpn"
         printf "  %b[2]%b  > PROXY SOCKS     %b    %b[11]%b > OPENVPN            %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_socks" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ovpn"

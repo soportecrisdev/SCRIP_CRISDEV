@@ -135,22 +135,17 @@ get_congestion_setting() {
 
 create_config() {
     local port="${1:-7100}"
-    local stream_buf="${2:-32}"
-    local core_buf="${3:-8}"
+    local stream_buf="${2:-33554432}"
+    local core_buf="${3:-8388608}"
 
     ensure_dirs
     mkdir -p /etc/udp-custom /root/udp
 
-    local s_bytes=$(( stream_buf * 1024 * 1024 ))
-    [[ "$s_bytes" -le 0 ]] && s_bytes=33554432
-    local r_bytes=$(( core_buf * 1024 * 1024 ))
-    [[ "$r_bytes" -le 0 ]] && r_bytes=8388608
-
     cat > "$CONFIG_FILE" <<EOF
 {
   "listen": ":${port}",
-  "stream_buffer": ${s_bytes},
-  "receive_buffer": ${r_bytes},
+  "stream_buffer": ${stream_buf},
+  "receive_buffer": ${core_buf},
   "auth": {
     "mode": "passwords",
     "config": ["crisdev", "1234"]
@@ -189,11 +184,13 @@ EOF
 start_service() {
     systemctl daemon-reload >/dev/null 2>&1 || true
     systemctl enable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+    sleep 1
 }
 
 stop_service() {
     systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
     systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
+    pkill -9 -x udp-custom >/dev/null 2>&1 || true
     pkill -9 -f 'udp-custom' >/dev/null 2>&1 || true
 }
 
@@ -244,14 +241,15 @@ menu_activar_cambiar_puerto() {
 
     echo ""
     echo -e "${WHITE}Seleccione tamaño de buffer:${NC}"
-    echo -e "  ${GREEN}[1]${NC} \033[1;37m> Estándar (Stream: 2048 KB, Core: 1024 KB) - Recomendado${NC}"
-    echo -e "  ${GREEN}[2]${NC} \033[1;37m> Alto Rendimiento (Stream: 4096 KB, Core: 2048 KB)${NC}"
+    echo -e "  ${GREEN}[1]${NC} \033[1;37m> Estándar (Stream: 32 MB, Core: 8 MB) - Recomendado${NC}"
+    echo -e "  ${GREEN}[2]${NC} \033[1;37m> Alto Rendimiento (Stream: 64 MB, Core: 16 MB)${NC}"
     echo -ne "${SSHPLUS_DARK_GREEN}Opción [Enter = 1]:${SCOLOR} "
     read -r buf_opt
-    local s_buf="2048" c_buf="1024"
-    [[ "$buf_opt" == "2" ]] && { s_buf="4096"; c_buf="2048"; }
+    local s_buf=33554432 c_buf=8388608
+    [[ "$buf_opt" == "2" ]] && { s_buf=67108864; c_buf=16777216; }
 
-    create_config "$in_port" "$s_buf" "$c_buf" 4096 10240 "$cc"
+    stop_service
+    create_config "$in_port" "$s_buf" "$c_buf"
     create_service
     start_service
     open_firewall_port "$in_port"
@@ -261,11 +259,11 @@ menu_activar_cambiar_puerto() {
     udp_line
     if is_running; then
         echo -e "\033[1;32m✔ Servidor UDP-Custom activo y funcionando en el puerto UDP ${in_port}! ⚡\033[0m"
-        echo -e "${WHITE}Congestión:${NC} \033[1;33m${cc^^}\033[0m | ${WHITE}Buffer:${NC} \033[1;37m${s_buf}KB\033[0m"
+        echo -e "${WHITE}Congestión:${NC} \033[1;33m${cc^^}\033[0m | ${WHITE}Buffer Stream:${NC} \033[1;37m$(( s_buf / 1048576 ))MB\033[0m"
     else
         echo -e "\033[1;31m✗ No se pudo iniciar el servicio en el puerto ${in_port}.\033[0m"
         echo -e "${YELLOW}Registro de error:${NC}"
-        journalctl -u "$SERVICE_NAME" -n 6 --no-pager 2>/dev/null || true
+        journalctl -u "$SERVICE_NAME" -n 8 --no-pager 2>/dev/null || true
     fi
     udp_line
     pause_udp
@@ -280,10 +278,16 @@ menu_desinstalar_udp() {
         return
     fi
     stop_service
+    systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+    systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
     rm -f "$SERVICE_FILE"
     systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
     rm -rf "${INSTALL_DIR}"
+    rm -rf /etc/udp-custom /root/udp
     rm -f "$BINARY_PATH" /bin/udp-custom /usr/bin/udp-custom
+    pkill -9 -x udp-custom >/dev/null 2>&1 || true
+    pkill -9 -f 'udp-custom' >/dev/null 2>&1 || true
     echo -e "\n\033[1;32m✔ UDP-Custom ha sido desinstalado completamente del servidor.\033[0m"
     pause_udp
 }

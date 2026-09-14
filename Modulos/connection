@@ -2729,7 +2729,7 @@ PY
 			if [[ -z "$_hy2_pt" ]]; then
 				_hy2_pt="$(ss -ulnp 2>/dev/null | grep -E "hysteria2" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)"
 			fi
-			if systemctl is-active hysteria2 >/dev/null 2>&1 || pgrep -x hysteria2 >/dev/null 2>&1 || [[ -n "${_hy2_pt// }" ]]; then
+			if systemctl is-active hysteria2 >/dev/null 2>&1 || pgrep -x hysteria2 >/dev/null 2>&1; then
 				echo -e "\033[1;32mSERVICIO: \033[1;33mHYSTERIA V2 \033[1;32mPUERTO: \033[1;37m${_hy2_pt:-443}/udp"
 				hy2sts="\033[1;32mo "
 			else
@@ -2751,7 +2751,7 @@ PY
 				_b_pts="$(grep '^BHTTP_PORT=' /etc/bhttp/config 2>/dev/null | cut -d= -f2)"
 			fi
 			[[ -f /etc/bhttp/tls_port ]] && _bx_pt="$(cat /etc/bhttp/tls_port 2>/dev/null)"
-			if systemctl is-active bhttp >/dev/null 2>&1 || systemctl is-active bhttp-tls >/dev/null 2>&1 || pgrep -f 'bhttp-server|xhttp-server' >/dev/null 2>&1 || [[ -n "${_b_pts// }" || -n "${_bx_pt// }" ]]; then
+			if systemctl is-active bhttp >/dev/null 2>&1 || systemctl is-active bhttp-tls >/dev/null 2>&1 || pgrep -f 'bhttp-server|xhttp-server' >/dev/null 2>&1; then
 				local _b_dsp=""
 				[[ -n "$_b_pts" ]] && _b_dsp="PLANO: ${_b_pts}"
 				[[ -n "$_bx_pt" ]] && _b_dsp="${_b_dsp:+${_b_dsp} | }TLS: ${_bx_pt}"
@@ -2764,7 +2764,7 @@ PY
 			if [[ -f /etc/hcr-server/ports.conf ]]; then
 				_hcr_pts="$(awk -F'|' '{print $1}' /etc/hcr-server/ports.conf 2>/dev/null | xargs)"
 			fi
-			if pgrep -f 'hcr-server' >/dev/null 2>&1 || [[ -n "${_hcr_pts// }" ]]; then
+			if systemctl is-active hcr-server >/dev/null 2>&1 || systemctl is-active hcr-client >/dev/null 2>&1 || pgrep -f 'hcr-server' >/dev/null 2>&1; then
 				echo -e "\033[1;32mSERVICIO: \033[1;33mHCR RELAY \033[1;32mPUERTO: \033[1;37m${_hcr_pts:-N/A}"
 				hcrsts="\033[1;32mo "
 			else
@@ -2778,8 +2778,7 @@ PY
 			if [[ -z "$_udpc_pt" || "$_udpc_pt" == "0" ]]; then
 				_udpc_pt="$(ss -ulnp 2>/dev/null | grep -E "udp-custom|server" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)"
 			fi
-			[[ "$_udpc_pt" == "0" ]] && _udpc_pt="7100"
-			if systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1 || [[ -n "${_udpc_pt// }" ]]; then
+			if systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1; then
 				echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CUSTOM \033[1;32mPUERTO: \033[1;37m${_udpc_pt:-7100}/udp"
 				udpcsts="\033[1;32mo "
 			else
