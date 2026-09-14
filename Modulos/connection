@@ -2830,46 +2830,58 @@ PY
 			fi
 			;;
 			8 | 08)
-			[[ -f /bin/hysteria2-manager && ! -s /bin/hysteria2-manager ]] && rm -f /bin/hysteria2-manager
-			if [[ -s /bin/hysteria2-manager && -x /bin/hysteria2-manager ]]; then
-				/bin/hysteria2-manager
-			elif [[ -s /usr/bin/hysteria2-manager && -x /usr/bin/hysteria2-manager ]]; then
-				/usr/bin/hysteria2-manager
-			elif [[ -f /opt/ssh-cris/Modulos/hysteria2-manager ]]; then
-				bash /opt/ssh-cris/Modulos/hysteria2-manager
+			local h2_file=""
+			for h2_p in /bin/hysteria2-manager /usr/bin/hysteria2-manager /usr/local/bin/hysteria2-manager /opt/ssh-cris/Modulos/hysteria2-manager; do
+				if [[ -s "$h2_p" && -r "$h2_p" ]]; then
+					h2_file="$h2_p"
+					break
+				fi
+			done
+			if [[ -n "$h2_file" ]]; then
+				chmod +x "$h2_file" 2>/dev/null || true
+				bash "$h2_file"
 			else
 				clear
 				echo -e "\033[1;32mDescargando e iniciando Hysteria v2 Manager...\033[0m"
-				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager -o /bin/hysteria2-manager 2>/dev/null || \
+				local ts; ts=$(date +%s)
+				curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager?v=${ts}" -o /bin/hysteria2-manager 2>/dev/null || \
+				wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager?v=${ts}" -O /bin/hysteria2-manager 2>/dev/null || \
+				curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager" -o /bin/hysteria2-manager 2>/dev/null || \
 				wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager" -O /bin/hysteria2-manager 2>/dev/null || true
 				chmod +x /bin/hysteria2-manager 2>/dev/null || true
 				if [[ -s /bin/hysteria2-manager ]]; then
-					/bin/hysteria2-manager
+					bash /bin/hysteria2-manager
 				else
-					echo -e "\033[1;31mError al descargar Hysteria v2 Manager. Verifique conexion o actualice el repositorio.\033[0m"
-					sleep 2
+					echo -e "\033[1;31mError al descargar Hysteria v2 Manager. Verifique conexion a internet o ejecute: attscript\033[0m"
+					sleep 3
 				fi
 			fi
 			;;
 			9 | 09)
-			[[ -f /bin/udp-custom-manager && ! -s /bin/udp-custom-manager ]] && rm -f /bin/udp-custom-manager
-			if [[ -s /bin/udp-custom-manager && -x /bin/udp-custom-manager ]]; then
-				/bin/udp-custom-manager
-			elif [[ -s /usr/bin/udp-custom-manager && -x /usr/bin/udp-custom-manager ]]; then
-				/usr/bin/udp-custom-manager
-			elif [[ -f /opt/ssh-cris/Modulos/udp-custom-manager ]]; then
-				bash /opt/ssh-cris/Modulos/udp-custom-manager
+			local udpc_file=""
+			for udpc_p in /bin/udp-custom-manager /usr/bin/udp-custom-manager /usr/local/bin/udp-custom-manager /opt/ssh-cris/Modulos/udp-custom-manager; do
+				if [[ -s "$udpc_p" && -r "$udpc_p" ]]; then
+					udpc_file="$udpc_p"
+					break
+				fi
+			done
+			if [[ -n "$udpc_file" ]]; then
+				chmod +x "$udpc_file" 2>/dev/null || true
+				bash "$udpc_file"
 			else
 				clear
 				echo -e "\033[1;32mDescargando e iniciando UDP Custom Manager...\033[0m"
-				curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager -o /bin/udp-custom-manager 2>/dev/null || \
+				local ts; ts=$(date +%s)
+				curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager?v=${ts}" -o /bin/udp-custom-manager 2>/dev/null || \
+				wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager?v=${ts}" -O /bin/udp-custom-manager 2>/dev/null || \
+				curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager" -o /bin/udp-custom-manager 2>/dev/null || \
 				wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager" -O /bin/udp-custom-manager 2>/dev/null || true
 				chmod +x /bin/udp-custom-manager 2>/dev/null || true
 				if [[ -s /bin/udp-custom-manager ]]; then
-					/bin/udp-custom-manager
+					bash /bin/udp-custom-manager
 				else
-					echo -e "\033[1;31mError al descargar UDP Custom Manager. Verifique conexion o actualice el repositorio.\033[0m"
-					sleep 2
+					echo -e "\033[1;31mError al descargar UDP Custom Manager. Verifique conexion a internet o ejecute: attscript\033[0m"
+					sleep 3
 				fi
 			fi
 			;;
