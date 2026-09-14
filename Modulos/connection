@@ -2724,7 +2724,7 @@ PY
 			fi
 			local _hy2_pt=""
 			if [[ -f /etc/hysteria2/config.yaml ]]; then
-				_hy2_pt="$(grep -E '^[[:space:]]*listen:' /etc/hysteria2/config.yaml 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")"
+				_hy2_pt="$(grep -E '^[[:space:]]*listen:' /etc/hysteria2/config.yaml 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'" | sed 's/^://')"
 			fi
 			if [[ -z "$_hy2_pt" ]]; then
 				_hy2_pt="$(ss -ulnp 2>/dev/null | grep -E "hysteria2" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)"
@@ -2772,8 +2772,13 @@ PY
 			fi
 			local _udpc_pt=""
 			if [[ -f /opt/udp-custom/config.json ]]; then
-				_udpc_pt="$(grep -oE '"bind"[[:space:]]*:[[:space:]]*"[^"]+"' /opt/udp-custom/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+				_udpc_pt="$(grep -oE '":( )*([0-9]+|0\.0\.0\.0:[0-9]+|:[0-9]+)"' /opt/udp-custom/config.json 2>/dev/null | grep -oE '[0-9]+$' | head -1)"
+				[[ -z "$_udpc_pt" || "$_udpc_pt" == "0" ]] && _udpc_pt="$(grep -oE ':[0-9]+' /opt/udp-custom/config.json 2>/dev/null | tr -d ':' | head -1)"
 			fi
+			if [[ -z "$_udpc_pt" || "$_udpc_pt" == "0" ]]; then
+				_udpc_pt="$(ss -ulnp 2>/dev/null | grep -E "udp-custom|server" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)"
+			fi
+			[[ "$_udpc_pt" == "0" ]] && _udpc_pt="7100"
 			if systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1 || [[ -n "${_udpc_pt// }" ]]; then
 				echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CUSTOM \033[1;32mPUERTO: \033[1;37m${_udpc_pt:-7100}/udp"
 				udpcsts="\033[1;32mo "

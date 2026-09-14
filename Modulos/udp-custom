@@ -112,9 +112,10 @@ is_running() {
 get_current_port() {
     local port="7100"
     if [[ -f "$CONFIG_FILE" ]]; then
-        port=$(grep -oE '"bind"[[:space:]]*:[[:space:]]*"[^"]+"' "$CONFIG_FILE" 2>/dev/null | grep -oE '[0-9]+' | head -1)
+        port=$(grep -oE '":( )*([0-9]+|0\.0\.0\.0:[0-9]+|:[0-9]+)"' "$CONFIG_FILE" 2>/dev/null | grep -oE '[0-9]+$' | head -1)
+        [[ -z "$port" || "$port" == "0" ]] && port=$(grep -oE ':[0-9]+' "$CONFIG_FILE" 2>/dev/null | tr -d ':' | head -1)
     fi
-    if [[ -z "$port" ]]; then
+    if [[ -z "$port" || "$port" == "0" ]]; then
         port=$(ss -ulnp 2>/dev/null | grep -E "udp-custom|server" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)
     fi
     echo "${port:-7100}"
@@ -139,6 +140,7 @@ create_config() {
     ensure_dirs
     cat > "$CONFIG_FILE" <<EOF
 {
+  "listen": ":${port}",
   "bind": "0.0.0.0:${port}",
   "stream_buffer_size": ${stream_buf},
   "core_buffer_size": ${core_buf},
@@ -163,7 +165,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=${BINARY_PATH} -c ${CONFIG_FILE}
+ExecStart=${BINARY_PATH} server -c ${CONFIG_FILE}
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535

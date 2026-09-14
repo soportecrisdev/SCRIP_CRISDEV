@@ -186,18 +186,20 @@ scan_hcr_ports() {
 scan_udpcustom_port() {
     local udp_p=""
     if [[ -f /opt/udp-custom/config.json ]]; then
-        udp_p=$(grep -oE '"bind"[[:space:]]*:[[:space:]]*"[^"]+"' /opt/udp-custom/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)
+        udp_p=$(grep -oE '":( )*([0-9]+|0\.0\.0\.0:[0-9]+|:[0-9]+)"' /opt/udp-custom/config.json 2>/dev/null | grep -oE '[0-9]+$' | head -1)
+        [[ -z "$udp_p" || "$udp_p" == "0" ]] && udp_p=$(grep -oE ':[0-9]+' /opt/udp-custom/config.json 2>/dev/null | tr -d ':' | head -1)
     fi
-    if [[ -z "$udp_p" ]]; then
+    if [[ -z "$udp_p" || "$udp_p" == "0" ]]; then
         udp_p=$(ss -ulnp 2>/dev/null | grep -E "udp-custom|server" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)
     fi
+    [[ "$udp_p" == "0" ]] && udp_p="7100"
     echo "$udp_p"
 }
 
 scan_hysteria2_port() {
     local hy2_p=""
     if [[ -f /etc/hysteria2/config.yaml ]]; then
-        hy2_p=$(grep -E '^[[:space:]]*listen:' /etc/hysteria2/config.yaml 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")
+        hy2_p=$(grep -E '^[[:space:]]*listen:' /etc/hysteria2/config.yaml 2>/dev/null | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'" | sed 's/^://')
     fi
     if [[ -z "$hy2_p" ]]; then
         hy2_p=$(ss -ulnp 2>/dev/null | grep -E "hysteria2" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)
