@@ -186,8 +186,12 @@ scan_hcr_ports() {
 scan_udpcustom_port() {
     local udp_p=""
     if [[ -f /opt/udp-custom/config.json ]]; then
-        udp_p=$(grep -oE '":( )*([0-9]+|0\.0\.0\.0:[0-9]+|:[0-9]+)"' /opt/udp-custom/config.json 2>/dev/null | grep -oE '[0-9]+$' | head -1)
+        udp_p=$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /opt/udp-custom/config.json 2>/dev/null | grep -oE '[0-9]+$' | head -1)
         [[ -z "$udp_p" || "$udp_p" == "0" ]] && udp_p=$(grep -oE ':[0-9]+' /opt/udp-custom/config.json 2>/dev/null | tr -d ':' | head -1)
+    fi
+    if [[ -z "$udp_p" || "$udp_p" == "0" && -f /etc/udp-custom/server.json ]]; then
+        udp_p=$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/udp-custom/server.json 2>/dev/null | grep -oE '[0-9]+$' | head -1)
+        [[ -z "$udp_p" || "$udp_p" == "0" ]] && udp_p=$(grep -oE ':[0-9]+' /etc/udp-custom/server.json 2>/dev/null | tr -d ':' | head -1)
     fi
     if [[ -z "$udp_p" || "$udp_p" == "0" ]]; then
         udp_p=$(ss -ulnp 2>/dev/null | grep -E "udp-custom|server" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)

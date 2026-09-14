@@ -112,8 +112,12 @@ is_running() {
 get_current_port() {
     local port="7100"
     if [[ -f "$CONFIG_FILE" ]]; then
-        port=$(grep -oE '":( )*([0-9]+|0\.0\.0\.0:[0-9]+|:[0-9]+)"' "$CONFIG_FILE" 2>/dev/null | grep -oE '[0-9]+$' | head -1)
+        port=$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' "$CONFIG_FILE" 2>/dev/null | grep -oE '[0-9]+$' | head -1)
         [[ -z "$port" || "$port" == "0" ]] && port=$(grep -oE ':[0-9]+' "$CONFIG_FILE" 2>/dev/null | tr -d ':' | head -1)
+    fi
+    if [[ -z "$port" || "$port" == "0" && -f /etc/udp-custom/server.json ]]; then
+        port=$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/udp-custom/server.json 2>/dev/null | grep -oE '[0-9]+$' | head -1)
+        [[ -z "$port" || "$port" == "0" ]] && port=$(grep -oE ':[0-9]+' /etc/udp-custom/server.json 2>/dev/null | tr -d ':' | head -1)
     fi
     if [[ -z "$port" || "$port" == "0" ]]; then
         port=$(ss -ulnp 2>/dev/null | grep -E "udp-custom|server" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)
@@ -131,27 +135,32 @@ get_congestion_setting() {
 
 create_config() {
     local port="${1:-7100}"
-    local stream_buf="${2:-2048}"
-    local core_buf="${3:-1024}"
-    local max_stream="${4:-4096}"
-    local max_conn="${5:-10240}"
-    local cc="${6:-bbr}"
+    local stream_buf="${2:-32}"
+    local core_buf="${3:-8}"
 
     ensure_dirs
+    mkdir -p /etc/udp-custom /root/udp
+
+    local s_bytes=$(( stream_buf * 1024 * 1024 ))
+    [[ "$s_bytes" -le 0 ]] && s_bytes=33554432
+    local r_bytes=$(( core_buf * 1024 * 1024 ))
+    [[ "$r_bytes" -le 0 ]] && r_bytes=8388608
+
     cat > "$CONFIG_FILE" <<EOF
 {
   "listen": ":${port}",
-  "bind": "0.0.0.0:${port}",
-  "stream_buffer_size": ${stream_buf},
-  "core_buffer_size": ${core_buf},
-  "max_open_stream": ${max_stream},
-  "max_open_conn": ${max_conn},
-  "stream_congestion_control": "${cc}",
-  "conn_congestion_control": "${cc}",
-  "enable_metrics": false
+  "stream_buffer": ${s_bytes},
+  "receive_buffer": ${r_bytes},
+  "auth": {
+    "mode": "passwords",
+    "config": ["crisdev", "1234"]
+  }
 }
 EOF
     chmod 644 "$CONFIG_FILE"
+    cp -f "$CONFIG_FILE" /etc/udp-custom/server.json 2>/dev/null || true
+    cp -f "$CONFIG_FILE" /etc/udp-custom/config.json 2>/dev/null || true
+    cp -f "$CONFIG_FILE" /root/udp/config.json 2>/dev/null || true
 }
 
 create_service() {
