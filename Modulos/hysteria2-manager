@@ -75,15 +75,10 @@ ensure_dirs() {
 }
 
 ensure_binary() {
-    if [[ -x "$BINARY_PATH" ]]; then
+    if [[ -x "$BINARY_PATH" ]] && "$BINARY_PATH" version 2>/dev/null | grep -qiE 'v2|2\.'; then
         return 0
     fi
-    if [[ -x "/usr/bin/hysteria" && "$(/usr/bin/hysteria version 2>/dev/null | grep -q 'v2')" ]]; then
-        ln -sfn /usr/bin/hysteria "$BINARY_PATH"
-        return 0
-    fi
-    if [[ -x "/usr/local/bin/hysteria" && "$(/usr/local/bin/hysteria version 2>/dev/null | grep -q 'v2')" ]]; then
-        ln -sfn /usr/local/bin/hysteria "$BINARY_PATH"
+    if [[ -x "$BINARY_PATH" ]] && head -c 4 "$BINARY_PATH" 2>/dev/null | grep -q 'ELF'; then
         return 0
     fi
 
@@ -98,17 +93,10 @@ ensure_binary() {
 
     local url="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${arch}"
     curl -fsSL "$url" -o "$BINARY_PATH" 2>/dev/null || \
-    wget -q "$url" -O "$BINARY_PATH" 2>/dev/null || \
-    bash <(curl -fsSL https://get.hy2.sh/) 2>/dev/null || true
-
-    if [[ -x /usr/bin/hysteria ]]; then
-        ln -sfn /usr/bin/hysteria "$BINARY_PATH" 2>/dev/null || true
-    fi
+    wget -q "$url" -O "$BINARY_PATH" 2>/dev/null || true
 
     chmod 755 "$BINARY_PATH" 2>/dev/null || true
-    ln -sfn "$BINARY_PATH" /bin/hysteria2 2>/dev/null || true
-    ln -sfn "$BINARY_PATH" /usr/bin/hysteria2 2>/dev/null || true
-    [[ -x "$BINARY_PATH" ]]
+    [[ -x "$BINARY_PATH" ]] && head -c 4 "$BINARY_PATH" 2>/dev/null | grep -q 'ELF'
 }
 
 ensure_certificates() {
@@ -381,10 +369,15 @@ desinstalar_hy2() {
         return
     fi
     stop_service
+    systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+    systemctl disable "$SERVICE_NAME" >/dev/null 2>&1 || true
     rm -f "$SERVICE_FILE"
     systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
     rm -rf "${INSTALL_DIR}"
-    rm -f "$BINARY_PATH" /bin/hysteria2 /usr/bin/hysteria2
+    rm -f "$BINARY_PATH"
+    pkill -9 -x hysteria2 >/dev/null 2>&1 || true
+    pkill -9 -f 'hysteria2' >/dev/null 2>&1 || true
     echo -e "\n\033[1;32m✔ Hysteria 2 ha sido desinstalado completamente.\033[0m"
     pause_hy2
 }

@@ -186,7 +186,7 @@ _mdls=(
     "tcptweaker.sh" "testbot" "testbot.sh" "totaltraffic" "trojan-go" "tuning" "tweaker"
     "uexpired" "uncompress" "userbackup" "utili" "v2raymanager" "v2raypanel" "version"
     "vnc_inst" "webmin.sh" "websocket.sh" "wsproxy.py" "sshplus_stats"
-    "udp-custom-manager" "udp-custom" "hysteria2-manager" "bhttp-manager" "hcr-manager"
+    "udp-custom-manager" "hysteria2-manager" "bhttp-manager" "hcr-manager"
 )
 
 # Copiar o descargar modulos a /bin

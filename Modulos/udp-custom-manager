@@ -64,19 +64,20 @@ ensure_dirs() {
 }
 
 ensure_binary() {
-    if [[ -x "$BINARY_PATH" ]]; then
+    if [[ -x "$BINARY_PATH" ]] && head -c 4 "$BINARY_PATH" 2>/dev/null | grep -q 'ELF'; then
         return 0
     fi
-    if [[ -x "${INSTALL_DIR}/server" ]]; then
+    if [[ -x "${INSTALL_DIR}/server" ]] && head -c 4 "${INSTALL_DIR}/server" 2>/dev/null | grep -q 'ELF'; then
         ln -sfn "${INSTALL_DIR}/server" "$BINARY_PATH"
         return 0
     fi
-    if [[ -x "/bin/udp-custom" ]]; then
-        ln -sfn /bin/udp-custom "$BINARY_PATH"
+    if [[ -f "/opt/ssh-cris/udp-custom" ]] && head -c 4 "/opt/ssh-cris/udp-custom" 2>/dev/null | grep -q 'ELF'; then
+        cp -f "/opt/ssh-cris/udp-custom" "$BINARY_PATH"
+        chmod +x "$BINARY_PATH"
         return 0
     fi
-    if [[ -f "/opt/ssh-cris/udp-custom" ]]; then
-        cp -f "/opt/ssh-cris/udp-custom" "$BINARY_PATH"
+    if [[ -f "/etc/SSHPlus/udp-custom" ]] && head -c 4 "/etc/SSHPlus/udp-custom" 2>/dev/null | grep -q 'ELF'; then
+        cp -f "/etc/SSHPlus/udp-custom" "$BINARY_PATH"
         chmod +x "$BINARY_PATH"
         return 0
     fi
@@ -90,19 +91,22 @@ ensure_binary() {
         *) arch="amd64" ;;
     esac
 
-    local url1="https://raw.githubusercontent.com/karl1999x/PandaScript/main/BINARIOS/udp-amd64.bin"
-    local url2="https://github.com/AmnesiaPod/UDPCustom/releases/latest/download/udp-custom-linux-${arch}"
-    local url3="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/udp-custom"
+    local url1="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/udp-custom"
+    local url2="https://raw.githubusercontent.com/karl1999x/PandaScript/main/BINARIOS/udp-amd64.bin"
+    local url3="https://github.com/AmnesiaPod/UDPCustom/releases/latest/download/udp-custom-linux-${arch}"
 
     curl -fsSL "$url1" -o "$BINARY_PATH" 2>/dev/null || \
     curl -fsSL "$url2" -o "$BINARY_PATH" 2>/dev/null || \
-    wget -q "$url3" -O "$BINARY_PATH" 2>/dev/null || true
+    curl -fsSL "$url3" -o "$BINARY_PATH" 2>/dev/null || \
+    wget -q "$url1" -O "$BINARY_PATH" 2>/dev/null || true
 
     chmod 755 "$BINARY_PATH" 2>/dev/null || true
-    ln -sfn "$BINARY_PATH" /bin/udp-custom 2>/dev/null || true
-    ln -sfn "$BINARY_PATH" /usr/bin/udp-custom 2>/dev/null || true
-    ln -sfn "$BINARY_PATH" "${INSTALL_DIR}/server" 2>/dev/null || true
-    [[ -x "$BINARY_PATH" ]]
+    if [[ -x "$BINARY_PATH" ]] && head -c 4 "$BINARY_PATH" 2>/dev/null | grep -q 'ELF'; then
+        mkdir -p "${INSTALL_DIR}"
+        cp -f "$BINARY_PATH" "${INSTALL_DIR}/server" 2>/dev/null || true
+        return 0
+    fi
+    return 1
 }
 
 is_running() {
