@@ -2947,6 +2947,585 @@ desinstalar_chisel() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  UDP CUSTOM MANAGER (NATIVO INTEGRADO)
+# ─────────────────────────────────────────────────────────────────────────────
+UDPC_INSTALL_DIR="/opt/udp-custom"
+UDPC_CONFIG_FILE="${UDPC_INSTALL_DIR}/config.json"
+UDPC_BINARY_PATH="/usr/local/bin/udp-custom"
+UDPC_SERVICE_NAME="udp-custom.service"
+UDPC_SERVICE_FILE="/etc/systemd/system/${UDPC_SERVICE_NAME}"
+
+udpc_ensure_binary() {
+    if [[ -x "$UDPC_BINARY_PATH" ]] && head -c 4 "$UDPC_BINARY_PATH" 2>/dev/null | grep -q 'ELF'; then
+        return 0
+    fi
+    if [[ -x "${UDPC_INSTALL_DIR}/server" ]] && head -c 4 "${UDPC_INSTALL_DIR}/server" 2>/dev/null | grep -q 'ELF'; then
+        ln -sfn "${UDPC_INSTALL_DIR}/server" "$UDPC_BINARY_PATH"
+        return 0
+    fi
+    if [[ -f "/opt/ssh-cris/udp-custom" ]] && head -c 4 "/opt/ssh-cris/udp-custom" 2>/dev/null | grep -q 'ELF'; then
+        cp -f "/opt/ssh-cris/udp-custom" "$UDPC_BINARY_PATH"
+        chmod +x "$UDPC_BINARY_PATH"
+        return 0
+    fi
+    if [[ -f "/etc/SSHPlus/udp-custom" ]] && head -c 4 "/etc/SSHPlus/udp-custom" 2>/dev/null | grep -q 'ELF'; then
+        cp -f "/etc/SSHPlus/udp-custom" "$UDPC_BINARY_PATH"
+        chmod +x "$UDPC_BINARY_PATH"
+        return 0
+    fi
+
+    echo -e "\033[1;33m[*] Descargando binario oficial UDP-Custom...\033[0m"
+    local arch; arch=$(uname -m)
+    case "$arch" in
+        x86_64) arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        armv7l|armhf) arch="armv7" ;;
+        *) arch="amd64" ;;
+    esac
+
+    local url1="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/udp-custom"
+    local url2="https://raw.githubusercontent.com/karl1999x/PandaScript/main/BINARIOS/udp-amd64.bin"
+    local url3="https://github.com/AmnesiaPod/UDPCustom/releases/latest/download/udp-custom-linux-${arch}"
+
+    curl -fsSLk "$url1" -o "$UDPC_BINARY_PATH" 2>/dev/null || \
+    curl -fsSLk "$url2" -o "$UDPC_BINARY_PATH" 2>/dev/null || \
+    curl -fsSLk "$url3" -o "$UDPC_BINARY_PATH" 2>/dev/null || \
+    wget --no-check-certificate -q "$url1" -O "$UDPC_BINARY_PATH" 2>/dev/null || true
+
+    chmod 755 "$UDPC_BINARY_PATH" 2>/dev/null || true
+    if [[ -x "$UDPC_BINARY_PATH" ]] && head -c 4 "$UDPC_BINARY_PATH" 2>/dev/null | grep -q 'ELF'; then
+        mkdir -p "${UDPC_INSTALL_DIR}"
+        cp -f "$UDPC_BINARY_PATH" "${UDPC_INSTALL_DIR}/server" 2>/dev/null || true
+        return 0
+    fi
+    return 1
+}
+
+udpc_is_running() {
+    systemctl is-active --quiet "$UDPC_SERVICE_NAME" 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1
+}
+
+udpc_get_port() {
+    local port="7100"
+    if [[ -f "$UDPC_CONFIG_FILE" ]]; then
+        port=$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' "$UDPC_CONFIG_FILE" 2>/dev/null | grep -oE '[0-9]+$' | head -1)
+        [[ -z "$port" || "$port" == "0" ]] && port=$(grep -oE ':[0-9]+' "$UDPC_CONFIG_FILE" 2>/dev/null | tr -d ':' | head -1)
+    fi
+    if [[ -z "$port" || "$port" == "0" && -f /etc/udp-custom/server.json ]]; then
+        port=$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/udp-custom/server.json 2>/dev/null | grep -oE '[0-9]+$' | head -1)
+        [[ -z "$port" || "$port" == "0" ]] && port=$(grep -oE ':[0-9]+' /etc/udp-custom/server.json 2>/dev/null | tr -d ':' | head -1)
+    fi
+    if [[ -z "$port" || "$port" == "0" ]]; then
+        port=$(ss -ulnp 2>/dev/null | grep -E "udp-custom|server" | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)
+    fi
+    echo "${port:-7100}"
+}
+
+udpc_create_config() {
+    local port="${1:-7100}"
+    local stream_buf="${2:-33554432}"
+    local core_buf="${3:-8388608}"
+
+    mkdir -p "${UDPC_INSTALL_DIR}" /etc/udp-custom /root/udp
+    cat > "$UDPC_CONFIG_FILE" <<EOF
+{
+  "listen": ":${port}",
+  "stream_buffer": ${stream_buf},
+  "receive_buffer": ${core_buf},
+  "auth": {
+    "mode": "passwords",
+    "config": ["crisdev", "1234"]
+  }
+}
+EOF
+    chmod 644 "$UDPC_CONFIG_FILE"
+    cp -f "$UDPC_CONFIG_FILE" /etc/udp-custom/server.json 2>/dev/null || true
+    cp -f "$UDPC_CONFIG_FILE" /etc/udp-custom/config.json 2>/dev/null || true
+    cp -f "$UDPC_CONFIG_FILE" /root/udp/config.json 2>/dev/null || true
+}
+
+udpc_create_service() {
+    cat > "$UDPC_SERVICE_FILE" <<EOF
+[Unit]
+Description=UDP Custom Server - HTTP Conexión
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${UDPC_INSTALL_DIR}
+ExecStart=${UDPC_BINARY_PATH} server -c ${UDPC_CONFIG_FILE}
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 644 "$UDPC_SERVICE_FILE"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+udpc_stop() {
+    systemctl stop "$UDPC_SERVICE_NAME" >/dev/null 2>&1 || true
+    systemctl disable "$UDPC_SERVICE_NAME" >/dev/null 2>&1 || true
+    pkill -9 -x udp-custom >/dev/null 2>&1 || true
+    pkill -9 -f 'udp-custom' >/dev/null 2>&1 || true
+}
+
+menu_udpcustom() {
+    mkdir -p "${UDPC_INSTALL_DIR}"
+    while true; do
+        clear
+        local running_sts="\033[1;31mDETENIDO [x]\033[0m"
+        local cur_port; cur_port=$(udpc_get_port)
+
+        if udpc_is_running; then
+            running_sts="\033[1;32mACTIVO [o]\033[0m"
+        fi
+
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "             \033[1;36mGESTOR UDP CUSTOM — HTTP CONEXIÓN\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  \033[1;37mESTADO DEL SERVICIO  : ${running_sts}"
+        echo -e "  \033[1;37mPUERTO UDP EN USO    : \033[1;33m${cur_port}/udp\033[0m"
+        echo -e "  \033[1;37mUBICACIÓN CONFIG     : \033[1;36m${UDPC_CONFIG_FILE}\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> ACTIVAR / CAMBIAR PUERTO UDP\033[0m"
+        if udpc_is_running; then
+            echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> DETENER SERVICIO UDP-CUSTOM\033[0m"
+            echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> REINICIAR SERVICIO UDP-CUSTOM\033[0m"
+        else
+            echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> INICIAR SERVICIO UDP-CUSTOM\033[0m"
+        fi
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> VER REGISTRO / LOGS EN VIVO\033[0m"
+        echo -e "  \033[1;31m[5]\033[0m \033[1;37m> DESINSTALAR UDP-CUSTOM\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opción:${SCOLOR} "
+        read -r opc
+        case "$opc" in
+            1|01)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "           \033[1;36mCONFIGURAR PUERTO UDP-CUSTOM\033[0m"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                udpc_ensure_binary || {
+                    echo -e "\033[1;31m[ERROR] No se pudo obtener el binario ejecutable de UDP-Custom.\033[0m"
+                    pause
+                    continue
+                }
+                local cur_p; cur_p=$(udpc_get_port)
+                echo -e "\033[1;37mPuertos recomendados para UDP Custom:\033[0m"
+                echo -e "  • \033[1;33m7100\033[0m (Estándar UDP Custom / VPN)"
+                echo -e "  • \033[1;33m7200\033[0m, \033[1;33m7300\033[0m, \033[1;33m7400\033[0m (Alternativos)"
+                echo -e "  • \033[1;33m53\033[0m / \033[1;33m5300\033[0m (DNS bypass operadores)"
+                echo ""
+                echo -ne "\033[1;32mIngrese el puerto a configurar [Enter = ${cur_p}]:\033[0m "
+                read -r in_port
+                [[ -z "$in_port" ]] && in_port="$cur_p"
+                if ! [[ "$in_port" =~ ^[0-9]+$ ]] || (( in_port < 1 || in_port > 65535 )); then
+                    echo -e "\033[1;31mPuerto no válido (1-65535).\033[0m"
+                    pause
+                    continue
+                fi
+                echo ""
+                echo -e "\033[1;37mSeleccione tamaño de buffer:\033[0m"
+                echo -e "  \033[1;32m[1]\033[0m \033[1;37m> Estándar (Stream: 32 MB, Core: 8 MB) - Recomendado\033[0m"
+                echo -e "  \033[1;32m[2]\033[0m \033[1;37m> Alto Rendimiento (Stream: 64 MB, Core: 16 MB)\033[0m"
+                echo -ne "\033[1;32mOpción [Enter = 1]:\033[0m "
+                read -r buf_opt
+                local s_buf=33554432 c_buf=8388608
+                [[ "$buf_opt" == "2" ]] && { s_buf=67108864; c_buf=16777216; }
+
+                udpc_stop
+                udpc_create_config "$in_port" "$s_buf" "$c_buf"
+                udpc_create_service
+                systemctl enable --now "$UDPC_SERVICE_NAME" >/dev/null 2>&1 || true
+                iptables -I INPUT -p udp --dport "$in_port" -j ACCEPT 2>/dev/null || true
+                ufw allow "${in_port}/udp" 2>/dev/null || true
+                sleep 1
+                echo ""
+                if udpc_is_running; then
+                    echo -e "\033[1;32m✔ Servidor UDP-Custom activo y funcionando en el puerto UDP ${in_port}! ⚡\033[0m"
+                else
+                    echo -e "\033[1;31m✗ No se pudo iniciar el servicio en el puerto ${in_port}.\033[0m"
+                    echo -e "\033[1;33mRegistro de error:\033[0m"
+                    journalctl -u "$UDPC_SERVICE_NAME" -n 8 --no-pager 2>/dev/null || true
+                fi
+                pause
+                ;;
+            2|02)
+                if udpc_is_running; then
+                    udpc_stop
+                    echo -e "\n\033[1;33mServicio UDP-Custom detenido.\033[0m"
+                else
+                    udpc_ensure_binary
+                    systemctl enable --now "$UDPC_SERVICE_NAME" >/dev/null 2>&1 || true
+                    echo -e "\n\033[1;32mServicio UDP-Custom iniciado.\033[0m"
+                fi
+                pause
+                ;;
+            3|03)
+                if udpc_is_running; then
+                    systemctl restart "$UDPC_SERVICE_NAME" >/dev/null 2>&1 || true
+                    echo -e "\n\033[1;32mServicio UDP-Custom reiniciado.\033[0m"
+                    pause
+                fi
+                ;;
+            4|04)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "             \033[1;36mLOGS UDP-CUSTOM EN VIVO\033[0m"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                journalctl -u "$UDPC_SERVICE_NAME" -n 25 --no-pager 2>/dev/null || echo "Sin registros disponibles."
+                pause
+                ;;
+            5|05)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "             \033[1;31mDESINSTALAR UDP-CUSTOM\033[0m"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -ne "\033[1;31m¿Está seguro de detener y desinstalar UDP-Custom? [s/N]: \033[0m"
+                read -r conf
+                if [[ "$conf" =~ ^[sS]$ ]]; then
+                    udpc_stop
+                    rm -f "$UDPC_SERVICE_FILE"
+                    systemctl daemon-reload >/dev/null 2>&1 || true
+                    systemctl reset-failed "$UDPC_SERVICE_NAME" >/dev/null 2>&1 || true
+                    rm -rf "${UDPC_INSTALL_DIR}" /etc/udp-custom /root/udp
+                    echo -e "\n\033[1;32m✔ UDP-Custom ha sido desinstalado completamente del servidor.\033[0m"
+                    pause
+                fi
+                ;;
+            0|00) return ;;
+            *) echo -e "\033[1;31mOpción no válida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  HYSTERIA 2 MANAGER (NATIVO INTEGRADO)
+# ─────────────────────────────────────────────────────────────────────────────
+HY2_INSTALL_DIR="/etc/hysteria2"
+HY2_CONFIG_FILE="${HY2_INSTALL_DIR}/config.yaml"
+HY2_BINARY_PATH="/usr/local/bin/hysteria2"
+HY2_SERVICE_NAME="hysteria2.service"
+HY2_SERVICE_FILE="/etc/systemd/system/${HY2_SERVICE_NAME}"
+HY2_CERT_FILE="${HY2_INSTALL_DIR}/server.crt"
+HY2_KEY_FILE="${HY2_INSTALL_DIR}/server.key"
+
+hy2_ensure_binary() {
+    if [[ -x "$HY2_BINARY_PATH" ]] && "$HY2_BINARY_PATH" version 2>/dev/null | grep -qiE 'v2|2\.'; then
+        return 0
+    fi
+    if [[ -x "$HY2_BINARY_PATH" ]] && head -c 4 "$HY2_BINARY_PATH" 2>/dev/null | grep -q 'ELF'; then
+        return 0
+    fi
+
+    echo -e "\033[1;33m[*] Descargando Hysteria v2 oficial...\033[0m"
+    local arch; arch=$(uname -m)
+    case "$arch" in
+        x86_64) arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        armv7l|armhf) arch="armv7" ;;
+        *) arch="amd64" ;;
+    esac
+
+    local url="https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-${arch}"
+    curl -fsSLk "$url" -o "$HY2_BINARY_PATH" 2>/dev/null || \
+    wget --no-check-certificate -q "$url" -O "$HY2_BINARY_PATH" 2>/dev/null || true
+
+    chmod 755 "$HY2_BINARY_PATH" 2>/dev/null || true
+    [[ -x "$HY2_BINARY_PATH" ]] && head -c 4 "$HY2_BINARY_PATH" 2>/dev/null | grep -q 'ELF'
+}
+
+hy2_ensure_certificates() {
+    local domain="${1:-crisdev.online}"
+    mkdir -p "${HY2_INSTALL_DIR}"
+    if [[ ! -f "$HY2_CERT_FILE" || ! -f "$HY2_KEY_FILE" ]]; then
+        echo -e "\033[1;33m[*] Generando certificado TLS para Hysteria 2 (CN: ${domain})...\033[0m"
+        openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
+            -keyout "$HY2_KEY_FILE" -out "$HY2_CERT_FILE" \
+            -subj "/CN=${domain}" >/dev/null 2>&1 || true
+        chmod 600 "$HY2_KEY_FILE" 2>/dev/null || true
+        chmod 644 "$HY2_CERT_FILE" 2>/dev/null || true
+    fi
+}
+
+hy2_is_running() {
+    systemctl is-active --quiet "$HY2_SERVICE_NAME" 2>/dev/null || pgrep -x hysteria2 >/dev/null 2>&1
+}
+
+hy2_get_port() {
+    local port="443"
+    if [[ -f "$HY2_CONFIG_FILE" ]]; then
+        port=$(grep -E '^[[:space:]]*listen:' "$HY2_CONFIG_FILE" 2>/dev/null | awk '{print $2}' | tr -d ' ":' | head -1)
+    fi
+    [[ -z "$port" ]] && port="443"
+    echo "$port"
+}
+
+hy2_get_auth() {
+    local auth="crisdev"
+    if [[ -f "$HY2_CONFIG_FILE" ]]; then
+        auth=$(grep -E '^[[:space:]]*password:' "$HY2_CONFIG_FILE" 2>/dev/null | awk '{print $2}' | tr -d ' "' | head -1)
+    fi
+    echo "${auth:-crisdev}"
+}
+
+hy2_get_obfs() {
+    local obfs=""
+    if [[ -f "$HY2_CONFIG_FILE" ]]; then
+        obfs=$(grep -E '^[[:space:]]*salamander:' -A 1 "$HY2_CONFIG_FILE" 2>/dev/null | grep 'password:' | awk '{print $2}' | tr -d ' "' | head -1)
+    fi
+    echo "$obfs"
+}
+
+hy2_get_sni() {
+    local sni="crisdev.online"
+    if [[ -f "$HY2_CONFIG_FILE" ]]; then
+        sni=$(grep -E '^[[:space:]]*url:' "$HY2_CONFIG_FILE" 2>/dev/null | awk '{print $2}' | sed 's|https://||' | tr -d ' "' | head -1)
+    fi
+    echo "${sni:-crisdev.online}"
+}
+
+hy2_create_config() {
+    local port="${1:-443}"
+    local auth_pass="${2:-crisdev}"
+    local obfs_pass="${3:-}"
+    local sni_domain="${4:-crisdev.online}"
+
+    mkdir -p "${HY2_INSTALL_DIR}"
+    hy2_ensure_certificates "$sni_domain"
+
+    local obfs_block=""
+    if [[ -n "$obfs_pass" ]]; then
+        obfs_block="obfs:
+  type: salamander
+  salamander:
+    password: ${obfs_pass}"
+    fi
+
+    cat > "$HY2_CONFIG_FILE" <<EOF
+listen: :${port}
+
+tls:
+  cert: ${HY2_CERT_FILE}
+  key: ${HY2_KEY_FILE}
+
+auth:
+  type: password
+  password: ${auth_pass}
+
+${obfs_block}
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://${sni_domain}
+    rewriteHost: true
+
+bandwidth:
+  up: 100 mbps
+  down: 100 mbps
+
+ignoreClientBandwidth: false
+disableUDP: false
+udpIdleTimeout: 60s
+EOF
+    chmod 644 "$HY2_CONFIG_FILE"
+}
+
+hy2_create_service() {
+    cat > "$HY2_SERVICE_FILE" <<EOF
+[Unit]
+Description=Hysteria 2 Server - HTTP Conexión
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${HY2_INSTALL_DIR}
+ExecStart=${HY2_BINARY_PATH} server -c ${HY2_CONFIG_FILE}
+Restart=always
+RestartSec=3s
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    chmod 644 "$HY2_SERVICE_FILE"
+    systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+hy2_stop() {
+    systemctl stop "$HY2_SERVICE_NAME" >/dev/null 2>&1 || true
+    systemctl disable "$HY2_SERVICE_NAME" >/dev/null 2>&1 || true
+    pkill -9 -x hysteria2 >/dev/null 2>&1 || true
+    pkill -9 -f 'hysteria2' >/dev/null 2>&1 || true
+}
+
+menu_hysteria2() {
+    mkdir -p "${HY2_INSTALL_DIR}"
+    while true; do
+        clear
+        local running_sts="\033[1;31mDETENIDO [x]\033[0m"
+        local cur_port; cur_port=$(hy2_get_port)
+        local cur_auth; cur_auth=$(hy2_get_auth)
+        local cur_obfs; cur_obfs=$(hy2_get_obfs)
+
+        if hy2_is_running; then
+            running_sts="\033[1;32mACTIVO [o]\033[0m"
+        fi
+
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "       \033[1;36mGESTOR HYSTERIA v2 (QUIC UDP) — HTTP CONEXIÓN\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  \033[1;37mESTADO DEL SERVICIO  : ${running_sts}"
+        echo -e "  \033[1;37mPUERTO UDP EN USO    : \033[1;33m${cur_port}/udp\033[0m"
+        echo -e "  \033[1;37mAUTENTICACIÓN        : \033[1;32m${cur_auth}\033[0m"
+        echo -e "  \033[1;37mOFUSCACIÓN SALAMANDER: \033[1;36m${cur_obfs:-Desactivada}\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> CONFIGURAR / CAMBIAR PUERTO HYSTERIA 2\033[0m"
+        if hy2_is_running; then
+            echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> DETENER SERVICIO HYSTERIA 2\033[0m"
+            echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> REINICIAR SERVICIO HYSTERIA 2\033[0m"
+        else
+            echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> INICIAR SERVICIO HYSTERIA 2\033[0m"
+        fi
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> VER DATOS DE CONEXIÓN / ENLACE\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> VER REGISTRO DE LOGS EN VIVO\033[0m"
+        echo -e "  \033[1;31m[6]\033[0m \033[1;37m> DESINSTALAR HYSTERIA 2\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opción:${SCOLOR} "
+        read -r opc
+        case "$opc" in
+            1|01)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "           \033[1;36mCONFIGURAR PUERTO HYSTERIA 2\033[0m"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                hy2_ensure_binary || {
+                    echo -e "\033[1;31m[ERROR] No se pudo obtener el binario Hysteria 2.\033[0m"
+                    pause
+                    continue
+                }
+                local cur_p; cur_p=$(hy2_get_port)
+                echo -ne "\033[1;32mPuerto UDP a escuchar [Enter = ${cur_p}]:\033[0m "
+                read -r in_port
+                [[ -z "$in_port" ]] && in_port="$cur_p"
+                if ! [[ "$in_port" =~ ^[0-9]+$ ]] || (( in_port < 1 || in_port > 65535 )); then
+                    echo -e "\033[1;31mPuerto no válido.\033[0m"
+                    pause
+                    continue
+                fi
+                echo -ne "\033[1;32mContraseña de autenticación (auth password) [Enter = $(hy2_get_auth)]:\033[0m "
+                read -r in_auth
+                [[ -z "$in_auth" ]] && in_auth=$(hy2_get_auth)
+
+                echo -ne "\033[1;32mContraseña de Ofuscación Salamander (opcional, Enter = omitir):\033[0m "
+                read -r in_obfs
+
+                local in_sni
+                in_sni=$(hy2_get_sni)
+                echo -ne "\033[1;32mDominio SNI de camuflaje web [Enter = ${in_sni}]:\033[0m "
+                read -r input_sni
+                [[ -n "$input_sni" ]] && in_sni="$input_sni"
+
+                hy2_stop
+                hy2_create_config "$in_port" "$in_auth" "$in_obfs" "$in_sni"
+                hy2_create_service
+                systemctl enable --now "$HY2_SERVICE_NAME" >/dev/null 2>&1 || true
+                iptables -I INPUT -p udp --dport "$in_port" -j ACCEPT 2>/dev/null || true
+                ufw allow "${in_port}/udp" 2>/dev/null || true
+                sleep 1
+                echo ""
+                if hy2_is_running; then
+                    echo -e "\033[1;32m✔ Servidor Hysteria 2 activo y escuchando en el puerto UDP ${in_port}! ⚡\033[0m"
+                else
+                    echo -e "\033[1;31m✗ No se pudo iniciar el servicio Hysteria 2.\033[0m"
+                    echo -e "\033[1;33mRegistro de error:\033[0m"
+                    journalctl -u "$HY2_SERVICE_NAME" -n 8 --no-pager 2>/dev/null || true
+                fi
+                pause
+                ;;
+            2|02)
+                if hy2_is_running; then
+                    hy2_stop
+                    echo -e "\n\033[1;33mServicio Hysteria 2 detenido.\033[0m"
+                else
+                    hy2_ensure_binary
+                    systemctl enable --now "$HY2_SERVICE_NAME" >/dev/null 2>&1 || true
+                    echo -e "\n\033[1;32mServicio Hysteria 2 iniciado.\033[0m"
+                fi
+                pause
+                ;;
+            3|03)
+                if hy2_is_running; then
+                    systemctl restart "$HY2_SERVICE_NAME" >/dev/null 2>&1 || true
+                    echo -e "\n\033[1;32mServicio Hysteria 2 reiniciado.\033[0m"
+                    pause
+                fi
+                ;;
+            4|04)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "             \033[1;36mDATOS DE CONEXIÓN HYSTERIA 2\033[0m"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                local my_ip; my_ip=$(curl -4 -s --max-time 3 https://api.ipify.org 2>/dev/null || cat /etc/IP 2>/dev/null || echo "127.0.0.1")
+                local p; p=$(hy2_get_port)
+                local a; a=$(hy2_get_auth)
+                local o; o=$(hy2_get_obfs)
+                local s; s=$(hy2_get_sni)
+                local obfs_param=""
+                [[ -n "$o" ]] && obfs_param="&obfs=salamander&obfs-password=${o}"
+                local hy2_url="hysteria2://${a}@${my_ip}:${p}/?sni=${s}&insecure=1${obfs_param}#HTTP_Conexion-HY2"
+                echo -e "  \033[1;32mHOST / IP SERVIDOR:\033[0m \033[1;37m${my_ip}\033[0m"
+                echo -e "  \033[1;32mPUERTO UDP        :\033[0m \033[1;37m${p}\033[0m"
+                echo -e "  \033[1;32mPASSWORD / AUTH   :\033[0m \033[1;37m${a}\033[0m"
+                echo -e "  \033[1;32mOFUSCACIÓN (OBFS) :\033[0m \033[1;37m${o:-Desactivada}\033[0m"
+                echo -e "  \033[1;32mSNI / DOMINIO     :\033[0m \033[1;37m${s}\033[0m"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "\033[1;33mENLACE OFICIAL HYSTERIA 2:\033[0m"
+                echo -e "\033[1;36m${hy2_url}\033[0m"
+                pause
+                ;;
+            5|05)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "             \033[1;36mLOGS HYSTERIA 2 EN VIVO\033[0m"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                journalctl -u "$HY2_SERVICE_NAME" -n 25 --no-pager 2>/dev/null || echo "Sin registros disponibles."
+                pause
+                ;;
+            6|06)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "             \033[1;31mDESINSTALAR HYSTERIA 2\033[0m"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -ne "\033[1;31m¿Está seguro de detener y desinstalar Hysteria 2? [s/N]: \033[0m"
+                read -r conf
+                if [[ "$conf" =~ ^[sS]$ ]]; then
+                    hy2_stop
+                    rm -f "$HY2_SERVICE_FILE"
+                    systemctl daemon-reload >/dev/null 2>&1 || true
+                    systemctl reset-failed "$HY2_SERVICE_NAME" >/dev/null 2>&1 || true
+                    rm -rf "${HY2_INSTALL_DIR}"
+                    echo -e "\n\033[1;32m✔ Hysteria 2 ha sido desinstalado completamente.\033[0m"
+                    pause
+                fi
+                ;;
+            0|00) return ;;
+            *) echo -e "\033[1;31mOpción no válida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  MENÚ DE PROTOCOLOS (CONFIGURACION DE PROTOCOLOS)
 # ─────────────────────────────────────────────────────────────────────────────
 menu_protocolos() {
@@ -3148,62 +3727,8 @@ menu_protocolos() {
                 ;;
             6|06) slow_setup ;;
             7|07) menu_udp_cris ;;
-            8|08)
-                local h2_file=""
-                for h2_p in /bin/hysteria2-manager /usr/bin/hysteria2-manager /usr/local/bin/hysteria2-manager /opt/ssh-cris/Modulos/hysteria2-manager; do
-                    if [[ -s "$h2_p" && -r "$h2_p" ]]; then
-                        h2_file="$h2_p"
-                        break
-                    fi
-                done
-                if [[ -n "$h2_file" ]]; then
-                    chmod +x "$h2_file" 2>/dev/null || true
-                    bash "$h2_file"
-                else
-                    clear
-                    echo -e "\033[1;32mDescargando e iniciando Hysteria v2 Manager...\033[0m"
-                    local ts; ts=$(date +%s)
-                    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager?v=${ts}" -o /bin/hysteria2-manager 2>/dev/null || \
-                    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager?v=${ts}" -O /bin/hysteria2-manager 2>/dev/null || \
-                    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager" -o /bin/hysteria2-manager 2>/dev/null || \
-                    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hysteria2-manager" -O /bin/hysteria2-manager 2>/dev/null || true
-                    chmod +x /bin/hysteria2-manager 2>/dev/null || true
-                    if [[ -s /bin/hysteria2-manager ]]; then
-                        bash /bin/hysteria2-manager
-                    else
-                        echo -e "\033[1;31mError al descargar Hysteria v2 Manager. Verifique conexion a internet o ejecute: attscript\033[0m"
-                        sleep 3
-                    fi
-                fi
-                ;;
-            9|09)
-                local udpc_file=""
-                for udpc_p in /bin/udp-custom-manager /usr/bin/udp-custom-manager /usr/local/bin/udp-custom-manager /opt/ssh-cris/Modulos/udp-custom-manager; do
-                    if [[ -s "$udpc_p" && -r "$udpc_p" ]]; then
-                        udpc_file="$udpc_p"
-                        break
-                    fi
-                done
-                if [[ -n "$udpc_file" ]]; then
-                    chmod +x "$udpc_file" 2>/dev/null || true
-                    bash "$udpc_file"
-                else
-                    clear
-                    echo -e "\033[1;32mDescargando e iniciando UDP Custom Manager...\033[0m"
-                    local ts; ts=$(date +%s)
-                    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager?v=${ts}" -o /bin/udp-custom-manager 2>/dev/null || \
-                    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager?v=${ts}" -O /bin/udp-custom-manager 2>/dev/null || \
-                    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager" -o /bin/udp-custom-manager 2>/dev/null || \
-                    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/udp-custom-manager" -O /bin/udp-custom-manager 2>/dev/null || true
-                    chmod +x /bin/udp-custom-manager 2>/dev/null || true
-                    if [[ -s /bin/udp-custom-manager ]]; then
-                        bash /bin/udp-custom-manager
-                    else
-                        echo -e "\033[1;31mError al descargar UDP Custom Manager. Verifique conexion a internet o ejecute: attscript\033[0m"
-                        sleep 3
-                    fi
-                fi
-                ;;
+            8|08) menu_hysteria2 ;;
+            9|09) menu_udpcustom ;;
             10) menub ;;
             11)
                 clear

@@ -143,8 +143,10 @@ choose_timezone() {
     sleep 1
 }
 
-choose_language
-choose_timezone
+if [[ "${1:-}" != "--update" && "${1:-}" != "-u" ]]; then
+    choose_language
+    choose_timezone
+fi
 
 echo -e "${YELLOW}[1/4]${NC} Actualizando repositorios e instalando paquetes base..."
 if command -v apt-get >/dev/null 2>&1; then
@@ -186,7 +188,7 @@ _mdls=(
     "tcptweaker.sh" "testbot" "testbot.sh" "totaltraffic" "trojan-go" "tuning" "tweaker"
     "uexpired" "uncompress" "userbackup" "utili" "v2raymanager" "v2raypanel" "version"
     "vnc_inst" "webmin.sh" "websocket.sh" "wsproxy.py" "sshplus_stats"
-    "udp-custom-manager" "hysteria2-manager" "bhttp-manager" "hcr-manager"
+    "udp-custom-manager" "hysteria2-manager" "hcr-manager"
 )
 
 # Copiar o descargar modulos a /bin
