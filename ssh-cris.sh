@@ -3747,19 +3747,21 @@ menu_protocolos() {
             15) fun_chisel ;;
             16) menu_bhttp ;;
             17)
-                [[ -f /bin/hcr-manager && ! -s /bin/hcr-manager ]] && rm -f /bin/hcr-manager
-                if [[ -s /bin/hcr-manager && -x /bin/hcr-manager ]]; then
+                [[ -L /bin/hcr-manager && ! -e /bin/hcr-manager ]] && rm -f /bin/hcr-manager 2>/dev/null
+                [[ -L /usr/bin/hcr-manager && ! -e /usr/bin/hcr-manager ]] && rm -f /usr/bin/hcr-manager 2>/dev/null
+                if [[ -s /bin/hcr-manager && -x /bin/hcr-manager && ! -L /bin/hcr-manager ]]; then
                     /bin/hcr-manager
-                elif [[ -s /usr/bin/hcr-manager && -x /usr/bin/hcr-manager ]]; then
+                elif [[ -s /usr/bin/hcr-manager && -x /usr/bin/hcr-manager && ! -L /usr/bin/hcr-manager ]]; then
                     /usr/bin/hcr-manager
                 elif [[ -f /opt/ssh-cris/Modulos/hcr-manager ]]; then
                     bash /opt/ssh-cris/Modulos/hcr-manager
                 else
                     clear
                     echo -e "\033[1;32mDescargando e iniciando HCR Manager...\033[0m"
-                    curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager -o /bin/hcr-manager 2>/dev/null || \
+                    rm -f /bin/hcr-manager /usr/bin/hcr-manager 2>/dev/null || true
+                    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager" -o /bin/hcr-manager 2>/dev/null || \
                     wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager" -O /bin/hcr-manager 2>/dev/null || \
-                    curl -fsSL https://raw.githubusercontent.com/karl1999x/PandaScript/main/SCRIPTS/hcr-manager -o /bin/hcr-manager 2>/dev/null || \
+                    curl -fsSL "https://raw.githubusercontent.com/karl1999x/PandaScript/main/SCRIPTS/hcr-manager" -o /bin/hcr-manager 2>/dev/null || \
                     wget -q "https://raw.githubusercontent.com/karl1999x/PandaScript/main/SCRIPTS/hcr-manager" -O /bin/hcr-manager 2>/dev/null || true
                     chmod +x /bin/hcr-manager 2>/dev/null || true
                     if [[ -s /bin/hcr-manager ]]; then

@@ -474,6 +474,7 @@ ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/conexao 2>/dev/null || true
 
 sshplus_compat_alias() {
     local old="$1" new="$2"
+    [[ "$old" == "$new" ]] && return 0
     [[ -e "/bin/$new" ]] || return 0
     rm -f "/bin/$old" 2>/dev/null || true
     ln -sfn "/bin/$new" "/bin/$old" 2>/dev/null || cp -af "/bin/$new" "/bin/$old"
@@ -486,9 +487,7 @@ sshplus_compat_alias udpcustom udp-custom-manager
 sshplus_compat_alias udp-custom udp-custom-manager
 sshplus_compat_alias hy2 hysteria2-manager
 sshplus_compat_alias hysteria2 hysteria2-manager
-sshplus_compat_alias hysteria2-manager hysteria2-manager
 sshplus_compat_alias hcr hcr-manager
-sshplus_compat_alias hcr-manager hcr-manager
 sshplus_compat_alias criarusuario createuser
 sshplus_compat_alias criarteste createtest
 sshplus_compat_alias remover removeuser
