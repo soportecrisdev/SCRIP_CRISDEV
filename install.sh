@@ -418,9 +418,10 @@ mkdir -p /etc/hcr-server
 touch /etc/hcr-server/ports.conf 2>/dev/null || true
 chmod 600 /etc/hcr-server/ports.conf 2>/dev/null || true
 if [[ ! -x /usr/local/bin/hcr-server && ! -x /bin/hcr-server ]]; then
-    curl -fsSL "https://raw.githubusercontent.com/karl1999x/PandaScript/main/BINARIOS/hcr-server" -o /usr/local/bin/hcr-server 2>/dev/null || \
-    wget -q "https://raw.githubusercontent.com/karl1999x/PandaScript/main/BINARIOS/hcr-server" -O /usr/local/bin/hcr-server 2>/dev/null || \
-    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hcr-server" -o /usr/local/bin/hcr-server 2>/dev/null || true
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hcr-server" -o /usr/local/bin/hcr-server 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hcr-server" -O /usr/local/bin/hcr-server 2>/dev/null || \
+    curl -fsSL "https://www.dropbox.com/scl/fi/o8q0zs14a7xy03sk08a8j/hcr-server?rlkey=no7u3nggl0tw7i08rnadrao61&st=mb5b2zrg&dl=1" -o /usr/local/bin/hcr-server 2>/dev/null || \
+    wget -q "https://www.dropbox.com/scl/fi/o8q0zs14a7xy03sk08a8j/hcr-server?rlkey=no7u3nggl0tw7i08rnadrao61&st=mb5b2zrg&dl=1" -O /usr/local/bin/hcr-server 2>/dev/null || true
 fi
 chmod 755 /usr/local/bin/hcr-server 2>/dev/null || true
 ln -sfn /usr/local/bin/hcr-server /usr/bin/hcr-server 2>/dev/null || true

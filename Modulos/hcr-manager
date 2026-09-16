@@ -78,15 +78,27 @@ ensure_binary() {
         ln -sfn /bin/hcr-server "$BINARY_PATH"
         return 0
     fi
+    if [[ -x "/usr/bin/hcr-server" ]]; then
+        ln -sfn /usr/bin/hcr-server "$BINARY_PATH"
+        return 0
+    fi
     if [[ -f "/opt/ssh-cris/hcr-server" ]]; then
         cp -f "/opt/ssh-cris/hcr-server" "$BINARY_PATH"
         chmod +x "$BINARY_PATH"
         return 0
     fi
+    if [[ -f "/etc/hcr-server/hcr-server" ]]; then
+        cp -f "/etc/hcr-server/hcr-server" "$BINARY_PATH"
+        chmod +x "$BINARY_PATH"
+        return 0
+    fi
     echo -e "${YELLOW}[*] Descargando binario hcr-server...${NC}"
-    local url="https://raw.githubusercontent.com/karl1999x/PandaScript/main/BINARIOS/hcr-server"
-    curl -fsSL "$url" -o "$BINARY_PATH" 2>/dev/null || \
-    wget -q "$url" -O "$BINARY_PATH" 2>/dev/null || true
+    local url1="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hcr-server"
+    local url2="https://www.dropbox.com/scl/fi/o8q0zs14a7xy03sk08a8j/hcr-server?rlkey=no7u3nggl0tw7i08rnadrao61&st=mb5b2zrg&dl=1"
+    curl -fsSL "$url1" -o "$BINARY_PATH" 2>/dev/null || \
+    wget -q "$url1" -O "$BINARY_PATH" 2>/dev/null || \
+    curl -fsSL "$url2" -o "$BINARY_PATH" 2>/dev/null || \
+    wget -q "$url2" -O "$BINARY_PATH" 2>/dev/null || true
     chmod 755 "$BINARY_PATH" 2>/dev/null || true
     ln -sfn "$BINARY_PATH" /bin/hcr-server 2>/dev/null || true
     ln -sfn "$BINARY_PATH" /usr/bin/hcr-server 2>/dev/null || true

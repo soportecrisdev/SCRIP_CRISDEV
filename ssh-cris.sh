@@ -3758,7 +3758,9 @@ menu_protocolos() {
                     clear
                     echo -e "\033[1;32mDescargando e iniciando HCR Manager...\033[0m"
                     curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager -o /bin/hcr-manager 2>/dev/null || \
-                    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager" -O /bin/hcr-manager 2>/dev/null || true
+                    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager" -O /bin/hcr-manager 2>/dev/null || \
+                    curl -fsSL https://raw.githubusercontent.com/karl1999x/PandaScript/main/SCRIPTS/hcr-manager -o /bin/hcr-manager 2>/dev/null || \
+                    wget -q "https://raw.githubusercontent.com/karl1999x/PandaScript/main/SCRIPTS/hcr-manager" -O /bin/hcr-manager 2>/dev/null || true
                     chmod +x /bin/hcr-manager 2>/dev/null || true
                     if [[ -s /bin/hcr-manager ]]; then
                         /bin/hcr-manager
