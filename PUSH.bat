@@ -5,8 +5,8 @@ color 0A
 
 echo.
 echo ======================================================
-echo       CRISDEV VPN Manager - Push a GitHub
-echo       @CRISIS1823
+echo       ⚡ CRISDEV VPN Manager - Subir Cambios ⚡
+echo                  @soportecrisdev
 echo ======================================================
 echo.
 
@@ -19,26 +19,34 @@ if not exist ".git" (
     exit /b 1
 )
 
+:: Configurar almacenamiento permanente de credenciales para no pedir usuario cada vez
+git config credential.helper store
+git config user.name "soportecrisdev" >nul 2>&1
+git config user.email "soportecrisdev@gmail.com" >nul 2>&1
+
+echo [INFO] Credenciales configuradas con memoria permanente (credential.helper store).
 echo.
+
 echo ======================================================
 echo  ARCHIVOS MODIFICADOS Y NUEVOS:
 echo ======================================================
 git status --short
+echo ======================================================
 echo.
 
 set MSG=
-set /p MSG="Mensaje de commit (Presiona ENTER para mensaje automatico): "
+set /p MSG="Mensaje de commit (Presiona ENTER para automatico): "
 
 if "%MSG%"=="" (
-    set MSG=Actualizacion SSH-CRIS y BHTTP %DATE% %TIME%
+    set MSG=Update Suite CRISDEV %DATE% %TIME%
 )
 
 echo.
-echo [1/3] Agregando todos los archivos...
+echo [1/3] Preparando archivos...
 git add -A
 
 echo.
-echo [2/3] Creando commit: %MSG%
+echo [2/3] Creando commit: "%MSG%"...
 git commit -m "%MSG%"
 
 echo.
@@ -50,10 +58,8 @@ if %ERRORLEVEL% NEQ 0 (
     echo ======================================================
     echo [ERROR] Fallo al subir a GitHub.
     echo ======================================================
-    echo Posibles causas:
-    echo 1. Conflicto con commits remotos. Intenta: git pull --rebase origin main
-    echo 2. Credenciales o Token de GitHub expirado.
-    echo 3. Permisos de escritura en el repositorio.
+    echo Si es la primera vez que te pide el Token de GitHub,
+    echo ingresalo UNA SOLA VEZ y quedara guardado para siempre.
     echo.
     pause
     exit /b 1
@@ -61,7 +67,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo ======================================================
-echo      CAMBIOS SUBIDOS EXITOSAMENTE A GITHUB
+echo    ✔ CAMBIOS SUBIDOS EXITOSAMENTE A GITHUB ✔
 echo ======================================================
 echo.
 echo Repositorio: https://github.com/soportecrisdev/SCRIP_CRISDEV

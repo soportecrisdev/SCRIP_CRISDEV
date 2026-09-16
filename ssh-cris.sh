@@ -22,6 +22,18 @@ ARM64_BHTTP="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main
 AMD64_XHTTP="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-amd64"
 ARM64_XHTTP="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-arm64"
 
+# Auto-sanitización de symlinks rotos/circulares
+for _d in /bin /usr/bin /usr/local/bin; do
+    [[ -d "$_d" ]] || continue
+    for _f in "$_d"/*; do
+        [[ -L "$_f" ]] || continue
+        _t=$(readlink "$_f" 2>/dev/null || true)
+        if [[ "$_t" == "$_f" || "$_t" == "$(basename "$_f")" || "$_t" == "$_d/$(basename "$_f")" || ! -e "$_f" ]]; then
+            rm -f "$_f" 2>/dev/null || true
+        fi
+    done
+done
+
 # Hysteria v1.3.5 (Core Oficial para UDPCris / libfarikudp.so)
 HYSTERIA_V1_AMD64="https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-amd64"
 HYSTERIA_V1_ARM64="https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-arm64"

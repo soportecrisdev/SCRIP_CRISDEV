@@ -268,12 +268,28 @@ slow_check_connection() {
 		echo -e "${RED}NO SE ENCONTRO REDIRECCION UDP ${SLOW_REDIRECT:-53} > ${SLOW_PORT}.${NC}"
 	fi
 	if command -v dig >/dev/null 2>&1 && [[ -n "$SLOW_DOMAIN" ]]; then
-		local dns_ns dns_a dns_ns_a
-		dns_ns="$(dig +short NS "$SLOW_DOMAIN" 2>/dev/null | xargs)"
-		dns_a="$(dig +short A "$SLOW_DOMAIN" 2>/dev/null | xargs)"
-		[[ -n "$dns_ns" ]] && dns_ns_a="$(dig +short A "$dns_ns" 2>/dev/null | xargs)"
-		echo -e "${DARK_GREEN}DNS NS:${NC} ${WHITE}${dns_ns:-NO RESUELVE}${NC}"
-		echo -e "${DARK_GREEN}DNS A:${NC} ${WHITE}${dns_a:-${dns_ns_a:-NO RESUELVE}}${NC}"
+		local dns_ns dns_a dns_ns_a my_ip
+		my_ip="$(curl -s4 --max-time 3 ifconfig.me 2>/dev/null || curl -s4 --max-time 3 api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
+		dns_ns="$(dig +short NS "$SLOW_DOMAIN" @8.8.8.8 2>/dev/null | xargs)"
+		dns_a="$(dig +short A "$SLOW_DOMAIN" @8.8.8.8 2>/dev/null | xargs)"
+		[[ -n "$dns_ns" ]] && dns_ns_a="$(dig +short A "$dns_ns" @8.8.8.8 2>/dev/null | xargs)"
+		
+		if [[ -n "$dns_ns" ]]; then
+			echo -e "${DARK_GREEN}DNS NS:${NC} ${GREEN}${dns_ns}${NC}"
+		else
+			echo -e "${DARK_GREEN}DNS NS:${NC} ${YELLOW}NO RESUELVE (Pendiente en Cloudflare)${NC}"
+		fi
+		if [[ -n "$dns_a" || -n "$dns_ns_a" ]]; then
+			echo -e "${DARK_GREEN}DNS A:${NC}  ${GREEN}${dns_a:-$dns_ns_a}${NC}"
+		else
+			echo -e "${DARK_GREEN}DNS A:${NC}  ${YELLOW}NO RESUELVE (Pendiente en Cloudflare)${NC}"
+		fi
+		
+		if [[ -z "$dns_ns" ]]; then
+			echo -e "${YELLOW}ℹ Configura estos 2 registros en Cloudflare (Nube Gris / DNS Only):${NC}"
+			echo -e "  ${WHITE}1) Registro A  : ns.${SLOW_DOMAIN#*.} -> ${my_ip}${NC}"
+			echo -e "  ${WHITE}2) Registro NS : ${SLOW_DOMAIN} -> ns.${SLOW_DOMAIN#*.}${NC}"
+		fi
 	fi
 	slow_line
 }

@@ -459,6 +459,28 @@ chmod 755 /bin/hysteria2 2>/dev/null || true
 
 echo -e "${GREEN}[✔]${NC} Módulos y servicios instalados correctamente."
 
+# Auto-detectar usrmerge (/bin == /usr/bin) y sanitizar symlinks previos
+IS_USR_MERGE=0
+if [[ "$(realpath /bin 2>/dev/null)" == "$(realpath /usr/bin 2>/dev/null)" ]] || [[ "$(readlink -f /bin 2>/dev/null)" == "/usr/bin" ]]; then
+    IS_USR_MERGE=1
+fi
+
+sanitize_broken_symlinks() {
+    local dir f target
+    for dir in /bin /usr/bin /usr/local/bin; do
+        [[ -d "$dir" ]] || continue
+        for f in "$dir"/*; do
+            [[ -L "$f" ]] || continue
+            target=$(readlink "$f" 2>/dev/null || true)
+            # Detectar enlaces circulares (hcr-manager -> hcr-manager o /bin/hcr -> /bin/hcr) o rotos
+            if [[ "$target" == "$f" || "$target" == "$(basename "$f")" || "$target" == "$dir/$(basename "$f")" || ! -e "$f" ]]; then
+                rm -f "$f" 2>/dev/null || true
+            fi
+        done
+    done
+}
+sanitize_broken_symlinks
+
 echo -e "${YELLOW}[3/4]${NC} Creando accesos directos y enlaces globales..."
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/ssh-cris
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/cris
@@ -468,17 +490,24 @@ ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/cris 2>/dev/null || true
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/menu 2>/dev/null || true
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/connection 2>/dev/null || true
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/conexao 2>/dev/null || true
-ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/menu 2>/dev/null || true
-ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/connection 2>/dev/null || true
-ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/conexao 2>/dev/null || true
+if [[ "$IS_USR_MERGE" -eq 0 ]]; then
+    ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/menu 2>/dev/null || true
+    ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/connection 2>/dev/null || true
+    ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/conexao 2>/dev/null || true
+fi
 
 sshplus_compat_alias() {
     local old="$1" new="$2"
     [[ "$old" == "$new" ]] && return 0
-    [[ -e "/bin/$new" ]] || return 0
-    rm -f "/bin/$old" 2>/dev/null || true
-    ln -sfn "/bin/$new" "/bin/$old" 2>/dev/null || cp -af "/bin/$new" "/bin/$old"
-    chmod +x "/bin/$old" 2>/dev/null || true
+    [[ -e "/bin/$new" || -e "/usr/bin/$new" ]] || return 0
+    rm -f "/bin/$old" "/usr/bin/$old" 2>/dev/null || true
+    if [[ "$IS_USR_MERGE" -eq 1 ]]; then
+        ln -sfn "/usr/bin/$new" "/usr/bin/$old" 2>/dev/null || cp -af "/usr/bin/$new" "/usr/bin/$old" 2>/dev/null || true
+        chmod +x "/usr/bin/$old" 2>/dev/null || true
+    else
+        ln -sfn "/bin/$new" "/bin/$old" 2>/dev/null || cp -af "/bin/$new" "/bin/$old" 2>/dev/null || true
+        chmod +x "/bin/$old" 2>/dev/null || true
+    fi
 }
 sshplus_compat_alias conexao connection
 sshplus_compat_alias bbr bbr-manager
@@ -488,13 +517,13 @@ sshplus_compat_alias udp-custom udp-custom-manager
 sshplus_compat_alias hy2 hysteria2-manager
 sshplus_compat_alias hysteria2 hysteria2-manager
 sshplus_compat_alias hcr hcr-manager
-sshplus_compat_alias criarusuario createuser
+sshplus_compat_alias crearusuario createuser
 sshplus_compat_alias criarteste createtest
 sshplus_compat_alias remover removeuser
 sshplus_compat_alias mudardata changedate
 sshplus_compat_alias alterarsenha changepass
 sshplus_compat_alias alterarlimite changelimit
-sshplus_compat_alias ajuda help
+sshplus_compat_alias ayuda help
 sshplus_compat_alias detalhes details
 sshplus_compat_alias otimizar optimize
 sshplus_compat_alias painelv2ray v2raypanel
@@ -508,6 +537,7 @@ sshplus_compat_alias verifbot checkbot
 sshplus_compat_alias botteste testbot
 sshplus_compat_alias botteste.sh testbot.sh
 sshplus_compat_alias inst-botteste install-testbot
+sanitize_broken_symlinks
 
 # Configurar Banner Exclusivo de Login para HTTP Conexión / CRISDEV
 sed -i '/HTTP_CONEXION_BANNER_START/,/HTTP_CONEXION_BANNER_END/d' /root/.bashrc 2>/dev/null || true
