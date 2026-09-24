@@ -723,10 +723,17 @@ _sshplus_sync_banner() {
 	fi
 }
 _sshplus_sync_connection() {
-	if ! grep -q 'menu_hysteria2' /bin/connection 2>/dev/null; then
+	if ! grep -q 'menu_zivpn' /bin/connection 2>/dev/null; then
 		wget -qO /bin/connection "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/connection?$(date +%s)" && chmod +x /bin/connection
 	fi
 	[[ -e /bin/conexao ]] || ln -s /bin/connection /bin/conexao 2>/dev/null || cp -f /bin/connection /bin/conexao
+}
+_sshplus_sync_zivpn() {
+	if [[ ! -f /bin/zivpn-manager ]] || ! grep -q 'ZIVPN MANAGER' /bin/zivpn-manager 2>/dev/null; then
+		wget -qO /bin/zivpn-manager "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/zivpn-manager?$(date +%s)" && chmod +x /bin/zivpn-manager
+	fi
+	[[ -e /bin/zivpn ]] || ln -s /bin/zivpn-manager /bin/zivpn 2>/dev/null || cp -f /bin/zivpn-manager /bin/zivpn
+	[[ -e /usr/local/bin/zivpn ]] || ln -s /bin/zivpn-manager /usr/local/bin/zivpn 2>/dev/null || cp -f /bin/zivpn-manager /usr/local/bin/zivpn
 }
 _sshplus_sync_otimizar() {
 	local url="/Modulos/optimize" target
@@ -1154,6 +1161,7 @@ case "$x" in
    2 | 02)
    clear
    _sshplus_sync_connection
+   _sshplus_sync_zivpn
    /bin/connection
    echo -ne "\n\033[1;31mENTER \033[1;33m${L_ENTER_MENU:-para volver al menu}\033[0m"; read
    ;;

@@ -485,16 +485,23 @@ sanitize_broken_symlinks
 echo -e "${YELLOW}[3/4]${NC} Creando accesos directos y enlaces globales..."
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/ssh-cris
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/cris
-ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/menu
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/ssh-cris 2>/dev/null || true
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/cris 2>/dev/null || true
-ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/menu 2>/dev/null || true
-ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/connection 2>/dev/null || true
-ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/conexao 2>/dev/null || true
-if [[ "$IS_USR_MERGE" -eq 0 ]]; then
-    ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/menu 2>/dev/null || true
-    ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/connection 2>/dev/null || true
-    ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/conexao 2>/dev/null || true
+
+# Garantizar que 'menu' ejecute siempre el menú oficial (/bin/menu)
+if [[ -f "/bin/menu" ]]; then
+    ln -sfn /bin/menu /usr/local/bin/menu 2>/dev/null || true
+    ln -sfn /bin/menu /usr/bin/menu 2>/dev/null || true
+    chmod +x /bin/menu /usr/local/bin/menu /usr/bin/menu 2>/dev/null || true
+fi
+
+# Garantizar que 'connection' y 'conexao' ejecuten el gestor de protocolos (/bin/connection)
+if [[ -f "/bin/connection" ]]; then
+    ln -sfn /bin/connection /usr/local/bin/connection 2>/dev/null || true
+    ln -sfn /bin/connection /usr/bin/connection 2>/dev/null || true
+    ln -sfn /bin/connection /usr/local/bin/conexao 2>/dev/null || true
+    ln -sfn /bin/connection /usr/bin/conexao 2>/dev/null || true
+    chmod +x /bin/connection /usr/local/bin/connection /usr/bin/connection 2>/dev/null || true
 fi
 
 sshplus_compat_alias() {
