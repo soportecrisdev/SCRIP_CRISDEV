@@ -189,6 +189,7 @@ _mdls=(
     "uexpired" "uncompress" "userbackup" "utili" "v2raymanager" "v2raypanel" "version"
     "vnc_inst" "webmin.sh" "websocket.sh" "wsproxy.py" "sshplus_stats"
     "udp-custom-manager" "hysteria2-manager" "hcr-manager" "optimizar_vps.sh"
+    "watchdog.sh" "watchdog-menu" "crisdev_bot.py" "zivpn-manager"
 )
 
 # Copiar o descargar modulos a /bin
@@ -516,6 +517,9 @@ sshplus_compat_alias udpcustom udp-custom-manager
 sshplus_compat_alias udp-custom udp-custom-manager
 sshplus_compat_alias hy2 hysteria2-manager
 sshplus_compat_alias hysteria2 hysteria2-manager
+sshplus_compat_alias zivpn zivpn-manager
+sshplus_compat_alias udp-zivpn zivpn-manager
+sshplus_compat_alias udpzivpn zivpn-manager
 sshplus_compat_alias hcr hcr-manager
 sshplus_compat_alias crearusuario createuser
 sshplus_compat_alias criarteste createtest
@@ -537,6 +541,29 @@ sshplus_compat_alias verifbot checkbot
 sshplus_compat_alias botteste testbot
 sshplus_compat_alias botteste.sh testbot.sh
 sshplus_compat_alias inst-botteste install-testbot
+sshplus_compat_alias watchdog watchdog-menu
+sshplus_compat_alias guardian watchdog-menu
+
+# Configurar e Iniciar Guardián Anti-Caídas (Watchdog Daemon)
+cat > /etc/systemd/system/crisdev-watchdog.service << 'EOF_WD'
+[Unit]
+Description=CRISDEV Watchdog Auto-Heal Daemon
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/bin/bash /bin/watchdog.sh
+Restart=always
+RestartSec=3s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF_WD
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl enable --now crisdev-watchdog.service >/dev/null 2>&1 || true
 sanitize_broken_symlinks
 
 # Configurar Banner Exclusivo de Login para HTTP Conexión / CRISDEV

@@ -4493,23 +4493,143 @@ EOFOPT
     done
 }
 
-menu_vps_settings() {
+menu_seguridad_guardian() {
+    while true; do
+        clear
+        local wd_status="\033[1;31m[INACTIVO]\033[0m"
+        if systemctl is-active --quiet crisdev-watchdog.service 2>/dev/null || pgrep -f 'watchdog.sh' >/dev/null 2>&1; then
+            wd_status="\033[1;32m[ACTIVO - PROTEGIENDO]\033[0m"
+        fi
+        local stsl="\033[1;31m[INACTIVO]\033[0m"
+        pgrep -f 'limiter' >/dev/null 2>&1 && stsl="\033[1;32m[ACTIVO]\033[0m"
+
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "              ${BLUE}🛡️ SEGURIDAD Y GUARDIÁN ANTI-CAÍDAS 🛡️${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${WHITE}Guardián Anti-Caídas : ${wd_status}"
+        echo -e "  ${WHITE}Limitador de Cuentas : ${stsl}"
+        echo -e "${SSHPLUS_CYAN}------------------------------------------------------------${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> ⚡ Panel del Guardián Anti-Caídas (Auto-Heal Daemon)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> 📜 Ver Registro de Auto-Recuperaciones del Guardián\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> 🛡️ Activar / Desactivar Limitador de Conexiones\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> 🚫 Bloquear Tráfico Torrent (Protección Anti-DMCA)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> 🧱 Firewall UFW & Protección Anti-DDoS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR} \033[1;37m> 🔑 Cambiar Contraseña Root del VPS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> ⬅️ Volver al Menú Principal\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opción:${SCOLOR} "
+        read -r sec_opt
+        case "$sec_opt" in
+            1|01)
+                if [[ -x /bin/watchdog-menu || -x /usr/bin/watchdog-menu ]]; then
+                    watchdog-menu
+                elif [[ -f /opt/ssh-cris/Modulos/watchdog-menu ]]; then
+                    bash /opt/ssh-cris/Modulos/watchdog-menu
+                else
+                    clear
+                    echo -e "\033[1;32mDescargando e iniciando Guardián Anti-Caídas...\033[0m"
+                    curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/watchdog-menu -o /bin/watchdog-menu 2>/dev/null
+                    chmod +x /bin/watchdog-menu 2>/dev/null || true
+                    watchdog-menu
+                fi
+                ;;
+            2|02)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "${WHITE}       📜 REGISTRO DE EVENTOS Y AUTO-RECUPERACIONES 📜     ${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                if [[ -s /var/log/crisdev-watchdog.log ]]; then
+                    tail -n 35 /var/log/crisdev-watchdog.log
+                else
+                    echo -e "  ${GREEN}No hay caídas registradas. Todos los servicios han estado 100% estables.${NC}"
+                fi
+                echo -e "\n${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                pause
+                ;;
+            3|03)
+                clear
+                if pgrep -f 'limiter' >/dev/null 2>&1; then
+                    pkill -f limiter 2>/dev/null || true
+                    echo -e "\033[1;31m[✔] Limitador de conexiones DESACTIVADO.\033[0m"
+                else
+                    screen -dmS limiter /bin/limiter 2>/dev/null || true
+                    echo -e "\033[1;32m[✔] Limitador de conexiones ACTIVADO.\033[0m"
+                fi
+                sleep 2
+                ;;
+            4|04)
+                [[ -x /bin/blockt ]] && blockt || pause
+                ;;
+            5|05)
+                [[ -x /bin/ddos ]] && ddos || pause
+                ;;
+            6|06)
+                [[ -x /bin/rootpass ]] && rootpass || { passwd root; pause; }
+                ;;
+            0|00) break ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
+menu_optimizacion_sistema() {
     while true; do
         clear
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "                ${BLUE}CONFIGURACION DE LA VPS${SCOLOR}"
+        echo -e "              ${BLUE}🚀 OPTIMIZACIÓN Y CONTROL DEL SISTEMA 🚀${SCOLOR}"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> CREAR MEMORIA SWAP (1GB, 2GB, 4GB)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> OPTIMIZAR SISTEMA (BBR, Buffers y Kernel)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> RESPALDO / RESTAURACION DE USUARIOS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> ECUALIZAR / CONFIGURAR ZONA HORARIA (HORARIO)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> AUTO LIBERAR MEMORIA RAM Y SWAP (CRON)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> 📊 Diagnóstico y Puertos en Línea (details)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> ⚡ Optimizar Kernel (TCP BBR & Buffers Low-Latency)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> 🧹 Limpiar Memoria RAM y Caché Ahora Mismo\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> ⏰ Programar Auto-Limpieza de RAM (Cron)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> 💾 Crear / Gestionar Memoria Swap (1GB, 2GB, 4GB)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR} \033[1;37m> 🔄 Reiniciar Todos los Servicios de Red\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[7]${SCOLOR} \033[1;31m> 🔁 Reiniciar Servidor VPS\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> ⬅️ Volver al Menú Principal\033[0m"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
-        read -r vps_opt
-        case "$vps_opt" in
+        echo -ne "${SSHPLUS_CYAN}Opción:${SCOLOR} "
+        read -r opt_opt
+        case "$opt_opt" in
             1|01)
+                if [[ -x /bin/details || -x /usr/bin/details ]]; then
+                    details
+                else
+                    clear
+                    echo -e "${CYAN}=== INFORMACIÓN DE LA VPS ===${NC}"
+                    uname -a
+                    free -h
+                    df -h /
+                    pause
+                fi
+                ;;
+            2|02)
+                if [[ -x /bin/tcptweaker.sh || -x /usr/bin/tcptweaker.sh ]]; then
+                    tcptweaker.sh
+                elif [[ -x /bin/bbr-manager || -x /usr/bin/bbr-manager ]]; then
+                    bbr-manager
+                else
+                    clear
+                    echo -e "\033[1;32mOptimizando kernel TCP BBR...\033[0m"
+                    sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1
+                    sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1
+                    echo -e "\033[1;32m[✔] BBR y FQ optimizados con éxito!\033[0m"
+                    pause
+                fi
+                ;;
+            3|03)
+                clear
+                echo -e "\033[1;32m[⚡] Liberando memoria RAM y caché del kernel...\033[0m"
+                sync
+                echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true
+                sleep 1
+                echo -e "\033[1;32m[✔] Memoria RAM optimizada:\033[0m"
+                free -h
+                pause
+                ;;
+            4|04)
+                menu_autoclean_ram
+                ;;
+            5|05)
                 if [[ -x /bin/swapmemory || -x /usr/bin/swapmemory ]]; then
                     swapmemory
                 else
@@ -4524,169 +4644,75 @@ menu_vps_settings() {
                     pause
                 fi
                 ;;
-            2|02)
-                if [[ -x /bin/tcptweaker.sh || -x /usr/bin/tcptweaker.sh ]]; then
-                    tcptweaker.sh
-                elif [[ -x /bin/bbr-manager || -x /usr/bin/bbr-manager ]]; then
-                    bbr-manager
-                elif [[ -f /opt/ssh-cris/Modulos/tcptweaker.sh ]]; then
-                    bash /opt/ssh-cris/Modulos/tcptweaker.sh
-                elif [[ -x /bin/optimize || -x /usr/bin/optimize ]]; then
-                    optimize
+            6|06)
+                clear
+                echo -e "\033[1;32mReiniciando todos los servicios de red...\033[0m"
+                systemctl restart sshd ssh dropbear stunnel4 badvpn-udpgw hysteria slowdns bhttp-server udp-custom 2>/dev/null || true
+                echo -e "\033[1;32m[✔] Servicios reiniciados y sincronizados!\033[0m"
+                pause
+                ;;
+            7|07)
+                clear
+                echo -ne "\033[1;31m¿Está seguro de reiniciar el servidor VPS ahora? [s/N]: \033[0m"
+                read -r r_ok
+                [[ "$r_ok" =~ ^[sS]$ ]] && reboot
+                ;;
+            0|00) break ;;
+            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
+        esac
+    done
+}
+
+menu_bots_herramientas() {
+    while true; do
+        clear
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "               ${BLUE}🤖 BOTS Y HERRAMIENTAS EXTRAS 🤖${SCOLOR}"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> 🤖 Bot SSH Telegram (Gestión remota de cuentas)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> ⏱️ Bot de Cuentas Test Automáticas\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> 📈 Test de Velocidad del Servidor (Speedtest Ookla)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> 🎨 Personalizar Banner de Conexión SSH\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> 🌐 Ecualizar / Configurar Zona Horaria (Horario)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR} \033[1;37m> 📦 Respaldo y Restauración de Usuarios\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[7]${SCOLOR} \033[1;37m> 🏷️ Agregar / Eliminar Host o SNI\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> ⬅️ Volver al Menú Principal\033[0m"
+        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        echo -ne "${SSHPLUS_CYAN}Opción:${SCOLOR} "
+        read -r bot_opt
+        case "$bot_opt" in
+            1|01) [[ -x /bin/botssh ]] && botssh || pause ;;
+            2|02) [[ -x /bin/install-testbot ]] && install-testbot || pause ;;
+            3|03)
+                if [[ -x /bin/speedtest || -x /usr/bin/speedtest ]]; then
+                    speedtest
                 else
                     clear
-                    echo -e "\033[1;32mDescargando e iniciando TCP Tweaker & BBR...\033[0m"
-                    curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/tcptweaker.sh -o /bin/tcptweaker.sh 2>/dev/null
-                    chmod +x /bin/tcptweaker.sh 2>/dev/null || true
-                    tcptweaker.sh
+                    echo -e "\033[1;32mIniciando test de velocidad...\033[0m"
+                    which speedtest-cli >/dev/null 2>&1 || apt-get install -y speedtest-cli 2>/dev/null
+                    speedtest-cli --simple || speedtest
+                    pause
                 fi
                 ;;
-            3|03)
+            4|04) menu_banner ;;
+            5|05) ecualizar_horario ;;
+            6|06)
                 if [[ -x /bin/userbackup || -x /usr/bin/userbackup ]]; then
                     userbackup
                 else
                     clear
                     echo -e "\033[1;32mCreando respaldo en /root/backup-ssh.tar.gz...\033[0m"
-                    tar -czf /root/backup-ssh.tar.gz /etc/passwd /etc/shadow /etc/SSHPlus /root/usuarios.db 2>/dev/null || true
+                    tar -czf /root/backup-ssh.tar.gz /etc/passwd /etc/shadow /etc/SSHPlus /root/usuarios.db /etc/ssh-cris 2>/dev/null || true
                     echo -e "\033[1;32m[✔] Respaldo guardado en /root/backup-ssh.tar.gz\033[0m"
                     pause
                 fi
                 ;;
-            4|04)
-                ecualizar_horario
-                ;;
-            5|05)
-                menu_autoclean_ram
-                ;;
-            0|00) break ;;
-            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
-        esac
-    done
-}
-
-menu_script_settings() {
-    while true; do
-        clear
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "               ${BLUE}CONFIGURACION DEL SCRIPT${SCOLOR}"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> INFORMACION DETALLADA DEL VPS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> ACTUALIZAR SCRIPT (CRISDEV)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> SELECCIONAR IDIOMA\033[0m"
-        echo -e "  ${RED}[4]${SCOLOR}  \033[1;31m> DESINSTALAR SCRIPT\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
-        read -r scr_opt
-        case "$scr_opt" in
-            1|01)
-                if [[ -x /bin/details || -x /usr/bin/details ]]; then
-                    details
-                else
-                    clear
-                    echo -e "${CYAN}=== INFORMACIÓN DE LA VPS ===${NC}"
-                    uname -a
-                    lscpu 2>/dev/null | grep 'Model name\|CPU(s):' || true
-                    free -h
-                    df -h /
-                    pause
-                fi
-                ;;
-            2|02)
-                clear
-                echo -e "\033[1;32mActualizando SSH-CRIS desde repositorio oficial...\033[0m"
-                bash <(curl -fsSL https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/install.sh)
-                pause
-                ;;
-            3|03)
-                clear
-                echo -e "1) Español\n2) English"
-                read -r -p "Selecciona idioma: " l_sel
-                [[ "$l_sel" == "2" ]] && echo "en" > /etc/SSHPlus/lang || echo "es" > /etc/SSHPlus/lang
-                echo -e "\033[1;32mIdioma actualizado!\033[0m"
-                pause
-                ;;
-            4|04)
-                if [[ -x /bin/delscript || -x /usr/bin/delscript ]]; then
-                    delscript
-                else
-                    clear
-                    echo -ne "\033[1;31m¿Desea desinstalar el script por completo? [s/n]: \033[0m"
-                    read -r ans_del
-                    if [[ "$ans_del" =~ ^[sS]$ ]]; then
-                        rm -rf /opt/ssh-cris /etc/SSHPlus /bin/ssh-cris /bin/menu /etc/bhttp /etc/wakkodev-bhttp /etc/hysteria
-                        echo -e "\033[1;32mScript desinstalado.\033[0m"
-                        exit 0
-                    fi
-                fi
-                ;;
-            0|00) break ;;
-            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
-        esac
-    done
-}
-
-menu_mas_ajustes() {
-    while true; do
-        clear
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "                   ${BLUE}MAS AJUSTES Y HERRAMIENTAS${SCOLOR}"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR}  \033[1;37m> AGREGAR HOST / DOMINIO\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR}  \033[1;37m> ELIMINAR HOST / DOMINIO\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR}  \033[1;37m> REINICIAR TODOS LOS SERVICIOS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR}  \033[1;37m> BLOQUEAR TORRENT\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR}  \033[1;37m> BOT SSH TELEGRAM\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[6]${SCOLOR}  \033[1;37m> BOT PRUEBAS TELEGRAM\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[7]${SCOLOR}  \033[1;37m> HERRAMIENTAS EXTRAS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[8]${SCOLOR}  \033[1;37m> CAMBIAR CLAVE ROOT\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[9]${SCOLOR}  \033[1;37m> TCP TWEAKER (BBR & Buffers)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[10]${SCOLOR} \033[1;37m> REINICIAR VPS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[0]${SCOLOR}  \033[1;37m> VOLVER\033[0m"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
-        read -r m2_opt
-        case "$m2_opt" in
-            1|01)
-                [[ -x /bin/addhost ]] && addhost || { echo -ne "Ingresa Host/SNI: "; read -r nh; echo "$nh" >> /etc/hosts; pause; }
-                ;;
-            2|02)
-                [[ -x /bin/delhost ]] && delhost || pause
-                ;;
-            3|03)
-                if [[ -x /bin/restartservices ]]; then
-                    restartservices
-                else
-                    clear
-                    echo -e "\033[1;32mReiniciando servicios...\033[0m"
-                    systemctl restart sshd ssh dropbear stunnel4 badvpn-udpgw hysteria-server slowdns bhttp bhttp-tls chisel 2>/dev/null || true
-                    echo -e "\033[1;32m[✔] Servicios reiniciados!\033[0m"
-                    pause
-                fi
-                ;;
-            4|04)
-                [[ -x /bin/blockt ]] && blockt || pause
-                ;;
-            5|05)
-                [[ -x /bin/botssh ]] && botssh || pause
-                ;;
-            6|06)
-                [[ -x /bin/install-testbot ]] && install-testbot || pause
-                ;;
             7|07)
-                [[ -x /bin/utili ]] && utili || pause
-                ;;
-            8|08)
-                [[ -x /bin/rootpass ]] && rootpass || { passwd root; pause; }
-                ;;
-            9|09)
-                [[ -x /bin/tcptweaker.sh ]] && tcptweaker.sh || pause
-                ;;
-            10)
                 clear
-                echo -ne "\033[1;31m¿Reiniciar servidor VPS ahora? [s/n]: \033[0m"
-                read -r r_ok
-                [[ "$r_ok" == "s" || "$r_ok" == "S" ]] && reboot
+                echo -e "1) Agregar Host/SNI\n2) Eliminar Host/SNI"
+                read -r -p "Opción: " h_opt
+                [[ "$h_opt" == "1" ]] && { [[ -x /bin/addhost ]] && addhost || pause; }
+                [[ "$h_opt" == "2" ]] && { [[ -x /bin/delhost ]] && delhost || pause; }
                 ;;
             0|00) break ;;
             *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
@@ -4695,7 +4721,7 @@ menu_mas_ajustes() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  MENÚ PRINCIPAL
+#  MENÚ PRINCIPAL (COMPACTO Y MODULAR)
 # ─────────────────────────────────────────────────────────────────────────────
 main_menu() {
     while true; do
@@ -4703,7 +4729,7 @@ main_menu() {
         local ip; ip=$(get_public_ip)
         local os; os=$(lsb_release -sd 2>/dev/null || cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"' || echo 'Linux')
         
-        # Cálculo robusto de Memoria RAM (independiente de idioma/locale)
+        # Cálculo de Memoria RAM
         local ram_total=0 ram_used=0
         if [[ -f /proc/meminfo ]]; then
             local kb_tot kb_avail
@@ -4735,53 +4761,41 @@ main_menu() {
         local u_expired; u_expired=$(echo "$stats_str" | cut -d: -f3)
         local u_online; u_online=$(echo "$stats_str" | cut -d: -f4)
 
-        local stsl
-        pgrep -f 'limiter' >/dev/null 2>&1 && stsl="\033[1;32mo\033[0m" || stsl="\033[1;31mx\033[0m"
+        # Estado del Guardián Watchdog
+        local wd_badge="\033[1;31m[INACTIVO]\033[0m"
+        if systemctl is-active --quiet crisdev-watchdog.service 2>/dev/null || pgrep -f 'watchdog.sh' >/dev/null 2>&1; then
+            wd_badge="\033[1;32m[ACTIVO]\033[0m"
+        fi
 
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "               ${BLUE}⚡ HTTP CONEXIÓN MASTER SUITE ⚡${SCOLOR}"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        printf " ${SSHPLUS_SECTION}%-21s %-21s %-16s${SCOLOR}\n" "SISTEMA" "MEMORIA RAM" "PROCESADOR"
-        printf " ${WHITE}OS:   ${GREEN}%-15s ${WHITE}Total: ${GREEN}%-14s ${WHITE}Núcleos: ${GREEN}%s${NC}\n" "${os:0:15}" "${ram_total} MB" "$(nproc 2>/dev/null || echo 1)"
-        printf " ${WHITE}Hora: ${GREEN}%-15s ${WHITE}RAM:   ${GREEN}%-14s ${WHITE}CPU:     ${GREEN}%s${NC}\n" "$hora" "${ram_used} MB (${ram_pct}%)" "$cpu_load"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        printf " ${SSHPLUS_COUNTER}Conectados: %-8s  Caducados: %-8s  Total: %s${SCOLOR}\n" "$u_online" "$u_expired" "$u_total"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        printf "  %b[1]%b  > USUARIOS                %b[6]%b  > RED Y SEGURIDAD\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[2]%b  > PROTOCOLOS DE TUNEL     %b[7]%b  > GESTION DE LA VPS\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[3]%b  > BANNER DE CONEXION      %b[8]%b  > AJUSTES DEL SCRIPT\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[4]%b  > LIMITADOR DE USUARIOS %b %b[9]%b  > HERRAMIENTAS EXTRA\n" "$SSHPLUS_NUM" "$SCOLOR" "$stsl" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[5]%b  > CHECKUSERS BOT          %b[10]%b > REINICIAR VPS\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[0]%b  > SALIR DEL SCRIPT\n" "$SSHPLUS_NUM" "$SCOLOR"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        echo -e "${SSHPLUS_CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+        echo -e "${SSHPLUS_CYAN}║${WHITE}             ⚡ HTTP CONEXIÓN MASTER SUITE ⚡               ${SSHPLUS_CYAN}║${NC}"
+        echo -e "${SSHPLUS_CYAN}║${WHITE}                VPS Manager & Auto-Heal v1                  ${SSHPLUS_CYAN}║${NC}"
+        echo -e "${SSHPLUS_CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
+        echo -e "  ${WHITE}🌐 IP:${GREEN} $ip ${WHITE}| 💻 SO:${GREEN} ${os:0:18} ${WHITE}| ⏱️ Hora:${GREEN} $hora${NC}"
+        echo -e "  ${WHITE}🧠 RAM:${GREEN} ${ram_used}MB/${ram_total}MB (${ram_pct}%) ${WHITE}| 👥 Online:${GREEN} $u_online ${WHITE}| 🛡️ Guardián: $wd_badge${NC}"
+        echo -e "${SSHPLUS_CYAN}══════════════════════════════════════════════════════════════${NC}"
+        echo -e "  ${SSHPLUS_NUM}[1]${NC} \033[1;37m👥 GESTIÓN DE USUARIOS\033[0m     \033[0;36m(Crear, Renovar, Monitor, Expulsar)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[2]${NC} \033[1;37m⚡ TÚNELES Y PROTOCOLOS\033[0m    \033[0;36m(11 Protocolos: HCR, UDP, SSH, BHTTP...)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[3]${NC} \033[1;37m🛡️ SEGURIDAD Y GUARDIÁN\033[0m    \033[0;36m(Watchdog Auto-Heal, Torrent, Firewall)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[4]${NC} \033[1;37m🚀 OPTIMIZACIÓN Y SISTEMA\033[0m  \033[0;36m(TCP BBR, RAM Cleaner, Info Servidor)\033[0m"
+        echo -e "  ${SSHPLUS_NUM}[5]${NC} \033[1;37m🤖 BOTS Y HERRAMIENTAS\033[0m     \033[0;36m(Bot Telegram SSH, Speedtest, Banner)\033[0m"
+        echo -e "${SSHPLUS_CYAN}══════════════════════════════════════════════════════════════${NC}"
+        echo -e "  ${SSHPLUS_NUM}[6]${NC} \033[1;32m🔄 ACTUALIZAR SUITE\033[0m        ${SSHPLUS_NUM}[0]${NC} \033[1;31m🚪 SALIR DEL SCRIPT\033[0m"
+        echo -e "${SSHPLUS_CYAN}══════════════════════════════════════════════════════════════${NC}"
+        echo -ne "\033[1;32mSeleccione una opción [0-6]: ${NC}"
         read -r main_opt
 
         case "$main_opt" in
             1|01) menu_users ;;
             2|02) menu_protocolos ;;
-            3|03) menu_banner ;;
-            4|04)
+            3|03) menu_seguridad_guardian ;;
+            4|04) menu_optimizacion_sistema ;;
+            5|05) menu_bots_herramientas ;;
+            6|06)
                 clear
-                if pgrep -f 'limiter' >/dev/null 2>&1; then
-                    pkill -f limiter 2>/dev/null || true
-                    echo -e "\033[1;31mLIMITADOR DESACTIVADO!\033[0m"
-                else
-                    screen -dmS limiter /bin/limiter 2>/dev/null || true
-                    echo -e "\033[1;32mLIMITADOR ACTIVADO!\033[0m"
-                fi
-                sleep 2
-                ;;
-            5|05) menu_checkusers ;;
-            6|06) menu_network_security ;;
-            7|07) menu_vps_settings ;;
-            8|08) menu_script_settings ;;
-            9|09) menu_mas_ajustes ;;
-            10)
-                clear
-                echo -ne "\033[1;31m¿Reiniciar servidor VPS ahora? [s/n]: \033[0m"
-                read -r r_ok
-                [[ "$r_ok" == "s" || "$r_ok" == "S" ]] && reboot
+                echo -e "\033[1;32mActualizando SSH-CRIS desde repositorio oficial...\033[0m"
+                bash <(curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/install.sh?v=$(date +%s)") --update
+                pause
                 ;;
             0|00)
                 echo -e "\n\033[1;32m¡Hasta pronto!\033[0m\n"

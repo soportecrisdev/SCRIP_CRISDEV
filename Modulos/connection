@@ -3275,6 +3275,16 @@ menu_hysteria2() {
 			else
 				udpcsts="\033[1;31mx "
 			fi
+			local _ziv_pt=""
+			if [[ -f /etc/zivpn/config.json ]]; then
+				_ziv_pt="$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/zivpn/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+			fi
+			if systemctl is-active zivpn >/dev/null 2>&1 || pgrep -f 'zivpn-core|zivpn' >/dev/null 2>&1; then
+				echo -e "\033[1;32mSERVICIO: \033[1;33mUDP ZIVPN \033[1;32mPUERTO: \033[1;37m${_ziv_pt:-5667}/udp (6000-19999)"
+				zivsts="\033[1;32mo "
+			else
+				zivsts="\033[1;31mx "
+			fi
 			sshplus_line
 			sshplus_opt_pair "1" "OPENSSH" "$sts6" "10" "BADVPN" "$badsts"
 			sshplus_opt_pair "2" "PROXY SOCKS" "$sts4" "11" "OPENVPN" "$sts5"
@@ -3285,6 +3295,7 @@ menu_hysteria2() {
 			sshplus_opt_pair "7" "UDP CRIS" "$hysteriasts" "16" "BHTTP (BHP1/TLS)" "$bhttpsts"
 			sshplus_opt_pair "8" "HYSTERIA v2" "$hy2sts" "17" "HCR RELAY" "$hcrsts"
 			sshplus_opt_pair "9" "UDP CUSTOM" "$udpcsts" "18" "TROJAN-GO" "$trojansts"
+			sshplus_opt_pair "19" "UDP ZIVPN" "$zivsts" "20" "OPTIMIZAR VPS" ""
 			sshplus_opt "0" "VOLVER"
 			sshplus_line
 			tput civis
@@ -3379,6 +3390,26 @@ menu_hysteria2() {
 			;;
 			18 | 18)
 			trojan-go
+			;;
+			19 | 19)
+			if [[ -x /bin/zivpn-manager ]]; then
+				/bin/zivpn-manager
+			elif [[ -x /usr/local/bin/zivpn ]]; then
+				/usr/local/bin/zivpn
+			elif [[ -x /bin/zivpn ]]; then
+				/bin/zivpn
+			elif [[ -f /opt/ssh-cris/Modulos/zivpn-manager ]]; then
+				bash /opt/ssh-cris/Modulos/zivpn-manager
+			elif [[ -f ./Modulos/zivpn-manager ]]; then
+				bash ./Modulos/zivpn-manager
+			else
+				clear
+				echo -e "\033[1;32mIniciando UDP ZIVPN Manager...\033[0m"
+				zivpn-manager
+			fi
+			;;
+			20 | 20)
+			optimizar_vps.sh
 			;;
 			0 | 00)
 			printf '\033c\033[3J\033[H\033[2J'

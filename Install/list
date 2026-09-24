@@ -46,7 +46,7 @@ echo "PasswordAuthentication yes" >>/etc/ssh/sshd_config
 _dir1='/bin'
 _dir2='/etc/SSHPlus'
 rm $_dir2/ShellBot.sh $_dir2/cabecalho $_dir2/open.py $_dir2/proxy.py $_dir2/wsproxy.py >/dev/null 2>&1
-_mdls=("addhost" "help" "sshplus_lang" "changelimit" "changepass" "tcptweaker.sh" "bbr-manager" "gltunnel" "utili" "multi" "apache2menu" "check" "chuser" "limit" "rps_cpu" "attscript" "badvpn" "badpro" "badpro1" "badvpn2" "badvpn3" "banner" "bashtop" "ddos" "blocksite" "blockt" "blockuser" "bot" "botssh" "connection" "createtest" "createuser" "delhost" "delscript" "details" "droplimiter" "expcleaner" "fr" "hysteria-menu" "hysteria2-manager" "hysteria2" "infousers" "install-testbot" "initcheck" "instsqd" "limiter" "menu" "menub" "changedate" "mtuning" "open.py" "optimize" "v2raypanel" "proxy.py" "restartservices" "restartsystem" "removeuser" "rootpass" "ShellBot.sh" "slowdnsmanager" "speedtest" "sshmonitor" "swapmemory" "totaltraffic" "trojan-go" "uexpired" "userbackup" "checkupdate" "checkbot" "v2raymanager" "webmin.sh" "websocket.sh" "wsproxy.py" "pkill.sh" "hcr-manager" "udp-custom-manager" "udp-custom")
+_mdls=("addhost" "help" "sshplus_lang" "changelimit" "changepass" "tcptweaker.sh" "bbr-manager" "gltunnel" "utili" "multi" "apache2menu" "check" "chuser" "limit" "rps_cpu" "attscript" "badvpn" "badpro" "badpro1" "badvpn2" "badvpn3" "banner" "bashtop" "ddos" "blocksite" "blockt" "blockuser" "bot" "botssh" "connection" "createtest" "createuser" "delhost" "delscript" "details" "droplimiter" "expcleaner" "fr" "hysteria-menu" "hysteria2-manager" "hysteria2" "infousers" "install-testbot" "initcheck" "instsqd" "limiter" "menu" "menub" "changedate" "mtuning" "open.py" "optimize" "v2raypanel" "proxy.py" "restartservices" "restartsystem" "removeuser" "rootpass" "ShellBot.sh" "slowdnsmanager" "speedtest" "sshmonitor" "swapmemory" "totaltraffic" "trojan-go" "uexpired" "userbackup" "checkupdate" "checkbot" "v2raymanager" "webmin.sh" "websocket.sh" "wsproxy.py" "pkill.sh" "hcr-manager" "udp-custom-manager" "udp-custom" "zivpn-manager")
 for _arq in ${_mdls[@]}; do
 	[[ -e $_dir1/$_arq ]] && rm $_dir1/$_arq >/dev/null 2>&1
 	wget -c -P $_dir1 "${SSHPLUS_RAW}/Modulos/$_arq"
@@ -69,7 +69,10 @@ sshplus_compat_alias tcptweaker tcptweaker.sh
 sshplus_compat_alias udpcustom udp-custom-manager
 sshplus_compat_alias hy2 hysteria2-manager
 sshplus_compat_alias hysteria2 hysteria2-manager
-sshplus_compat_alias criarusuario createuser
+sshplus_compat_alias zivpn zivpn-manager
+sshplus_compat_alias udp-zivpn zivpn-manager
+sshplus_compat_alias udpzivpn zivpn-manager
+sshplus_compat_alias crearusuario createuser
 sshplus_compat_alias criarteste createtest
 sshplus_compat_alias remover removeuser
 sshplus_compat_alias mudardata changedate

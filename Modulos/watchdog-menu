@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# ==============================================================================
+#  CRISDEV WATCHDOG MENU — Panel de Control del Guardián Anti-Caídas
+# ==============================================================================
+
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[1;34m'
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+SSHPLUS_NUM=$'\033[1;38;2;0;255;127m'
+SSHPLUS_CYAN=$'\033[1;38;2;76;228;255m'
+
+LOG_FILE="/var/log/crisdev-watchdog.log"
+CONFIG_FILE="/etc/ssh-cris/watchdog.conf"
+SERVICE_NAME="crisdev-watchdog.service"
+
+mkdir -p /etc/ssh-cris
+[[ -f "$CONFIG_FILE" ]] || echo "ENABLED=1" > "$CONFIG_FILE"
+
+is_watchdog_active() {
+    systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null || pgrep -f 'watchdog.sh' >/dev/null 2>&1
+}
+
+watchdog_status_badge() {
+    if is_watchdog_active; then
+        echo -e "${GREEN}[ACTIVO - PROTEGIENDO]${NC}"
+    else
+        echo -e "${RED}[INACTIVO / DETENIDO]${NC}"
+    fi
+}
+
+toggle_watchdog() {
+    if is_watchdog_active; then
+        echo "ENABLED=0" > "$CONFIG_FILE"
+        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+        pkill -f 'watchdog.sh' 2>/dev/null || true
+        echo -e "\n${YELLOW}Guardián Anti-Caídas DETENIDO.${NC}"
+    else
+        echo "ENABLED=1" > "$CONFIG_FILE"
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable --now "$SERVICE_NAME" 2>/dev/null || true
+        if ! systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+            nohup bash /bin/watchdog.sh >/dev/null 2>&1 &
+        fi
+        echo -e "\n${GREEN}Guardián Anti-Caídas ACTIVADO Y CORRIENDO.${NC}"
+    fi
+    sleep 2
+}
+
+view_logs() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${NC}"
+    echo -e "${WHITE}       📜 REGISTRO DE EVENTOS Y AUTO-RECUPERACIONES 📜     ${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${NC}"
+    if [[ -s "$LOG_FILE" ]]; then
+        tail -n 30 "$LOG_FILE"
+    else
+        echo -e "  ${GREEN}No hay caídas registradas. Todos los servicios han estado estables.${NC}"
+    fi
+    echo -e "\n${SSHPLUS_CYAN}============================================================${NC}"
+    echo -e "${WHITE}* Presione Enter para volver...${NC}"
+    read -r _
+}
+
+run_diagnostics_now() {
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${NC}"
+    echo -e "${WHITE}          🩺 EJECUTANDO ESCANEO PREVENTIVO EN VIVO 🩺        ${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${NC}"
+    bash /bin/watchdog.sh once
+    echo -e "  ${GREEN}✔ Todos los protocolos verificados y sincronizados.${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${NC}"
+    sleep 2
+}
+
+while true; do
+    clear
+    echo -e "${SSHPLUS_CYAN}============================================================${NC}"
+    echo -e "${WHITE}         ⚡ GUARDIÁN ANTI-CAÍDAS (AUTO-HEAL DAEMON) ⚡       ${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${NC}"
+    echo -e "  ${WHITE}Estado del Guardián : $(watchdog_status_badge)"
+    echo -e "  ${WHITE}Intervalo de Chequeo: ${CYAN}Cada 45 segundos (en 2º plano)${NC}"
+    echo -e "  ${WHITE}Servicios Vigilados : ${YELLOW}OpenSSH, Dropbear, SSL, WS, HCR, UDP, Hysteria, SlowDNS${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${NC}"
+    echo -e "  ${SSHPLUS_NUM}[1]${NC} \033[1;37m> Activar / Desactivar Guardián Anti-Caídas${NC}"
+    echo -e "  ${SSHPLUS_NUM}[2]${NC} \033[1;37m> Ver Registro de Recuperaciones del Guardián${NC}"
+    echo -e "  ${SSHPLUS_NUM}[3]${NC} \033[1;37m> Ejecutar Chequeo y Auto-Heal Ahora Mismo${NC}"
+    echo -e "  ${SSHPLUS_NUM}[4]${NC} \033[1;37m> Limpiar Historial de Logs${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${NC}"
+    echo -e "  ${SSHPLUS_NUM}[0]${NC} \033[1;37m> Volver al Menú Principal${NC}"
+    echo -e "${SSHPLUS_CYAN}============================================================${NC}"
+    echo -ne "\033[1;32mOpción: ${NC}"
+    read -r opt
+
+    case "$opt" in
+        1) toggle_watchdog ;;
+        2) view_logs ;;
+        3) run_diagnostics_now ;;
+        4)
+            rm -f "$LOG_FILE"
+            echo -e "\n${GREEN}Historial de logs limpiado.${NC}"
+            sleep 1
+            ;;
+        0) break ;;
+        *) echo -e "${RED}Opción no válida.${NC}"; sleep 1 ;;
+    esac
+done

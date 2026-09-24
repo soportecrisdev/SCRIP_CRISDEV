@@ -1,0 +1,355 @@
+#!/usr/bin/env bash
+# ==============================================================================
+#  ZIVPN MANAGER — Servidor UDP ZIVPN (Hysteria v2) para SSH-CRIS / HTTP Conexión
+# ==============================================================================
+
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[1;34m'
+CYAN='\033[1;36m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+SCOLOR='\033[0m'
+SSHPLUS_NUM=$'\033[1;38;2;0;255;127m'
+SSHPLUS_CYAN=$'\033[1;38;2;76;228;255m'
+SSHPLUS_DARK_GREEN=$'\033[0;32m'
+
+INSTALL_DIR="/etc/zivpn"
+CONFIG_FILE="${INSTALL_DIR}/config.json"
+BINARY_PATH="/usr/local/bin/zivpn-core"
+SERVICE_NAME="zivpn.service"
+SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}"
+CERT_FILE="${INSTALL_DIR}/zivpn.crt"
+KEY_FILE="${INSTALL_DIR}/zivpn.key"
+PORT_BASE="5667"
+PORT_RANGE="6000:19999"
+
+ziv_resize() {
+    SSHPLUS_COLS="$(tput cols 2>/dev/null || echo 80)"
+    [[ ! "$SSHPLUS_COLS" =~ ^[0-9]+$ ]] && SSHPLUS_COLS=80
+    SSHPLUS_IW=60
+    [[ "$SSHPLUS_COLS" -lt 62 ]] && SSHPLUS_IW=$(( SSHPLUS_COLS - 2 ))
+    [[ "$SSHPLUS_IW" -lt 42 ]] && SSHPLUS_IW=42
+}
+
+ziv_line() {
+    local i
+    ziv_resize
+    printf '%b' "$SSHPLUS_CYAN"
+    for ((i=0;i<SSHPLUS_IW;i++)); do printf '='; done
+    printf '\033[0m\n'
+}
+
+ziv_title() {
+    local title="$1" pad
+    ziv_resize
+    ziv_line
+    pad=$(( (SSHPLUS_IW - ${#title}) / 2 ))
+    [[ "$pad" -lt 0 ]] && pad=0
+    printf '%*s%b%s\033[0m\n' "$pad" "" "$SSHPLUS_CYAN" "$title"
+    ziv_line
+}
+
+ziv_opt() {
+    local n="${1#0}"
+    [[ -z "$n" ]] && n="0"
+    printf '%b[%s]\033[0m \033[1;37m>\033[0m \033[1;37m%s\033[0m %b\n' "$SSHPLUS_NUM" "$n" "$2" "$3"
+}
+
+pause_ziv() {
+    echo ""
+    echo -e "\033[1;37m* \033[1;33mPresione Enter para continuar...\033[0m"
+    read -r _
+}
+
+ensure_dirs() {
+    mkdir -p "${INSTALL_DIR}" /usr/local/bin
+}
+
+get_public_ip() {
+    local ip
+    ip=$(curl -4 -s --max-time 3 https://api.ipify.org 2>/dev/null || \
+         curl -4 -s --max-time 3 https://icanhazip.com 2>/dev/null || \
+         curl -4 -s --max-time 3 https://ifconfig.me 2>/dev/null || \
+         cat /etc/IP 2>/dev/null || echo "127.0.0.1")
+    echo "$ip" | tr -d ' \n\r'
+}
+
+ensure_binary() {
+    if [[ -x "$BINARY_PATH" ]] && head -c 4 "$BINARY_PATH" 2>/dev/null | grep -q 'ELF'; then
+        return 0
+    fi
+    if [[ -x "/usr/local/bin/zivpn" ]] && head -c 4 "/usr/local/bin/zivpn" 2>/dev/null | grep -q 'ELF'; then
+        cp -f "/usr/local/bin/zivpn" "$BINARY_PATH"
+        return 0
+    fi
+    if [[ -f "/opt/ssh-cris/zivpn" ]] && head -c 4 "/opt/ssh-cris/zivpn" 2>/dev/null | grep -q 'ELF'; then
+        cp -f "/opt/ssh-cris/zivpn" "$BINARY_PATH"
+        chmod +x "$BINARY_PATH"
+        return 0
+    fi
+
+    echo -e "${YELLOW}[*] Descargando binario oficial UDP ZIVPN (v1.4.9)...${NC}"
+    local url="https://github.com/zahidbd2/udp-zivpn/releases/download/udp-zivpn_1.4.9/udp-zivpn-linux-amd64"
+    curl -fsSL "$url" -o "$BINARY_PATH" 2>/dev/null || \
+    wget -q "$url" -O "$BINARY_PATH" 2>/dev/null || true
+
+    chmod 755 "$BINARY_PATH" 2>/dev/null || true
+    [[ -x "$BINARY_PATH" ]] && head -c 4 "$BINARY_PATH" 2>/dev/null | grep -q 'ELF'
+}
+
+ensure_certificates() {
+    ensure_dirs
+    if [[ ! -f "$CERT_FILE" || ! -f "$KEY_FILE" || ! -s "$CERT_FILE" ]]; then
+        echo -e "${YELLOW}[*] Generando certificados SSL/TLS para ZIVPN...${NC}"
+        openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
+            -subj "/C=US/ST=State/L=City/O=CRISDEV/OU=VPN/CN=zivpn" \
+            -keyout "$KEY_FILE" -out "$CERT_FILE" >/dev/null 2>&1
+        chmod 600 "$KEY_FILE" 2>/dev/null || true
+        chmod 644 "$CERT_FILE" 2>/dev/null || true
+    fi
+}
+
+ensure_firewall() {
+    local iface
+    iface=$(ip -4 route get 8.8.8.8 2>/dev/null | grep -Po '(?<=dev )(\S+)' | head -1)
+    [[ -z "$iface" ]] && iface=$(ip -4 route ls | grep default | grep -Po '(?<=dev )(\S+)' | head -1)
+    
+    if [[ -n "$iface" ]]; then
+        iptables -t nat -D PREROUTING -i "$iface" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 2>/dev/null || true
+        iptables -t nat -A PREROUTING -i "$iface" -p udp --dport 6000:19999 -j DNAT --to-destination :5667 2>/dev/null || true
+    fi
+
+    if command -v ufw >/dev/null 2>&1; then
+        ufw allow 6000:19999/udp >/dev/null 2>&1 || true
+        ufw allow 5667/udp >/dev/null 2>&1 || true
+    fi
+
+    if command -v netfilter-persistent >/dev/null 2>&1; then
+        netfilter-persistent save >/dev/null 2>&1 || true
+    fi
+}
+
+get_current_passwords() {
+    if [[ -f "$CONFIG_FILE" ]]; then
+        grep -oP '(?<="config": \[)[^\]]+' "$CONFIG_FILE" 2>/dev/null | tr -d '"' | tr -d ' ' || echo "zi"
+    else
+        echo "zi"
+    fi
+}
+
+is_running() {
+    systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null || pgrep -f 'zivpn-core' >/dev/null 2>&1
+}
+
+service_state() {
+    if is_running; then
+        echo -e "${GREEN}EN LÍNEA (ACTIVO)${NC}"
+    else
+        echo -e "${RED}DESCONECTADO (DETENIDO)${NC}"
+    fi
+}
+
+install_and_activate() {
+    clear
+    ziv_title "ACTIVACIÓN RÁPIDA UDP-ZIVPN"
+    echo -e "${YELLOW}[*] Configurando UDP-ZIVPN (1-Click)...${NC}"
+    
+    ensure_dirs
+    if ! ensure_binary; then
+        echo -e "${RED}[!] Error descargando el binario ZIVPN.${NC}"
+        pause_ziv
+        return 1
+    fi
+
+    ensure_certificates
+
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        cat <<EOF > "$CONFIG_FILE"
+{
+  "listen": ":5667",
+  "cert": "/etc/zivpn/zivpn.crt",
+  "key": "/etc/zivpn/zivpn.key",
+  "obfs": "zivpn",
+  "auth": {
+    "mode": "passwords",
+    "config": ["zi"]
+  }
+}
+EOF
+    fi
+
+    sysctl -w net.core.rmem_max=16777216 >/dev/null 2>&1 || true
+    sysctl -w net.core.wmem_max=16777216 >/dev/null 2>&1 || true
+
+    cat <<EOF > "$SERVICE_FILE"
+[Unit]
+Description=CRISDEV ZIVPN UDP Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/zivpn
+ExecStart=${BINARY_PATH} server -c ${CONFIG_FILE}
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+Environment=ZIVPN_LOG_LEVEL=info
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    ensure_firewall
+
+    systemctl daemon-reload
+    systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+    systemctl restart "$SERVICE_NAME"
+
+    sleep 1.5
+    if is_running; then
+        echo -e "\n${GREEN}[✓] ¡UDP-ZIVPN ACTIVADO EXITOSAMENTE!${NC}"
+        echo -e "  Puerto Base:    ${YELLOW}5667 (UDP)${NC}"
+        echo -e "  Port Hopping:   ${YELLOW}6000-19999 (UDP)${NC}"
+        echo -e "  Contraseña:     ${YELLOW}$(get_current_passwords)${NC}"
+        echo -e "  Ofuscación:     ${YELLOW}zivpn (Salamander)${NC}"
+    else
+        echo -e "\n${RED}[!] El servicio no pudo iniciar. Revisa los logs.${NC}"
+    fi
+    pause_ziv
+}
+
+stop_service() {
+    clear
+    ziv_title "DETENER UDP-ZIVPN"
+    echo -e "${YELLOW}[*] Deteniendo servicio UDP-ZIVPN...${NC}"
+    systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+    systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+    pkill -f 'zivpn-core' 2>/dev/null || true
+    echo -e "${GREEN}[✓] Servicio detenido.${NC}"
+    pause_ziv
+}
+
+restart_service() {
+    clear
+    ziv_title "REINICIAR UDP-ZIVPN"
+    echo -e "${YELLOW}[*] Reiniciando servicio UDP-ZIVPN...${NC}"
+    ensure_firewall
+    systemctl daemon-reload
+    systemctl restart "$SERVICE_NAME"
+    sleep 1
+    if is_running; then
+        echo -e "${GREEN}[✓] Servicio reiniciado y funcionando correctamente.${NC}"
+    else
+        echo -e "${RED}[!] Error al reiniciar servicio.${NC}"
+    fi
+    pause_ziv
+}
+
+change_password() {
+    clear
+    ziv_title "ADMINISTRAR CONTRASEÑAS ZIVPN"
+    echo -e "Contraseñas actuales: ${YELLOW}$(get_current_passwords)${NC}\n"
+    echo -e "1. Asignar contraseña única"
+    echo -e "2. Asignar múltiples contraseñas (separadas por comas)"
+    echo -e "3. Volver"
+    echo ""
+    read -r -p "Opción [1-3]: " opt
+    case "$opt" in
+        1)
+            read -r -p "Nueva contraseña (ej: mi_clave): " p1
+            if [[ -n "$p1" ]]; then
+                sed -i -E "s/\"config\": ?\[[^]]*\]/\"config\": [\"$p1\"]/g" "$CONFIG_FILE"
+                systemctl restart "$SERVICE_NAME"
+                echo -e "${GREEN}[✓] Contraseña actualizada a '$p1'.${NC}"
+            fi
+            ;;
+        2)
+            read -r -p "Contraseñas (ej: pass1,pass2,pass3): " plist
+            if [[ -n "$plist" ]]; then
+                IFS=',' read -r -a pass_arr <<< "$plist"
+                new_str="\"config\": [$(printf "\"%s\"," "${pass_arr[@]}" | sed 's/,$//')]"
+                sed -i -E "s/\"config\": ?\[[^]]*\]/${new_str}/g" "$CONFIG_FILE"
+                systemctl restart "$SERVICE_NAME"
+                echo -e "${GREEN}[✓] Contraseñas actualizadas con éxito.${NC}"
+            fi
+            ;;
+        *) return ;;
+    esac
+    pause_ziv
+}
+
+show_logs() {
+    clear
+    ziv_title "LOGS EN VIVO UDP-ZIVPN"
+    echo -e "${YELLOW}[*] Presiona Ctrl+C para salir de los logs...${NC}\n"
+    journalctl -u "$SERVICE_NAME" -f -n 50
+}
+
+uninstall_all() {
+    clear
+    ziv_title "DESINSTALAR UDP-ZIVPN"
+    read -r -p "¿Seguro que deseas desinstalar UDP-ZIVPN? [s/N]: " conf
+    if [[ "$conf" =~ ^[sS]$ ]]; then
+        systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+        systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+        rm -rf "$INSTALL_DIR" "$SERVICE_FILE" "$BINARY_PATH"
+        systemctl daemon-reload
+        echo -e "${GREEN}[✓] UDP-ZIVPN eliminado del servidor.${NC}"
+        pause_ziv
+        exit 0
+    fi
+    echo "Operación cancelada."
+    pause_ziv
+}
+
+# ────────────────────────────────────────────
+# MENÚ PRINCIPAL
+# ────────────────────────────────────────────
+menu_zivpn() {
+    while true; do
+        clear
+        local st
+        if is_running; then
+            st="${GREEN}EN LÍNEA (5667 / 6000-19999)${NC}"
+        else
+            st="${RED}DESCONECTADO${NC}"
+        fi
+
+        ziv_title "GESTOR UDP ZIVPN — CRISDEV"
+        echo -e "  ESTADO:       $st"
+        echo -e "  CONTRASEÑA:   ${YELLOW}$(get_current_passwords)${NC}"
+        echo -e "  OFUSCACIÓN:   ${YELLOW}zivpn (Salamander)${NC}"
+        ziv_line
+        ziv_opt "1" "ACTIVAR / INICIAR SERVICIO" "${GREEN}(Auto-Config 1-Click)${NC}"
+        ziv_opt "2" "DETENER SERVICIO" ""
+        ziv_opt "3" "REINICIAR SERVICIO" ""
+        ziv_opt "4" "CAMBIAR / AÑADIR CONTRASEÑAS" ""
+        ziv_opt "5" "VER REGISTROS EN VIVO (LOGS)" ""
+        ziv_opt "6" "DESINSTALAR SERVICIO" ""
+        ziv_opt "0" "VOLVER AL MENÚ DE CONEXIONES" ""
+        ziv_line
+        read -r -p "Selecciona una opción [0-6]: " opt
+        case "$opt" in
+            1) install_and_activate ;;
+            2) stop_service ;;
+            3) restart_service ;;
+            4) change_password ;;
+            5) show_logs ;;
+            6) uninstall_all ;;
+            0) clear; break ;;
+            *) echo -e "${RED}Opción inválida.${NC}"; sleep 1 ;;
+        esac
+    done
+}
+
+if [[ "${1:-}" == "auto" || "${1:-}" == "install" ]]; then
+    install_and_activate
+else
+    menu_zivpn
+fi

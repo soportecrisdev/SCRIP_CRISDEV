@@ -1,0 +1,308 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+CRISDEV SERVERS & API MANAGER (CLI)
+===================================
+Herramienta de administración, auditoría y visualización del Backend de Servidores en el VPS.
+Soporte completo para los 13 métodos de conexión, segmentación Free / Premium y control de base de datos.
+"""
+
+import os
+import sys
+import json
+import time
+import urllib.request
+import urllib.parse
+import subprocess
+
+API_URL = "http://127.0.0.1:8088"
+DB_PATH = "/etc/crisdev/crisdev_servers.db"
+
+# Códigos de colores ANSI
+C_RESET = "\033[0m"
+C_BOLD = "\033[1m"
+C_CYAN = "\033[96m"
+C_GREEN = "\033[92m"
+C_YELLOW = "\033[93m"
+C_RED = "\033[91m"
+C_MAGENTA = "\033[95m"
+C_BLUE = "\033[94m"
+
+def print_banner():
+    print(f"{C_CYAN}{C_BOLD}")
+    print("╔═══════════════════════════════════════════════════════════════╗")
+    print("║          ⚡ CRISDEV VPS SERVERS & API MANAGER ⚡             ║")
+    print("║    Infraestructura Multi-Método (13 Protocolos) & VIP/Free    ║")
+    print("╚═══════════════════════════════════════════════════════════════╝")
+    print(f"{C_RESET}")
+
+def get_api_health():
+    try:
+        req = urllib.request.Request(f"{API_URL}/api/v1/health")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+def show_status():
+    print_banner()
+    health = get_api_health()
+    db_exists = os.path.exists(DB_PATH)
+    db_size = os.path.getsize(DB_PATH) // 1024 if db_exists else 0
+
+    print(f"{C_BOLD}📊 ESTADO DEL SISTEMA Y SERVICIOS:{C_RESET}")
+    print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    
+    if health:
+        print(f"  🤖 {C_BOLD}Servidor API REST:{C_RESET}       {C_GREEN}ACTIVO / ONLINE [✔]{C_RESET} (Puerto 8088)")
+        print(f"  📦 {C_BOLD}Versión Publicada:{C_RESET}       {C_CYAN}{health.get('version_code', 'N/A')}{C_RESET}")
+        print(f"  🌐 {C_BOLD}Servidores Totales:{C_RESET}      {C_GREEN}{health.get('total_servers', 0)} Servidores Activos{C_RESET}")
+        print(f"  🆓 {C_BOLD}Servidores Free:{C_RESET}         {C_CYAN}{health.get('total_free', 0)} Gratuitos{C_RESET}")
+        print(f"  👑 {C_BOLD}Servidores VIP/Premium:{C_RESET}  {C_MAGENTA}{health.get('total_premium', 0)} Premium{C_RESET}")
+        print(f"  🗺️ {C_BOLD}Países Soportados:{C_RESET}       {C_YELLOW}{health.get('total_countries', 0)} Países{C_RESET}")
+        print(f"  ⏱️ {C_BOLD}Uptime del Daemon:{C_RESET}       {health.get('uptime_seconds', 0)} segundos")
+    else:
+        print(f"  🤖 {C_BOLD}Servidor API REST:{C_RESET}       {C_RED}DETENIDO / OFFLINE [✖]{C_RESET}")
+
+    print(f"  🗄️ {C_BOLD}Base de Datos SQLite:{C_RESET}    {C_GREEN}Modo WAL [✔]{C_RESET} ({db_size} KB)")
+    print(f"  📁 {C_BOLD}Ruta de Base de Datos:{C_RESET}   <code>{DB_PATH}</code>")
+    
+    res = subprocess.run("systemctl is-active crisdev-api.service 2>/dev/null", shell=True, capture_output=True, text=True)
+    svc_status = res.stdout.strip()
+    color = C_GREEN if svc_status == "active" else C_RED
+    print(f"  🛡️ {C_BOLD}Servicio Systemd:{C_RESET}        {color}{svc_status.upper()}{C_RESET} (crisdev-api.service)")
+    print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+
+def list_servers():
+    print_banner()
+    try:
+        req = urllib.request.Request(f"{API_URL}/api/v1/servers/stats")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            stats = json.loads(resp.read().decode("utf-8"))
+
+        print(f"{C_BOLD}🌍 RESUMEN DE SERVIDORES POR PAÍS ({stats.get('version', '')}):{C_RESET}")
+        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        by_c = stats.get("by_country", {})
+        for code, count in by_c.items():
+            print(f"  🚩 {C_BOLD}{code.upper()}:{C_RESET}  {C_GREEN}{count} servidores activos{C_RESET}")
+        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print(f"  {C_CYAN}Total General: {stats.get('total_servers', 0)} servidores en {stats.get('total_countries', 0)} países ({stats.get('total_free', 0)} Free / {stats.get('total_premium', 0)} VIP).{C_RESET}\n")
+    except Exception as e:
+        print(f"{C_RED}❌ Error consultando la API: {e}{C_RESET}")
+
+def list_protocols():
+    print_banner()
+    try:
+        req = urllib.request.Request(f"{API_URL}/api/v1/servers/stats")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            stats = json.loads(resp.read().decode("utf-8"))
+
+        print(f"{C_BOLD}⚡ DESGLOSE POR MÉTODO / PROTOCOLO ({stats.get('version', '')}):{C_RESET}")
+        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        by_p = stats.get("by_protocol", {})
+        for proto, count in by_p.items():
+            print(f"  🔧 {C_BOLD}{proto:<26}{C_RESET} -> {C_GREEN}{count:>3} servidores{C_RESET}")
+        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    except Exception as e:
+        print(f"{C_RED}❌ Error consultando protocolos: {e}{C_RESET}")
+
+def list_premium():
+    print_banner()
+    try:
+        req = urllib.request.Request(f"{API_URL}/api/v1/servers/premium")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            servers = data.get("servers", [])
+            print(f"{C_BOLD}👑 SERVIDORES VIP / PREMIUM ACTIVOS ({data.get('count', 0)}):{C_RESET}")
+            print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            if not servers:
+                print(f"  {C_YELLOW}No hay servidores asignados como Premium exclusivamente.{C_RESET}")
+            else:
+                for idx, s in enumerate(servers):
+                    flag = s.get("FLAG", "").upper()
+                    name = s.get("Name", "")
+                    minfo = s.get("isMinfo", "")
+                    print(f"  [{idx+1:02d}] 🚩 {flag} | {C_BOLD}{name}{C_RESET} | {C_MAGENTA}{minfo}{C_RESET}")
+            print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    except Exception as e:
+        print(f"{C_RED}❌ Error consultando servidores premium: {e}{C_RESET}")
+
+def search_servers(query_term):
+    print_banner()
+    try:
+        q_enc = urllib.parse.quote(query_term)
+        req = urllib.request.Request(f"{API_URL}/api/v1/servers/search?q={q_enc}")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            results = data.get("results", [])
+            print(f"{C_BOLD}🔍 RESULTADOS DE BÚSQUEDA PARA '{query_term}' ({data.get('total', 0)} encontrados):{C_RESET}")
+            print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            for idx, s in enumerate(results[:25]):
+                flag = s.get("FLAG", "").upper()
+                name = s.get("Name", "")
+                plan = f"{C_MAGENTA}[VIP]{C_RESET}" if s.get("isFree") is False else f"{C_CYAN}[FREE]{C_RESET}"
+                print(f"  [{idx+1:02d}] 🚩 {flag} {plan} | {C_BOLD}{name}{C_RESET}")
+            if len(results) > 25:
+                print(f"  ... y {len(results)-25} resultados más.")
+            print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    except Exception as e:
+        print(f"{C_RED}❌ Error en búsqueda: {e}{C_RESET}")
+
+def sync_from_github():
+    print(f"\n{C_YELLOW}🔄 Sincronizando servidores iniciales desde GitHub / Firebase...{C_RESET}")
+    try:
+        sys.path.insert(0, "/opt/ssh-cris")
+        import crisdev_bot
+        import crisdev_db
+
+        url, pw = crisdev_bot.fetch_firebase_remote_config()
+        print(f"  📥 Descargando desde: {url}...")
+        req = urllib.request.Request(url, headers={"User-Agent": "HTTP-Conexion-Bot/3.0"})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            raw_enc = resp.read().decode("utf-8").strip()
+
+        decrypted = crisdev_bot.decrypt_remote_config(pw, raw_enc)
+        if not decrypted:
+            print(f"{C_RED}❌ Error al descifrar el paquete de servidores.{C_RESET}")
+            return False
+
+        data = json.loads(decrypted)
+        v = data.get("Version", "95")
+        notes = data.get("ReleaseNotes", "Sincronización inicial.")
+        servers = data.get("Servers", [])
+
+        ok, v_code, tot_s, tot_c, tot_f, tot_p = crisdev_db.save_full_catalog(v, notes, servers, pw)
+        print(f"{C_GREEN}✔ ¡ÉXITO! Base de Datos poblada con {tot_s} servidores ({tot_f} Free, {tot_p} VIP) en {tot_c} países (Versión {v_code}).{C_RESET}")
+        
+        # Reiniciar servicio API para recargar caché limpia
+        subprocess.run("systemctl restart crisdev-api.service 2>/dev/null", shell=True)
+        return True
+    except Exception as e:
+        print(f"{C_RED}❌ Error durante sincronización: {e}{C_RESET}")
+        return False
+
+def list_backups():
+    print_banner()
+    try:
+        conn = crisdev_db.get_db_connection()
+        rows = conn.execute("SELECT id, backup_name, version_code, created_at FROM backups ORDER BY id DESC;").fetchall()
+        conn.close()
+        print(f"{C_BOLD}📦 RESPALDOS DISPONIBLES EN EL VPS:{C_RESET}")
+        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        if rows:
+            for b in rows:
+                print(f"  [ID: {b['id']}] {C_CYAN}{b['backup_name']}{C_RESET} | Versión: {C_GREEN}{b['version_code']}{C_RESET} | {b['created_at']}")
+        else:
+            print("  No hay respaldos registrados aún.")
+        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    except Exception as e:
+        print(f"{C_RED}❌ Error listando respaldos: {e}{C_RESET}")
+
+def test_endpoints():
+    print(f"\n{C_YELLOW}🧪 Probando endpoints públicos del servidor API...{C_RESET}")
+    # 1. /api/v1/version
+    try:
+        req = urllib.request.Request(f"{API_URL}/api/v1/version")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            body = resp.read().decode("utf-8")
+            print(f"  ✔ GET /api/v1/version: {C_GREEN}HTTP {resp.status}{C_RESET} -> {body[:80]}...")
+    except Exception as e:
+        print(f"  ✖ GET /api/v1/version: {C_RED}{e}{C_RESET}")
+
+    # 2. /api/v1/servers/live
+    try:
+        req = urllib.request.Request(f"{API_URL}/api/v1/servers/live")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            etag = resp.headers.get("ETag", "N/A")
+            v_code = resp.headers.get("X-Version-Code", "N/A")
+            body = resp.read().decode("utf-8")
+            print(f"  ✔ GET /api/v1/servers/live: {C_GREEN}HTTP {resp.status}{C_RESET} -> ETag: {etag}, Versión: {v_code}, Tamaño: {len(body)} chars")
+    except Exception as e:
+        print(f"  ✖ GET /api/v1/servers/live: {C_RED}{e}{C_RESET}")
+
+    # 3. /api/v1/servers/stats
+    try:
+        req = urllib.request.Request(f"{API_URL}/api/v1/servers/stats")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            body = resp.read().decode("utf-8")
+            print(f"  ✔ GET /api/v1/servers/stats: {C_GREEN}HTTP {resp.status}{C_RESET} -> {body[:80]}...")
+    except Exception as e:
+        print(f"  ✖ GET /api/v1/servers/stats: {C_RED}{e}{C_RESET}")
+
+def show_menu():
+    while True:
+        print_banner()
+        print(f"{C_BOLD}MENÚ DE ADMINISTRACIÓN DE SERVIDORES CRISDEV:{C_RESET}\n")
+        print(f"  {C_GREEN}[1]{C_RESET} Ver Estado del Sistema y Base de Datos")
+        print(f"  {C_GREEN}[2]{C_RESET} Listar Servidores por País")
+        print(f"  {C_GREEN}[3]{C_RESET} Ver Desglose por Método / Protocolo (13 Métodos)")
+        print(f"  {C_GREEN}[4]{C_RESET} Ver Servidores VIP / Premium")
+        print(f"  {C_GREEN}[5]{C_RESET} Buscar Servidor por Nombre, Operador o Método")
+        print(f"  {C_GREEN}[6]{C_RESET} Sincronizar / Poblar Servidores desde Nube")
+        print(f"  {C_GREEN}[7]{C_RESET} Ver Respaldos en SQLite")
+        print(f"  {C_GREEN}[8]{C_RESET} Probar Endpoints de la API REST (Puerto 8088)")
+        print(f"  {C_GREEN}[9]{C_RESET} Reiniciar Servicio API (crisdev-api.service)")
+        print(f"  {C_RED}[0] Salir{C_RESET}\n")
+
+        choice = input(f"{C_BOLD}Seleccione una opción: {C_RESET}").strip()
+        if choice == "1":
+            show_status()
+        elif choice == "2":
+            list_servers()
+        elif choice == "3":
+            list_protocols()
+        elif choice == "4":
+            list_premium()
+        elif choice == "5":
+            term = input("Ingrese término de búsqueda: ").strip()
+            if term:
+                search_servers(term)
+        elif choice == "6":
+            sync_from_github()
+        elif choice == "7":
+            list_backups()
+        elif choice == "8":
+            test_endpoints()
+        elif choice == "9":
+            print(f"{C_YELLOW}Reiniciando crisdev-api.service...{C_RESET}")
+            subprocess.run("systemctl restart crisdev-api.service", shell=True)
+            print(f"{C_GREEN}✔ Reiniciado.{C_RESET}")
+        elif choice == "0":
+            break
+        else:
+            print(f"{C_RED}Opción inválida.{C_RESET}")
+        
+        input(f"\n{C_YELLOW}Presione ENTER para continuar...{C_RESET}")
+
+def main():
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1].lower()
+        if cmd in ["status", "-s", "--status"]:
+            show_status()
+        elif cmd in ["list", "-l", "--list"]:
+            list_servers()
+        elif cmd in ["methods", "protocols", "-m"]:
+            list_protocols()
+        elif cmd in ["premium", "vip"]:
+            list_premium()
+        elif cmd in ["search"]:
+            term = sys.argv[2] if len(sys.argv) > 2 else ""
+            search_servers(term)
+        elif cmd in ["sync", "sync-github"]:
+            sync_from_github()
+        elif cmd in ["backups", "backup"]:
+            list_backups()
+        elif cmd in ["test", "probe"]:
+            test_endpoints()
+        elif cmd in ["restart"]:
+            subprocess.run("systemctl restart crisdev-api.service", shell=True)
+            print("✔ crisdev-api.service reiniciado.")
+        elif cmd in ["logs"]:
+            subprocess.run("journalctl -u crisdev-api.service -f -n 50", shell=True)
+        else:
+            print(f"Uso: crisdev-servers [status|list|methods|premium|search|sync|backups|test|restart|logs]")
+    else:
+        show_menu()
+
+if __name__ == "__main__":
+    main()
