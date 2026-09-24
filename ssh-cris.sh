@@ -3676,6 +3676,13 @@ menu_protocolos() {
             echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CUSTOM \033[1;32mPUERTO: \033[1;37m${_udpc_pt:-7100}/udp\033[0m"
         fi
 
+        # 14. UDP ZIVPN
+        if systemctl is-active --quiet zivpn 2>/dev/null || pgrep -f 'zivpn-core|zivpn' >/dev/null 2>&1; then
+            local _ziv_pt="5667"
+            [[ -f /etc/zivpn/config.json ]] && _ziv_pt="$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/zivpn/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+            echo -e "\033[1;32mSERVICIO: \033[1;33mUDP ZIVPN \033[1;32mPUERTO: \033[1;37m${_ziv_pt:-5667}/udp (6000-19999)\033[0m"
+        fi
+
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
 
         local sts_ssh sts_socks sts_ssl sts_drop sts_v2ray sts_slow sts_hyst sts_hy2 sts_trojan sts_badvpn sts_ovpn sts_ws sts_sslh sts_squid sts_chisel sts_bhttp sts_hcr sts_udpc
@@ -3704,6 +3711,7 @@ menu_protocolos() {
         (systemctl is-active --quiet bhttp 2>/dev/null || systemctl is-active --quiet bhttp-tls 2>/dev/null || pgrep -f 'bhttp-server|xhttp-server|bilola' >/dev/null 2>&1 || [[ -n "$_b_pts" || -n "$_bx_pt" ]]) && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
         (systemctl is-active --quiet hcr-* 2>/dev/null || pgrep -f 'hcr-server' >/dev/null 2>&1 || [[ -n "$_hcr_pts" ]]) && sts_hcr="\033[1;32mo\033[0m" || sts_hcr="\033[1;31mx\033[0m"
         (systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1) && sts_udpc="\033[1;32mo\033[0m" || sts_udpc="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet zivpn 2>/dev/null || pgrep -f 'zivpn-core|zivpn' >/dev/null 2>&1) && sts_ziv="\033[1;32mo\033[0m" || sts_ziv="\033[1;31mx\033[0m"
 
         printf "  %b[1]%b  > OPENSSH         %b    %b[10]%b > BADVPN             %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssh" "$SSHPLUS_NUM" "$SCOLOR" "$sts_badvpn"
         printf "  %b[2]%b  > PROXY SOCKS     %b    %b[11]%b > OPENVPN            %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_socks" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ovpn"
@@ -3714,7 +3722,8 @@ menu_protocolos() {
         printf "  %b[7]%b  > UDP CRIS        %b    %b[16]%b > BHTTP (BHP1/TLS)    %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
         printf "  %b[8]%b  > UDP HYSTERIA v2 %b    %b[17]%b > HCR RELAY           %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hy2" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hcr"
         printf "  %b[9]%b  > UDP CUSTOM      %b    %b[18]%b > TROJAN-GO           %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_udpc" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan"
-        printf "  %b[19]%b > EXPORTAR PARA GEN     %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[19]%b > UDP ZIVPN       %b    %b[20]%b > EXPORTAR PARA GEN\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ziv" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
         read -r proto_opt
@@ -3789,7 +3798,30 @@ menu_protocolos() {
                 echo -e "\033[1;33mTrojan-Go integrado via motor Xray (Puerto 443 / 8443).\033[0m"
                 pause
                 ;;
-            19) exportar_servidor_gen ;;
+            19)
+                if [[ -x /bin/zivpn-manager ]]; then
+                    /bin/zivpn-manager
+                elif [[ -x /usr/local/bin/zivpn ]]; then
+                    /usr/local/bin/zivpn
+                elif [[ -x /bin/zivpn ]]; then
+                    /bin/zivpn
+                elif [[ -f /opt/ssh-cris/Modulos/zivpn-manager ]]; then
+                    bash /opt/ssh-cris/Modulos/zivpn-manager
+                else
+                    clear
+                    echo -e "\033[1;32mDescargando e iniciando ZIVPN Manager...\033[0m"
+                    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/zivpn-manager?$(date +%s)" -o /bin/zivpn-manager 2>/dev/null || \
+                    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/zivpn-manager?$(date +%s)" -O /bin/zivpn-manager 2>/dev/null || true
+                    chmod +x /bin/zivpn-manager 2>/dev/null || true
+                    if [[ -s /bin/zivpn-manager ]]; then
+                        /bin/zivpn-manager
+                    else
+                        echo -e "\033[1;31mError al descargar ZIVPN Manager.\033[0m"
+                        sleep 2
+                    fi
+                fi
+                ;;
+            20) exportar_servidor_gen ;;
             0|00) return ;;
             *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
         esac
