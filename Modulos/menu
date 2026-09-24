@@ -723,7 +723,7 @@ _sshplus_sync_banner() {
 	fi
 }
 _sshplus_sync_connection() {
-	if ! grep -q 'menu_hysteria2' /bin/connection 2>/dev/null; then
+	if ! grep -q 'menu_zivpn' /bin/connection 2>/dev/null; then
 		wget -qO /bin/connection "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/connection?$(date +%s)" && chmod +x /bin/connection
 	fi
 	[[ -e /bin/conexao ]] || ln -s /bin/connection /bin/conexao 2>/dev/null || cp -f /bin/connection /bin/conexao
