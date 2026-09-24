@@ -165,20 +165,19 @@ install_and_activate() {
 
     ensure_certificates
 
-    if [[ ! -f "$CONFIG_FILE" ]]; then
+    if [[ ! -f "$CONFIG_FILE" ]] || ! grep -q '"obfs"' "$CONFIG_FILE" 2>/dev/null; then
         cat <<EOF > "$CONFIG_FILE"
 {
   "listen": ":5667",
   "cert": "/etc/zivpn/zivpn.crt",
   "key": "/etc/zivpn/zivpn.key",
+  "obfs": "zivpn",
   "auth": {
     "mode": "passwords",
     "config": ["zi"]
   }
 }
 EOF
-    else
-        sed -i '/"obfs"/d' "$CONFIG_FILE" 2>/dev/null || true
     fi
 
     sysctl -w net.core.rmem_max=16777216 >/dev/null 2>&1 || true
