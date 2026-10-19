@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # encoding: utf-8
-# Python 3 (Ubuntu 22+); compatible com chamada: wsproxy.py <porta>
+# Python 3 (Ubuntu 22+); compatible con llamada: wsproxy.py <porta> [destino]
 import socket
 import threading
 import select
@@ -16,6 +16,11 @@ try:
     LISTENING_PORT = int(sys.argv[1])
 except Exception:
     LISTENING_PORT = 80
+
+DEFAULT_HOST = "127.0.0.1:22"
+if len(sys.argv) > 2 and not sys.argv[2].startswith("-"):
+    DEFAULT_HOST = sys.argv[2].strip()
+
 BUFLEN = 4096 * 4
 TIMEOUT = 60
 # Código de respuesta HTTP inicial (compatibilidad general: 200 por defecto)
@@ -23,9 +28,7 @@ HTTP_STATUS = "200"
 MSG = ""
 COR = '<font color="null">'
 FTAG = '</font>'
-# Texto adicional tras el bloque COR/MSG/FTAG (p. ej. cabeceras); vacío por defecto
 POST_HEADER_RAW = ""
-DEFAULT_HOST = "127.0.0.1:22"
 LOG_FILE = "/var/log/sshplus-wsproxy.log"
 
 
@@ -111,11 +114,11 @@ class Server(threading.Thread):
         self.logLock = threading.Lock()
 
     def run(self):
-        self.soc = socket.socket(socket.AF_INET)
+        self.soc = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.soc.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.soc.settimeout(2)
         self.soc.bind((self.host, self.port))
-        self.soc.listen(0)
+        self.soc.listen(128)
         self.running = True
 
         try:
@@ -131,7 +134,10 @@ class Server(threading.Thread):
                 self.addConn(conn)
         finally:
             self.running = False
-            self.soc.close()
+            try:
+                self.soc.close()
+            except Exception:
+                pass
 
     def printLog(self, log):
         self.logLock.acquire()
@@ -143,7 +149,6 @@ class Server(threading.Thread):
                 with open(LOG_FILE, "a", encoding="utf-8") as f:
                     f.write(line + "\n")
             except Exception:
-                # El log en archivo no debe romper el proxy.
                 pass
         finally:
             self.logLock.release()
@@ -159,7 +164,8 @@ class Server(threading.Thread):
     def removeConn(self, conn):
         try:
             self.threadsLock.acquire()
-            self.threads.remove(conn)
+            if conn in self.threads:
+                self.threads.remove(conn)
         finally:
             self.threadsLock.release()
 
@@ -167,7 +173,6 @@ class Server(threading.Thread):
         try:
             self.running = False
             self.threadsLock.acquire()
-
             threads = list(self.threads)
             for c in threads:
                 c.close()
@@ -213,7 +218,29 @@ class ConnectionHandler(threading.Thread):
                 )
             except Exception:
                 self.server.printLog('Accepted connection from ' + str(self.addr))
+
+            # ─────────────────────────────────────────────────────────────────
+            # MULTIPLEXOR INTELIGENTE: SSH DIRECTO (puro) vs WEBSOCKET / PAYLOAD
+            # ─────────────────────────────────────────────────────────────────
+            # 1. Esperamos hasta 0.35s para ver si el cliente transmite datos de inmediato.
+            r, _, _ = select.select([self.client], [], [], 0.35)
+            if not r:
+                # Comportamiento SSH Directo Pasivo: el cliente SSH espera a que el
+                # servidor OpenSSH envíe su banner SSH-2.0-... primero.
+                self.method_DIRECT_SSH(DEFAULT_HOST, initial_data=b'')
+                return
+
             self.client_buffer = self.client.recv(BUFLEN)
+            if not self.client_buffer:
+                return
+
+            # 2. Si el cliente comenzó con "SSH-" (ej: SSH-2.0-OpenSSH / SSH-2.0-GoCore / SSH-2.0-HTTPCustom)
+            #    Es un cliente SSH Directo Activo. Conectar y entregar el banner directo a OpenSSH.
+            if self.client_buffer.startswith(b'SSH-'):
+                self.method_DIRECT_SSH(DEFAULT_HOST, initial_data=self.client_buffer)
+                return
+
+            # 3. El cliente envió una petición HTTP (Payload / WebSocket)
             buf = self.client_buffer
             if isinstance(buf, bytes):
                 buf = buf.decode("latin1", errors="replace")
@@ -223,24 +250,26 @@ class ConnectionHandler(threading.Thread):
                 hostPort = DEFAULT_HOST
 
             split = self.findHeader(buf, 'X-Split')
-
             if split != '':
                 self.client.recv(BUFLEN)
+
+            # Detección de WebSocket Upgrade para responder 101 si es necesario
+            buf_lower = buf.lower()
+            is_ws = ("upgrade: websocket" in buf_lower) or ("upgrade" in buf_lower and "websocket" in buf_lower)
 
             if hostPort != '':
                 passwd = self.findHeader(buf, 'X-Pass')
 
                 if len(PASS) != 0 and passwd == PASS:
-                    self.method_CONNECT(hostPort)
+                    self.method_CONNECT(hostPort, is_ws=is_ws)
                 elif len(PASS) != 0 and passwd != PASS:
                     self.client.send(_b('HTTP/1.1 400 WrongPass!\r\n\r\n'))
-                elif hostPort.startswith('127.0.0.1') or hostPort.startswith('localhost'):
-                    self.method_CONNECT(hostPort)
+                elif hostPort.startswith('127.0.0.1') or hostPort.startswith('localhost') or hostPort.startswith(LISTENING_ADDR):
+                    self.method_CONNECT(hostPort, is_ws=is_ws)
                 else:
                     self.client.send(_b('HTTP/1.1 403 Forbidden!\r\n\r\n'))
             else:
-                print('- No X-Real-Host!')
-                self.client.send(_b('HTTP/1.1 400 NoXRealHost!\r\n\r\n'))
+                self.method_DIRECT_SSH(DEFAULT_HOST, initial_data=b'')
 
         except Exception as e:
             err = getattr(e, 'strerror', None) or str(e)
@@ -252,17 +281,13 @@ class ConnectionHandler(threading.Thread):
 
     def findHeader(self, head, header):
         aux = head.find(header + ': ')
-
         if aux == -1:
             return ''
-
         aux = head.find(':', aux)
         head = head[aux + 2:]
         aux = head.find('\r\n')
-
         if aux == -1:
             return ''
-
         return head[:aux]
 
     def connect_target(self, host):
@@ -271,22 +296,42 @@ class ConnectionHandler(threading.Thread):
             port = int(host[i + 1:])
             host = host[:i]
         else:
-            port = 80
+            port = 22
 
         (soc_family, soc_type, proto, _, address) = socket.getaddrinfo(host, port)[0]
-
         self.target = socket.socket(soc_family, soc_type, proto)
         self.targetClosed = False
+        self.target.settimeout(10)
         self.target.connect(address)
+        self.target.settimeout(None)
 
-    def method_CONNECT(self, path):
-        self.log += ' - CONNECT ' + path
-
+    def method_DIRECT_SSH(self, path, initial_data=b''):
+        """Túnel SSH Directo transparente (sin inyectar cabeceras HTTP ficticias)."""
+        self.log += ' - DIRECT_SSH ' + str(path)
         self.connect_target(path)
-        self.client.sendall(RESPONSE)
+        if initial_data:
+            self.target.sendall(initial_data)
         self.client_buffer = b''
+        self.server.printLog('Direct SSH connected to ' + str(path))
+        self.doCONNECT()
 
-        self.server.printLog('Redirected to ' + path)
+    def method_CONNECT(self, path, is_ws=False):
+        """Conexión con Payload / WebSocket."""
+        self.log += ' - CONNECT ' + str(path)
+        self.connect_target(path)
+        if is_ws and HTTP_STATUS == "200":
+            # Si el cliente solicita WebSocket Upgrade y el status está en 200,
+            # enviar 101 Switching Protocols para máxima compatibilidad con CDNs
+            ws_resp = (
+                b"HTTP/1.1 101 Switching Protocols\r\n"
+                b"Upgrade: websocket\r\n"
+                b"Connection: Upgrade\r\n\r\n"
+            )
+            self.client.sendall(ws_resp)
+        else:
+            self.client.sendall(RESPONSE)
+        self.client_buffer = b''
+        self.server.printLog('Redirected to ' + str(path))
         self.doCONNECT()
 
     def doCONNECT(self):
@@ -317,7 +362,6 @@ class ConnectionHandler(threading.Thread):
                         break
             if count == TIMEOUT:
                 error = True
-
             if error:
                 self.server.printLog('Connection closed')
                 break
@@ -326,13 +370,12 @@ class ConnectionHandler(threading.Thread):
 def print_usage():
     print('Use: wsproxy.py -p <port>')
     print('       wsproxy.py -b <ip> -p <puerto>')
-    print('       wsproxy.py 80')
+    print('       wsproxy.py 80 [destino_ssh: 127.0.0.1:22]')
 
 
 def parse_args(argv):
     global LISTENING_ADDR
     global LISTENING_PORT
-
     try:
         opts, args = getopt.getopt(argv, "hb:p:", ["bind=", "port="])
     except getopt.GetoptError:
@@ -349,10 +392,11 @@ def parse_args(argv):
 
 
 def main(host=LISTENING_ADDR, port=LISTENING_PORT):
-    print("\033[0;34m━" * 8, "\033[1;32m PROXY WEBSOCKET", "\033[0;34m━" * 8, "\n")
+    print("\033[0;34m━" * 8, "\033[1;32m PROXY WEBSOCKET & SSH DIRECTO", "\033[0;34m━" * 8, "\n")
     print("\033[1;33mIP:\033[1;32m " + LISTENING_ADDR)
-    print("\033[1;33mPUERTO:\033[1;32m " + str(LISTENING_PORT) + "\n")
-    print("\033[0;34m━" * 10, "\033[1;32m VPSMANAGER", "\033[0;34m━\033[1;37m" * 11, "\n")
+    print("\033[1;33mPUERTO:\033[1;32m " + str(LISTENING_PORT))
+    print("\033[1;33mDESTINO SSH:\033[1;32m " + str(DEFAULT_HOST) + "\n")
+    print("\033[0;34m━" * 10, "\033[1;32m SSH-CRIS MASTER", "\033[0;34m━\033[1;37m" * 11, "\n")
 
     server = Server(LISTENING_ADDR, LISTENING_PORT)
     server.start()
@@ -367,7 +411,6 @@ def main(host=LISTENING_ADDR, port=LISTENING_PORT):
 
 
 if __name__ == '__main__':
-    # Chamada tipica do NoxuraSSH: wsproxy.py 8080 (sem flags)
     if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
         try:
             LISTENING_PORT = int(sys.argv[1])

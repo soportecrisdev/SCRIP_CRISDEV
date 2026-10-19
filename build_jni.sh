@@ -1,35 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Wrapper para compilar el motor nativo BHTTP/XHTTP de DoriaXVPN (libbhttpjni.so).
-# Delega en el script canónico del proyecto para mantener un único punto de build.
+# Wrapper de compatibilidad para compilar el motor nativo BHTTP/XHTTP
+# (libbhttpjni.so).
+#
+# ANTES este script delegaba en btun-offline/BTUN/sources/bilola_go_port, que es
+# una copia PRE-V2 del motor: compilaba un .so sin los exports
+# Java_com_btun_client_GoBhttpV2Bridge_*, y en runtime la app caia siempre al
+# fallback Java con "No implementation found for ... GoBhttpV2Bridge".
+#
+# Ahora delega en el script canonico de la raiz del proyecto, que apunta a la
+# fuente V2 (BHTTP_CRISDEV/sources/bilola_go_port) e incluye un gate que aborta
+# si el .so resultante no exporta el motor V2.
 #
 # Uso:
-#   bash build_jni.sh [output_dir]
+#   bash build_jni.sh [NDK_ROOT]
 #
-# Requiere:
-#   - Go >= 1.21 (GOOS=android en el path)
-#   - Clang del host (arm64 Linux) con NDK 26.1.10909125
-#   - ANDROID_NDK_ROOT apuntando al NDK 26.1.10909125 (override por defecto)
-#
-# Genera libbhttpjni.so para las 4 ABIs: arm64-v8a, armeabi-v7a, x86_64 y x86.
+# Ver build_bhttp_ndk.sh en la raiz para el detalle de flags y autodeteccion.
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+canonical="$repo_root/build_bhttp_ndk.sh"
 
-# Ruta canónica de las fuentes del motor Go.
-engine_dir="$script_dir/btun-offline/BTUN/sources/bilola_go_port"
-
-if [[ ! -f "$engine_dir/android/build_jni.sh" ]]; then
-    echo "[ERROR] No se encontró el motor Go en: $engine_dir" >&2
+if [[ ! -f "$canonical" ]]; then
+    echo "[ERROR] No se encontró el script canónico: $canonical" >&2
     exit 1
 fi
 
-output="${1:-}"
-if [[ -z "$output" ]]; then
-    output="$script_dir/build/android-jni"
+echo "=== Delegando en $canonical (fuente V2 + gate de símbolos) ==="
+
+# El script canonico lee NDK de ANDROID_NDK_ROOT / ANDROID_NDK_HOME; si el
+# llamador paso una ruta explicita, se respeta.
+if [[ $# -ge 1 && -n "${1:-}" ]]; then
+    export ANDROID_NDK_ROOT="$1"
+    export ANDROID_NDK_HOME="$1"
+    echo "    NDK forzado por el llamador: $1"
 fi
 
-echo "=== Compilando libbhttpjni.so (4 ABIs) desde $engine_dir ==="
-mkdir -p "$output"
-
-bash "$engine_dir/android/build_jni.sh" "$output"
+exec bash "$canonical"

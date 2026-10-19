@@ -26,7 +26,10 @@ from threading import Thread, Lock
 try:
     from Crypto.Cipher import AES
 except ImportError:
-    AES = None
+    try:
+        from Cryptodome.Cipher import AES
+    except ImportError:
+        AES = None
 
 try:
     from PIL import Image
@@ -38,7 +41,21 @@ except ImportError:
 # ═════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN Y CONSTANTES DEL SERVICIO
 # ═════════════════════════════════════════════════════════════════════
-BOT_TOKEN = "8717022679:AAE8-9Og3EuU5eWMrSxYaB4_OuQnf2V1yQo"
+DEFAULT_BOT_TOKEN = "8717022679:AAE8-9Og3EuU5eWMrSxYaB4_OuQnf2V1yQo"
+TOKEN_FILE = "/etc/crisdev/bot/token.txt"
+
+def _resolve_bot_token():
+    if os.path.exists(TOKEN_FILE):
+        try:
+            with open(TOKEN_FILE, "r", encoding="utf-8") as _f:
+                _t = _f.read().strip()
+                if _t:
+                    return _t
+        except Exception:
+            pass
+    return os.environ.get("BOT_TOKEN", DEFAULT_BOT_TOKEN)
+
+BOT_TOKEN = _resolve_bot_token()
 ADMIN_IDS = [2006027987, 1087968824]
 ALLOWED_GROUP_ID = -1001737640771
 GROUP_USERNAME = "elcrischat"
@@ -2011,11 +2028,18 @@ def bot_polling_loop():
     # 1. Configurar comandos y perfil en Telegram (Público vs Admin)
     setup_telegram_bot_commands()
 
-    # 2. Arrancar hilo de sincronización automática en la nube en segundo plano
+    # 2. Sincronización inicial inmediata de servidores para respuesta instantánea
+    try:
+        ok_init, msg_init = fetch_and_sync_servers()
+        logging.info(f"Sincronización inicial de servidores: ok={ok_init}")
+    except Exception as _e:
+        logging.warning(f"Error en sincronización inicial de servidores: {_e}")
+
+    # 3. Arrancar hilo de sincronización periódica en segundo plano
     sync_thread = Thread(target=auto_sync_worker, daemon=True)
     sync_thread.start()
 
-    # 3. Arrancar hilo de mensajes motivacionales y recordatorios en el grupo
+    # 4. Arrancar hilo de mensajes motivacionales y recordatorios en el grupo
     motivator_thread = Thread(target=group_periodic_motivator_worker, daemon=True)
     motivator_thread.start()
 

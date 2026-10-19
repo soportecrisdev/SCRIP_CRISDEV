@@ -19,7 +19,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_DIR="$SCRIPT_DIR/btun-offline/BTUN/sources/bilola_go_port"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Fuente canonica del motor (V2). btun-offline/BTUN/sources/bilola_go_port es
+# una copia PRE-V2: usarla produce binarios sin el motor BHP1 v2.
+V2_SOURCE_DIR="$REPO_ROOT/BHTTP_CRISDEV/sources/bilola_go_port"
+LEGACY_SOURCE_DIR="$SCRIPT_DIR/btun-offline/BTUN/sources/bilola_go_port"
+if [[ -f "$V2_SOURCE_DIR/go.mod" ]]; then
+    SOURCE_DIR="$V2_SOURCE_DIR"
+elif [[ -f "$LEGACY_SOURCE_DIR/go.mod" ]]; then
+    echo "[build WARN] Submodulo BHTTP_CRISDEV ausente; usando la copia PRE-V2 legacy." >&2
+    SOURCE_DIR="$LEGACY_SOURCE_DIR"
+else
+    echo "[build ERROR] No se encontro el motor Go (ni V2 ni legacy)." >&2
+    exit 1
+fi
 OUTPUT_BASE="$SCRIPT_DIR/btun-offline/BTUN/bin"
 TOOLS_DIR="$SCRIPT_DIR/btun-offline/BTUN/tools"
 

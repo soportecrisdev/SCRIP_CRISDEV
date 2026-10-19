@@ -239,12 +239,35 @@ fi
 chmod +x /bin/udp /bin/instsqd /bin/slowdns 2>/dev/null || true
 
 # Colocar scripts python y bots en /etc/SSHPlus/
-for _f in cabecalho bot open.py proxy.py wsproxy.py ShellBot.sh botssh; do
+for _f in cabecalho bot open.py proxy.py wsproxy.py ShellBot.sh botssh crisdev_bot.py activar_bot.sh; do
     if [[ -f "/bin/$_f" ]]; then
         cp -af "/bin/$_f" /etc/SSHPlus/ 2>/dev/null || true
     fi
 done
 chmod +x /etc/SSHPlus/* 2>/dev/null || true
+
+# Configurar servicio systemd para crisdev-bot si no existe
+if [[ ! -f /etc/systemd/system/crisdev-bot.service ]]; then
+    cat << 'EOF' > /etc/systemd/system/crisdev-bot.service
+[Unit]
+Description=CRISDEV Telegram Bot Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/bin
+ExecStart=/usr/bin/python3 /bin/crisdev_bot.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload >/dev/null 2>&1 || true
+fi
 
 # Descargar script maestro SSH-CRIS
 if [[ -f "./ssh-cris.sh" ]]; then
@@ -609,6 +632,12 @@ echo -e "${YELLOW}[4/4]${NC} Optimizando puertos SSH base y firewall..."
 sed -i 's/#*AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config 2>/dev/null || true
 sed -i 's/#*GatewayPorts.*/GatewayPorts yes/' /etc/ssh/sshd_config 2>/dev/null || true
 sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
+sed -i 's/#*PermitOpen.*/PermitOpen any/' /etc/ssh/sshd_config 2>/dev/null || true
+sed -i 's/#*ClientAliveInterval.*/ClientAliveInterval 30/' /etc/ssh/sshd_config 2>/dev/null || true
+sed -i 's/#*ClientAliveCountMax.*/ClientAliveCountMax 3/' /etc/ssh/sshd_config 2>/dev/null || true
+if ! grep -q "^AllowTcpForwarding yes" /etc/ssh/sshd_config 2>/dev/null; then
+    echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config 2>/dev/null || true
+fi
 systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
 
 echo ""

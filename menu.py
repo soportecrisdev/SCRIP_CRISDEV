@@ -2120,26 +2120,81 @@ def mod_bot_api():
         pause()
 
 
+def _ensure_bot_systemd_service():
+    service_path = "/etc/systemd/system/crisdev-bot.service"
+    bot_script = "/bin/crisdev_bot.py"
+    if not os.path.exists(bot_script) and os.path.exists("./Modulos/crisdev_bot.py"):
+        _cmd(f"cp -f ./Modulos/crisdev_bot.py {bot_script} && chmod +x {bot_script}")
+    elif os.path.exists(bot_script):
+        _cmd(f"chmod +x {bot_script}")
+
+    service_content = """[Unit]
+Description=CRISDEV Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/bin
+ExecStart=/usr/bin/python3 /bin/crisdev_bot.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+"""
+    try:
+        with open(service_path, "w") as f:
+            f.write(service_content)
+        _cmd("systemctl daemon-reload")
+        _cmd("systemctl enable crisdev-bot 2>/dev/null")
+    except Exception:
+        pass
+
+
 def _bot_config():
     separator()
-    info_msg("Configuracion del bot Telegram")
-    token = prompt_input("Token del bot (de @BotFather)")
+    info_msg("Configuración del Bot Telegram (CRISDEV Bot)")
+    _ensure_bot_systemd_service()
+    
+    # Asegurar dependencia pycryptodome en el sistema
+    _cmd("python3 -m pip install --break-system-packages pycryptodome 2>/dev/null || apt-get install -y python3-pycryptodome 2>/dev/null || true")
+
+    token_file = "/etc/crisdev/bot/token.txt"
+    current_token = ""
+    if os.path.exists(token_file):
+        with open(token_file) as f:
+            current_token = f.read().strip()
+
+    if current_token:
+        print(f"  Token actual: {bold(current_token[:10] + '...' + current_token[-5:])}")
+    
+    token = prompt_input("Nuevo token del bot (deja vacío para mantener actual / default)")
     if token:
         os.makedirs("/etc/crisdev/bot", exist_ok=True)
-        with open("/etc/crisdev/bot/token.txt", "w") as f:
+        with open(token_file, "w") as f:
             f.write(token)
-        ok_msg("Token guardado. Reinicia el bot para aplicar.")
+        ok_msg("Token guardado correctamente.")
+    
+    _cmd("systemctl restart crisdev-bot 2>/dev/null")
+    time.sleep(1)
+    st = check_service_status("crisdev-bot")
+    if st == "active":
+        ok_msg("¡Bot de Telegram activado y funcionando en el VPS! ⚡")
     else:
-        error_msg("Token vacio")
+        warn_msg(f"Estado del servicio: {st}. Revisa logs con: journalctl -u crisdev-bot -n 20")
 
 
 def _bot_status():
     separator()
     st = check_service_status("crisdev-bot")
     if st == "active":
-        print(f"\n  Bot Telegram: {ok('activo')}")
+        print(f"\n  Bot Telegram: {ok('ACTIVO (En ejecución ⚡)')}")
     else:
-        print(f"\n  Bot Telegram: {error(st)}")
+        print(f"\n  Bot Telegram: {error(st.upper())}")
+
     token_file = "/etc/crisdev/bot/token.txt"
     if os.path.exists(token_file):
         with open(token_file) as f:
@@ -2147,17 +2202,22 @@ def _bot_status():
         if t:
             print(f"  Token: {t[:10]}...{t[-5:]}")
     else:
-        print(f"  Token: {dim('no configurado')}")
+        print(f"  Token: {dim('usando token oficial por defecto')}")
+
+    print("\n  Últimos logs del Bot:")
+    os.system("journalctl -u crisdev-bot -n 10 --no-pager 2>/dev/null || true")
 
 
 def _bot_restart():
     separator()
+    _ensure_bot_systemd_service()
     _cmd("systemctl restart crisdev-bot 2>/dev/null")
+    time.sleep(1)
     st = check_service_status("crisdev-bot")
     if st == "active":
-        ok_msg("Bot reiniciado")
+        ok_msg("Bot reiniciado y en línea")
     else:
-        warn_msg("Servicio crisdev-bot no encontrado o no activo")
+        warn_msg("Servicio crisdev-bot no se pudo iniciar. Revisa journalctl -u crisdev-bot")
 
 
 def _api_config():

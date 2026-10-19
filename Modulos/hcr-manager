@@ -16,7 +16,7 @@ SSHPLUS_CYAN=$'\033[1;38;2;76;228;255m'
 SSHPLUS_DARK_GREEN=$'\033[0;32m'
 
 INSTALL_DIR="/etc/hcr-server"
-BINARY_PATH="/usr/local/bin/hcr-server"
+BINARY_PATH="${INSTALL_DIR}/hcr-server"
 PORTS_FILE="${INSTALL_DIR}/ports.conf"
 DEFAULT_TARGET="127.0.0.1:22"
 DEFAULT_TRANSPORT="plain"
@@ -71,7 +71,18 @@ ensure_dirs() {
 }
 
 ensure_binary() {
+    # Ruta canonica: ${INSTALL_DIR}/hcr-server, la misma que usa el instalador
+    # principal (bin/hcr). Antes este modulo instalaba en
+    # /usr/local/bin/hcr-server, lo que dejaba las unidades hcr-*.service
+    # apuntando a un binario distinto del que instala el otro instalador, y su
+    # desinstalacion (rm -rf ${INSTALL_DIR}) se llevaba por el binario ajeno.
     if [[ -x "$BINARY_PATH" ]]; then
+        return 0
+    fi
+    # Adopta una instalacion previa en la ruta antigua antes de descargar nada.
+    if [[ -f "/usr/local/bin/hcr-server" && ! -L "/usr/local/bin/hcr-server" ]]; then
+        cp -f "/usr/local/bin/hcr-server" "$BINARY_PATH"
+        chmod +x "$BINARY_PATH"
         return 0
     fi
     if [[ -x "/bin/hcr-server" ]]; then
@@ -87,11 +98,6 @@ ensure_binary() {
         chmod +x "$BINARY_PATH"
         return 0
     fi
-    if [[ -f "/etc/hcr-server/hcr-server" ]]; then
-        cp -f "/etc/hcr-server/hcr-server" "$BINARY_PATH"
-        chmod +x "$BINARY_PATH"
-        return 0
-    fi
     echo -e "${YELLOW}[*] Descargando binario hcr-server...${NC}"
     local url1="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/hcr-server"
     local url2="https://www.dropbox.com/scl/fi/o8q0zs14a7xy03sk08a8j/hcr-server?rlkey=no7u3nggl0tw7i08rnadrao61&st=mb5b2zrg&dl=1"
@@ -100,6 +106,9 @@ ensure_binary() {
     curl -fsSL "$url2" -o "$BINARY_PATH" 2>/dev/null || \
     wget -q "$url2" -O "$BINARY_PATH" 2>/dev/null || true
     chmod 755 "$BINARY_PATH" 2>/dev/null || true
+    chown root:root "$BINARY_PATH" 2>/dev/null || true
+    # Symlinks de compatibilidad para instalaciones previas que buscasen el
+    # binario en /bin o /usr/bin.
     ln -sfn "$BINARY_PATH" /bin/hcr-server 2>/dev/null || true
     ln -sfn "$BINARY_PATH" /usr/bin/hcr-server 2>/dev/null || true
     [[ -x "$BINARY_PATH" ]]
@@ -392,8 +401,19 @@ desinstalar_hcr_total() {
     pkill -9 -x hcr-server 2>/dev/null || true
     rm -f /etc/systemd/system/hcr-*.service
     systemctl daemon-reload >/dev/null 2>&1 || true
-    rm -rf "${INSTALL_DIR}"
+    # Desinstalacion quirurgica: ${INSTALL_DIR} es ahora el directorio canonico
+    # compartido con el instalador principal, asi que un "rm -rf" se llevaria
+    # tambien los certificados TLS y el README. Solo se borra lo que instala
+    # este modulo. Passar "purge" como $1 para additionally borrar los certs.
     rm -f "$BINARY_PATH" /bin/hcr-server /usr/bin/hcr-server
+    rm -f "${PORTS_FILE}"
+    rm -f "${INSTALL_DIR}/README.md" 2>/dev/null || true
+    if [[ "${1:-}" == "purge" ]]; then
+        rm -rf "${INSTALL_DIR}"
+        echo -e "${YELLOW}[!] Se eliminaron tambien certificados TLS y configuracion.${NC}"
+    else
+        echo -e "${YELLOW}[!] Certificados TLS conservados en ${INSTALL_DIR} (use 'purge' para borrarlos).${NC}"
+    fi
     echo -e "\n\033[1;32m✔ HCR-SERVER ha sido desinstalado completamente.\033[0m"
     pause_hcr
 }
