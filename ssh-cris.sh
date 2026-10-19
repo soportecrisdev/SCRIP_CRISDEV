@@ -476,27 +476,27 @@ fun_ws_prepare_activate() {
 }
 
 ensure_proxy_scripts() {
-    if [[ ! -f /etc/SSHPlus/proxy.py ]]; then
-        if [[ -f "./proxy.py" ]]; then
-            cp -f "./proxy.py" /etc/SSHPlus/proxy.py
-        elif [[ -f "/opt/ssh-cris/proxy.py" ]]; then
-            cp -f "/opt/ssh-cris/proxy.py" /etc/SSHPlus/proxy.py
-        else
-            curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy.py" -o /etc/SSHPlus/proxy.py 2>/dev/null || \
-            wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy.py" -O /etc/SSHPlus/proxy.py 2>/dev/null || true
-        fi
+    if [[ -f "/bin/proxy.py" ]]; then
+        cp -f "/bin/proxy.py" /etc/SSHPlus/proxy.py 2>/dev/null || true
+    elif [[ -f "./proxy.py" ]]; then
+        cp -f "./proxy.py" /etc/SSHPlus/proxy.py 2>/dev/null || true
+    elif [[ -f "/opt/ssh-cris/proxy.py" ]]; then
+        cp -f "/opt/ssh-cris/proxy.py" /etc/SSHPlus/proxy.py 2>/dev/null || true
+    else
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy.py" -o /etc/SSHPlus/proxy.py 2>/dev/null || \
+        wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy.py" -O /etc/SSHPlus/proxy.py 2>/dev/null || true
     fi
     chmod +x /etc/SSHPlus/proxy.py 2>/dev/null || true
 
-    if [[ ! -f /etc/SSHPlus/wsproxy.py ]]; then
-        if [[ -f "./wsproxy.py" ]]; then
-            cp -f "./wsproxy.py" /etc/SSHPlus/wsproxy.py
-        elif [[ -f "/opt/ssh-cris/wsproxy.py" ]]; then
-            cp -f "/opt/ssh-cris/wsproxy.py" /etc/SSHPlus/wsproxy.py
-        else
-            curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/wsproxy.py" -o /etc/SSHPlus/wsproxy.py 2>/dev/null || \
-            wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/wsproxy.py" -O /etc/SSHPlus/wsproxy.py 2>/dev/null || true
-        fi
+    if [[ -f "/bin/wsproxy.py" ]]; then
+        cp -f "/bin/wsproxy.py" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+    elif [[ -f "./wsproxy.py" ]]; then
+        cp -f "./wsproxy.py" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+    elif [[ -f "/opt/ssh-cris/wsproxy.py" ]]; then
+        cp -f "/opt/ssh-cris/wsproxy.py" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+    else
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/wsproxy.py" -o /etc/SSHPlus/wsproxy.py 2>/dev/null || \
+        wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/wsproxy.py" -O /etc/SSHPlus/wsproxy.py 2>/dev/null || true
     fi
     chmod +x /etc/SSHPlus/wsproxy.py 2>/dev/null || true
 }
