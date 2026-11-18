@@ -357,8 +357,11 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload >/dev/null 2>&1 || true
-systemctl enable crisdev-checkuser.service crisdev-limiter.service crisdev-api.service >/dev/null 2>&1 || true
-systemctl restart crisdev-checkuser.service crisdev-limiter.service crisdev-api.service >/dev/null 2>&1 || true
+# Instalación limpia: NO arrancar puertos ni servicios automáticamente
+# Solo reiniciar si el servicio ya estaba previamente activo antes de actualizar
+systemctl is-active --quiet crisdev-checkuser.service 2>/dev/null && systemctl restart crisdev-checkuser.service >/dev/null 2>&1 || true
+systemctl is-active --quiet crisdev-limiter.service 2>/dev/null && systemctl restart crisdev-limiter.service >/dev/null 2>&1 || true
+systemctl is-active --quiet crisdev-api.service 2>/dev/null && systemctl restart crisdev-api.service >/dev/null 2>&1 || true
 
 # Configurar banner dinámico PAM en OpenSSH
 if ! grep -q 'crisdev_pam_banner.py' /etc/pam.d/sshd 2>/dev/null; then
@@ -484,6 +487,7 @@ StartLimitIntervalSec=0
 Type=simple
 User=root
 EnvironmentFile=-/etc/crisdev/ws.conf
+EnvironmentFile=-/etc/crisdev/ws-c.conf
 ExecStart=/bin/sh -c 'exec /usr/local/bin/wsproxy-c --bind "${LISTEN_ADDR:-0.0.0.0}" --port "${LISTEN_PORT:-80}" --target "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" --status "${HTTP_STATUS:-101}" --idle "${IDLE_TIMEOUT:-300}" --max-conns "${MAX_CONNS:-16384}" ${BANNER_MSG:+--msg "$BANNER_MSG"}'
 Restart=always
 RestartSec=1
@@ -513,7 +517,8 @@ StartLimitIntervalSec=0
 Type=simple
 User=root
 EnvironmentFile=-/etc/crisdev/ws.conf
-ExecStart=/usr/bin/python3 /usr/local/bin/wsproxy.py -b "${LISTEN_ADDR:-0.0.0.0}" -p "${LISTEN_PORT:-80}" -t "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" -s "${HTTP_STATUS:-101}" ${BANNER_MSG:+-m "$BANNER_MSG"}
+EnvironmentFile=-/etc/crisdev/ws-python.conf
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 /usr/local/bin/wsproxy.py -b "${LISTEN_ADDR:-0.0.0.0}" -p "${LISTEN_PORT:-80}" -t "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" -s "${HTTP_STATUS:-101}" ${BANNER_MSG:+-m "$BANNER_MSG"}'
 Restart=always
 RestartSec=1
 OOMScoreAdjust=-900
@@ -555,15 +560,13 @@ pkill -9 -f 'wsproxy.py' 2>/dev/null || true
 screen -wipe >/dev/null 2>&1 || true
 systemctl daemon-reload >/dev/null 2>&1 || true
 
-# Iniciar motor WebSocket respetando la configuración previa (si existía)
-WS_ACTIVE_ENGINE="c"
-[[ -f /etc/crisdev/ws.conf ]] && source /etc/crisdev/ws.conf 2>/dev/null || true
-if [[ "$WS_ACTIVE_ENGINE" == "python" ]]; then
-    systemctl enable --now crisdev-ws-python.service >/dev/null 2>&1 || true
-elif [[ -x /usr/local/bin/wsproxy-c ]]; then
-    systemctl enable --now crisdev-ws-c.service >/dev/null 2>&1 || true
-else
-    systemctl enable --now crisdev-ws-python.service >/dev/null 2>&1 || true
+# Instalación limpia: NO arrancar puertos ni servicios WS automáticamente
+# Solo reiniciar si el motor ya estaba previamente activo antes de actualizar
+systemctl daemon-reload >/dev/null 2>&1 || true
+if systemctl is-active --quiet crisdev-ws-c.service 2>/dev/null; then
+    systemctl restart crisdev-ws-c.service >/dev/null 2>&1 || true
+elif systemctl is-active --quiet crisdev-ws-python.service 2>/dev/null; then
+    systemctl restart crisdev-ws-python.service >/dev/null 2>&1 || true
 fi
 
 # Instalar Core UDP CRIS (Hysteria v1.3.5)
@@ -886,7 +889,7 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF_WD
 systemctl daemon-reload >/dev/null 2>&1 || true
-systemctl enable --now crisdev-watchdog.service >/dev/null 2>&1 || true
+systemctl is-active --quiet crisdev-watchdog.service 2>/dev/null && systemctl restart crisdev-watchdog.service >/dev/null 2>&1 || true
 sanitize_broken_symlinks
 
 # Configurar Banner Exclusivo de Login para HTTP Conexión / CRISDEV
@@ -982,10 +985,11 @@ grep -q "^MaxStartups" /etc/ssh/sshd_config 2>/dev/null && sed -i 's/^#*MaxStart
 grep -q "^UseDNS" /etc/ssh/sshd_config 2>/dev/null && sed -i 's/^#*UseDNS.*/UseDNS no/' /etc/ssh/sshd_config || echo "UseDNS no" >> /etc/ssh/sshd_config
 systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
 
-for _p in 22 80 443 5000 8080 8088 8888 8881 8444; do
-    iptables -C INPUT -p tcp --dport "$_p" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$_p" -j ACCEPT 2>/dev/null || true
-    ufw allow "$_p"/tcp >/dev/null 2>&1 || true
-done
+# Instalación limpia: Solo garantizar puerto SSH para administración remota
+SSH_CUR_PORT=$(grep -E '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | head -n1)
+[[ -z "$SSH_CUR_PORT" || ! "$SSH_CUR_PORT" =~ ^[0-9]+$ ]] && SSH_CUR_PORT=22
+iptables -C INPUT -p tcp --dport "$SSH_CUR_PORT" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$SSH_CUR_PORT" -j ACCEPT 2>/dev/null || true
+ufw allow "$SSH_CUR_PORT"/tcp >/dev/null 2>&1 || true
 if [[ -d /etc/iptables ]]; then
     iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
 fi

@@ -939,6 +939,9 @@ EOF_WSCONF
                     fi
                 fi
 
+                # Limpiar configuraciones duales
+                rm -f /etc/crisdev/ws-c.conf /etc/crisdev/ws-python.conf 2>/dev/null || true
+
                 # Guardar conf
                 cat > "$conf" <<EOF_WSC
 WS_ACTIVE_ENGINE=c
@@ -954,6 +957,31 @@ WS_C_PORT=$p_c
 WS_PY_PORT=${WS_PY_PORT:-8080}
 EOF_WSC
                 cp -af "$conf" /etc/sshplus-ws.conf 2>/dev/null || true
+
+                # Garantizar servicio crisdev-ws-c.service
+                cat > /etc/systemd/system/crisdev-ws-c.service << 'EOF_WS_C_SVC'
+[Unit]
+Description=CRISDEV Native epoll WebSocket/HTTP Proxy (Port 80 C Core)
+After=network-online.target ssh.service
+Wants=network-online.target ssh.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/etc/crisdev/ws.conf
+EnvironmentFile=-/etc/crisdev/ws-c.conf
+ExecStart=/bin/sh -c 'exec /usr/local/bin/wsproxy-c --bind "${LISTEN_ADDR:-0.0.0.0}" --port "${LISTEN_PORT:-80}" --target "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" --status "${HTTP_STATUS:-101}" --idle "${IDLE_TIMEOUT:-300}" --max-conns "${MAX_CONNS:-16384}" ${BANNER_MSG:+--msg "$BANNER_MSG"}'
+Restart=always
+RestartSec=1
+OOMScoreAdjust=-900
+LimitNOFILE=65535
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
+EOF_WS_C_SVC
 
                 # Reiniciar servicio
                 systemctl daemon-reload
@@ -989,11 +1017,18 @@ EOF_WSC
                 pkill -9 -f 'wsproxy.py' 2>/dev/null || true
                 screen -wipe >/dev/null 2>&1 || true
 
-                # Garantizar que el script v4.5 esté en /usr/local/bin
-                if [[ ! -f /usr/local/bin/wsproxy.py ]] && [[ -f /opt/ssh-cris/wsproxy.py ]]; then
+                # Garantizar que el script v4.5 más reciente esté en /usr/local/bin y /etc/SSHPlus
+                if [[ -f /opt/ssh-cris/wsproxy.py ]]; then
                     cp -af /opt/ssh-cris/wsproxy.py /usr/local/bin/wsproxy.py
-                    chmod +x /usr/local/bin/wsproxy.py
+                    cp -af /opt/ssh-cris/wsproxy.py /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+                elif [[ -f /opt/ssh-cris/Modulos/wsproxy.py ]]; then
+                    cp -af /opt/ssh-cris/Modulos/wsproxy.py /usr/local/bin/wsproxy.py
+                    cp -af /opt/ssh-cris/Modulos/wsproxy.py /etc/SSHPlus/wsproxy.py 2>/dev/null || true
                 fi
+                chmod 755 /usr/local/bin/wsproxy.py /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+
+                # Limpiar configuraciones duales para no sobreescribir el puerto
+                rm -f /etc/crisdev/ws-c.conf /etc/crisdev/ws-python.conf 2>/dev/null || true
 
                 # Guardar conf
                 cat > "$conf" <<EOF_WSPY
@@ -1011,6 +1046,31 @@ WS_PY_PORT=$p_py
 EOF_WSPY
                 cp -af "$conf" /etc/sshplus-ws.conf 2>/dev/null || true
 
+                # Garantizar servicio crisdev-ws-python.service con wrapper seguro
+                cat > /etc/systemd/system/crisdev-ws-python.service << 'EOF_WS_PY_SVC'
+[Unit]
+Description=CRISDEV Ultra-Stable WebSocket/HTTP Proxy (Python v4.5 Zero-Reconnect)
+After=network-online.target ssh.service
+Wants=network-online.target ssh.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/etc/crisdev/ws.conf
+EnvironmentFile=-/etc/crisdev/ws-python.conf
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 /usr/local/bin/wsproxy.py -b "${LISTEN_ADDR:-0.0.0.0}" -p "${LISTEN_PORT:-80}" -t "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" -s "${HTTP_STATUS:-101}" ${BANNER_MSG:+-m "$BANNER_MSG"}'
+Restart=always
+RestartSec=1
+OOMScoreAdjust=-900
+LimitNOFILE=65535
+MemoryMax=512M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target
+EOF_WS_PY_SVC
+
                 systemctl daemon-reload
                 systemctl enable --now crisdev-ws-python.service >/dev/null 2>&1 || true
                 systemctl restart crisdev-ws-python.service 2>/dev/null || true
@@ -1022,8 +1082,15 @@ EOF_WSPY
                     echo -e "\n\033[1;32m✔ MOTOR CLÁSICO PYTHON v4.5 ACTIVADO EXITOSAMENTE EN PUERTO $p_py\033[0m"
                     echo -e "\033[1;37m  Anti-CGNAT Activo · Sin timeouts artificiales · Backend: ${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}\033[0m"
                 else
-                    echo -e "\n\033[1;31m✖ Error al iniciar Motor Python. Verificando log:\033[0m"
-                    journalctl -u crisdev-ws-python.service -n 10 --no-pager 2>/dev/null || true
+                    # Fallback de arranque directo si systemd reporta fallo de entorno
+                    nohup /usr/bin/python3 /usr/local/bin/wsproxy.py -b "0.0.0.0" -p "$p_py" -t "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" -s "${HTTP_STATUS:-101}" >/dev/null 2>&1 &
+                    sleep 1
+                    if pgrep -f 'wsproxy.py' >/dev/null 2>&1; then
+                        echo -e "\n\033[1;32m✔ MOTOR CLÁSICO PYTHON v4.5 ACTIVADO EXITOSAMENTE (Modo Autónomo) EN PUERTO $p_py\033[0m"
+                    else
+                        echo -e "\n\033[1;31m✖ Error al iniciar Motor Python. Verificando log:\033[0m"
+                        journalctl -u crisdev-ws-python.service -n 10 --no-pager 2>/dev/null || true
+                    fi
                 fi
                 echo ""
                 read -n1 -r -p "Presione cualquier tecla para continuar..."
@@ -1105,6 +1172,7 @@ EOF_DUAL
                 pkill -9 -x wsproxy-c 2>/dev/null || true
                 pkill -9 -f 'wsproxy.py' 2>/dev/null || true
                 screen -wipe >/dev/null 2>&1 || true
+                rm -f /etc/crisdev/ws-c.conf /etc/crisdev/ws-python.conf 2>/dev/null || true
                 echo -e "\n\033[1;32m✔ TODOS LOS SERVICIOS WEBSOCKET HAN SIDO DETENIDOS.\033[0m"
                 sleep 2
                 ;;
@@ -1198,13 +1266,15 @@ fun_socks() {
         echo -e "                   ${BLUE}CONFIGURAR PROXY SOCKS${SCOLOR}"
         sshplus_line
         local _socks_ports
-        _socks_ports=$(get_proc_ports 'proxy\.py|wsproxy\.py|/python')
+        _socks_ports=$(get_proc_ports 'proxy\.py|wsproxy\.py|wsproxy-c')
         echo -e "${SSHPLUS_DARK_GREEN}PUERTOS:${SCOLOR} \033[1;32m${_socks_ports:-N/A}\033[0m"
         echo -e "\033[1;37m------------------------------------------------------------\033[0m"
 
-        local var_sks1 var_sks2 var_sks3
+        local var_sks1 var_sks2="\033[1;31mx\033[0m" var_sks3
         (pgrep -f 'proxy.py.*22' >/dev/null 2>&1 || (pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1 && ! pgrep -f '1194' >/dev/null 2>&1)) && var_sks1="\033[1;32mo\033[0m" || var_sks1="\033[1;31mx\033[0m"
-        pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1 && var_sks2="\033[1;32mo\033[0m" || var_sks2="\033[1;31mx\033[0m"
+        if systemctl is-active --quiet crisdev-ws-c.service 2>/dev/null || systemctl is-active --quiet crisdev-ws-python.service 2>/dev/null || systemctl is-active --quiet sshplus-ws.service 2>/dev/null || pgrep -x wsproxy-c >/dev/null 2>&1 || pgrep -f 'wsproxy.py' >/dev/null 2>&1; then
+            var_sks2="\033[1;32mo\033[0m"
+        fi
         pgrep -f 'proxy.py.*1194' >/dev/null 2>&1 && var_sks3="\033[1;32mo\033[0m" || var_sks3="\033[1;31mx\033[0m"
 
         echo -e "${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> SOCKS SSH\033[0m                 $var_sks1"
@@ -4166,7 +4236,7 @@ menu_protocolos() {
 
         # 2. Proxy Socks
         local sks_p
-        sks_p=$(get_proc_ports 'proxy\.py|wsproxy\.py|/python')
+        sks_p=$(get_proc_ports 'proxy\.py|wsproxy\.py|wsproxy-c')
         if [[ -n "$sks_p" ]]; then
             echo -e "\033[1;32mSERVICIO: \033[1;33mPROXY SOCKS \033[1;32mPUERTO: \033[1;37m$sks_p\033[0m"
         fi

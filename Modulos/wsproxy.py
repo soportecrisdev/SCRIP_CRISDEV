@@ -23,6 +23,7 @@ Motor WebSocket Clásico Mejorado y Optimizado para CERO Desconexiones:
 
 import sys
 import os
+import re
 import socket
 import selectors
 import hashlib
@@ -420,29 +421,48 @@ class EpollWsProxy:
         self.selector.close()
 
 
+def parse_num(val, default):
+    """Extrae un número entero de forma segura, incluso si viene en formato bash '${VAR:-80}'."""
+    if val is None:
+        return default
+    if isinstance(val, int):
+        return val
+    s = str(val).strip()
+    digits = re.findall(r'\d+', s)
+    if digits:
+        try:
+            return int(digits[-1])
+        except Exception:
+            return default
+    return default
+
+
 def main():
     parser = argparse.ArgumentParser(description="CRISDEV Ultra-Stable WS Proxy (Cero Desconexiones)")
-    parser.add_argument("port_pos", nargs="?", type=int, default=None, help="Puerto de escucha (posicional)")
+    parser.add_argument("port_pos", nargs="?", type=str, default=None, help="Puerto de escucha (posicional)")
     parser.add_argument("target_pos", nargs="?", type=str, default=None, help="Destino host:port (posicional)")
     parser.add_argument("-b", "--bind", default=os.environ.get("WS_BIND", "0.0.0.0"), help="Dirección IP de escucha")
-    parser.add_argument("-p", "--port", type=int, default=None, help="Puerto de escucha")
+    parser.add_argument("-p", "--port", type=str, default=None, help="Puerto de escucha")
     parser.add_argument("-t", "--target", default=None, help="Destino host:puerto (default 127.0.0.1:22)")
-    parser.add_argument("-s", "--status", type=int, default=None, help="Código HTTP (101 o 200)")
+    parser.add_argument("-s", "--status", type=str, default=None, help="Código HTTP (101 o 200)")
     parser.add_argument("-m", "--banner", default=os.environ.get("WS_BANNER", ""), help="Minibanner HTTP personalizado")
 
     args = parser.parse_args()
 
-    port = args.port or args.port_pos or int(os.environ.get("WS_PORT", 80))
+    raw_port = args.port or args.port_pos or os.environ.get("WS_PORT", "80")
+    port = parse_num(raw_port, 80)
+
     raw_target = args.target or args.target_pos or os.environ.get("WS_TARGET", "127.0.0.1:22")
-    if ":" in raw_target:
-        target_host, target_port = raw_target.split(":", 1)
-        target_port = int(target_port)
+    if ":" in str(raw_target):
+        target_host, target_port_str = str(raw_target).split(":", 1)
+        target_port = parse_num(target_port_str, 22)
     else:
         target_host = "127.0.0.1"
-        target_port = int(raw_target)
+        target_port = parse_num(raw_target, 22)
 
-    status = args.status or int(os.environ.get("WS_HTTP_STATUS", 101))
-    banner = args.banner
+    raw_status = args.status or os.environ.get("WS_HTTP_STATUS", "101")
+    status = parse_num(raw_status, 101)
+    banner = args.banner or os.environ.get("WS_BANNER", "")
 
     proxy = EpollWsProxy(
         bind_ip=args.bind,
