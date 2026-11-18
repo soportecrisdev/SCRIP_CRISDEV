@@ -1,19 +1,7 @@
-#!/bin/bash
-porta=$1
-cd $HOME
-ulimit -c unlimited
-ulimit -d unlimited
-ulimit -e unlimited
-ulimit -f unlimited
-ulimit -i unlimited
-ulimit -l unlimited
-ulimit -m unlimited
-ulimit -n 999999
-ulimit -q unlimited
-ulimit -r unlimited
-ulimit -s unlimited
-ulimit -t unlimited
-ulimit -u unlimited
-ulimit -v unlimited
-ulimit -x unlimited
-/bin/badvpn-udpgw --listen-addr 127.0.0.1:$porta --max-clients 9000 --max-connections-for-client 8 --client-socket-sndbuf 10000 >/dev/null 2>&1
+#!/usr/bin/env bash
+# Wrapper calibrado de BadVPN UDPGW (1GB RAM / 100+ usuarios)
+porta="${1:-7300}"
+ulimit -n 65535 2>/dev/null || true
+BIN="/usr/local/bin/badvpn-udpgw"
+[[ ! -x "$BIN" ]] && BIN="/bin/badvpn-udpgw"
+exec "$BIN" --listen-addr "127.0.0.1:${porta}" --max-clients 512 --max-connections-for-client 16 --client-socket-sndbuf 65536 >/dev/null 2>&1

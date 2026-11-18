@@ -1564,143 +1564,60 @@ install_badvpn_bin() {
     return 1
 }
 
+ensure_badvpn_module() {
+    local mod_dir="/opt/ssh-cris/badvpn"
+    local repo_raw="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/badvpn"
+    mkdir -p "$mod_dir"
+    for _f in instalar.sh desinstalar.sh check.sh udp antcrashvpn.sh; do
+        if [[ ! -s "${mod_dir}/${_f}" ]]; then
+            curl -fsSL "${repo_raw}/${_f}" -o "${mod_dir}/${_f}" 2>/dev/null || \
+            wget -q "${repo_raw}/${_f}" -O "${mod_dir}/${_f}" 2>/dev/null || true
+        fi
+    done
+    chmod +x "${mod_dir}/"*.sh "${mod_dir}/udp" 2>/dev/null || true
+}
+
 menub() {
+    ensure_badvpn_module
     while true; do
         clear
         local bad_p
-        bad_p=$(ss -tulpn 2>/dev/null | grep -E 'badvpn-udpgw|udpvpn' | awk '{print $5}' | grep -oE '[0-9]+$' | sort -u | xargs || true)
-        [[ -z "$bad_p" && -f /etc/systemd/system/badvpn-udpgw.service ]] && bad_p=$(grep -oE '\-\-listen\-addr[[:space:]]+127\.0\.0\.1:[0-9]+' /etc/systemd/system/badvpn-udpgw.service 2>/dev/null | cut -d: -f2 | xargs || true)
-        
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "${BLUE}                       BADVPN UDPGW (7300)${NC}"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+        bad_p=$(ss -tlpn 2>/dev/null | grep 'badvpn-udpgw' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs || true)
+
+        msg_bar
+        echo -e "${C_TITLE}       ⚡ BADVPN UDPGW (JUEGOS & LLAMADAS VoIP) ⚡${NC}"
+        msg_bar
         if [[ -n "$bad_p" ]]; then
-            echo -e " ${WHITE}Estado: ${GREEN}ACTIVO${WHITE} | Puertos: ${YELLOW}${bad_p}${NC}"
+            echo -e " ${C_ARROW}Estado:${NC} \033[1;32m● ACTIVO\033[0m │ ${C_ARROW}Puerto(s):${NC} \033[1;32m${bad_p}\033[0m (127.0.0.1)"
         else
-            echo -e " ${WHITE}Estado: ${RED}APAGADO${NC}"
+            echo -e " ${C_ARROW}Estado:${NC} \033[1;31m○ APAGADO\033[0m"
         fi
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e " ${SSHPLUS_NUM}[1]${NC} ${WHITE}> Activar BadVPN Puerto 7300 (Servicio Continuo)${NC}"
-        echo -e " ${SSHPLUS_NUM}[2]${NC} ${WHITE}> Activar BadVPN en Puerto Personalizado (ej: 7200, 7300)${NC}"
-        echo -e " ${SSHPLUS_NUM}[3]${NC} ${WHITE}> Activar Multi-BadVPN (7100, 7200, 7300)${NC}"
-        echo -e " ${RED}[4]${NC} ${WHITE}> Detener BadVPN${NC}"
-        echo -e " ${RED}[0]${NC} ${WHITE}> Volver${NC}"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -ne "${SSHPLUS_CYAN}Opcion:${NC} "
+        echo -e "${C_BORDER}────────────────────────────────────────────────────────────${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}1${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_LABEL}Activar BadVPN Puerto 7300${NC} ${C_SUB}(Auto-Calibrado 1GB RAM / 100+ users)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}2${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_LABEL}Activar BadVPN en Puerto Personalizado${NC} ${C_SUB}(ej: 7200, 7400)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}3${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_LABEL}Auditoría en Vivo${NC} ${C_SUB}(Conexiones, RAM, SWAP y Conntrack)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}4${C_BRACKET}]${NC} ${C_ARROW}>${NC} \033[1;31mDetener / Desinstalar BadVPN${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}0${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_BG_EXIT} [ VOLVER AL MENÚ DE PROTOCOLOS ] ${NC}"
+        msg_bar
+        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-4]: ${NC}"
         read -r b_opt
         case "$b_opt" in
             1)
-                echo -e "\n\033[1;32mIniciando BadVPN en puerto 7300...\033[0m"
-                fun_bar "install_badvpn_bin"
-                cat > /etc/systemd/system/badvpn-udpgw.service << EOF
-[Unit]
-Description=CRISDEV BadVPN UDPGW Port 7300
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1024 --max-connections-for-client 64 --client-socket-sndbuf 1048576
-Restart=always
-RestartSec=2
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOF
-                systemctl daemon-reload
-                systemctl enable --now badvpn-udpgw.service 2>/dev/null || true
-                systemctl restart badvpn-udpgw.service 2>/dev/null || true
-                echo -e "\n\033[1;32m[✔] BadVPN UDPGW activo en 127.0.0.1:7300!\033[0m"
+                bash /opt/ssh-cris/badvpn/instalar.sh 7300
                 pause
                 ;;
             2)
-                echo -ne "\n\033[1;32mPuerto UDPGW deseado (ej: 7300 o 7200)\033[1;37m: "
+                echo -ne "\n\033[1;32mPuerto UDPGW deseado (ej: 7200 o 7300)\033[1;37m: "
                 read -r cus_port
                 [[ ! "$cus_port" =~ ^[0-9]+$ ]] && cus_port=7300
-                fun_bar "install_badvpn_bin"
-                cat > "/etc/systemd/system/badvpn-udpgw.service" << EOF
-[Unit]
-Description=CRISDEV BadVPN UDPGW Port $cus_port
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:$cus_port --max-clients 1024 --max-connections-for-client 64 --client-socket-sndbuf 1048576
-Restart=always
-RestartSec=2
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOF
-                systemctl daemon-reload
-                systemctl enable --now badvpn-udpgw.service 2>/dev/null || true
-                systemctl restart badvpn-udpgw.service 2>/dev/null || true
-                echo -e "\n\033[1;32m[✔] BadVPN UDPGW activo en 127.0.0.1:$cus_port!\033[0m"
+                bash /opt/ssh-cris/badvpn/instalar.sh "$cus_port"
                 pause
                 ;;
             3)
-                fun_bar "install_badvpn_bin"
-                cat > /etc/systemd/system/badvpn-udpgw.service << EOF
-[Unit]
-Description=CRISDEV BadVPN UDPGW Port 7300
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1024 --max-connections-for-client 64 --client-socket-sndbuf 1048576
-Restart=always
-RestartSec=2
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOF
-                cat > /etc/systemd/system/badvpn-udpgw-7200.service << EOF
-[Unit]
-Description=CRISDEV BadVPN UDPGW Port 7200
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7200 --max-clients 1024 --max-connections-for-client 64 --client-socket-sndbuf 1048576
-Restart=always
-RestartSec=2
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOF
-                cat > /etc/systemd/system/badvpn-udpgw-7100.service << EOF
-[Unit]
-Description=CRISDEV BadVPN UDPGW Port 7100
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7100 --max-clients 1024 --max-connections-for-client 64 --client-socket-sndbuf 1048576
-Restart=always
-RestartSec=2
-LimitNOFILE=65535
-
-[Install]
-WantedBy=multi-user.target
-EOF
-                systemctl daemon-reload
-                systemctl enable --now badvpn-udpgw.service badvpn-udpgw-7200.service badvpn-udpgw-7100.service 2>/dev/null || true
-                systemctl restart badvpn-udpgw.service badvpn-udpgw-7200.service badvpn-udpgw-7100.service 2>/dev/null || true
-                echo -e "\n\033[1;32m[✔] Multi-BadVPN activo en puertos 7100, 7200 y 7300!\033[0m"
-                pause
+                bash /opt/ssh-cris/badvpn/check.sh
                 ;;
             4)
-                systemctl disable --now badvpn-udpgw.service badvpn-udpgw-7200.service badvpn-udpgw-7100.service 2>/dev/null || true
-                rm -f /etc/systemd/system/badvpn-udpgw*.service
-                systemctl daemon-reload
-                for sid in $(screen -ls 2>/dev/null | grep -E 'badvpn|udpvpn' | awk '{print $1}'); do
-                    screen -r -S "$sid" -X quit 2>/dev/null || true
-                done
-                pkill -f badvpn-udpgw 2>/dev/null || true
-                echo -e "\n\033[1;32mBadVPN detenido con éxito!\033[0m"
+                bash /opt/ssh-cris/badvpn/desinstalar.sh
                 pause
                 ;;
             0) return ;;
@@ -3977,13 +3894,11 @@ menu_protocolos() {
             [[ -z "$_hy2_pt" ]] && _hy2_pt="443"
         fi
 
-        # 9. BadVPN
+        # 9. BadVPN (escucha en TCP 127.0.0.1:7300)
         local is_bad_active=0 _bad_p=""
-        if systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -x badvpn-udpgw >/dev/null 2>&1 || pgrep -x udpvpn >/dev/null 2>&1; then
+        _bad_p=$(ss -tlpn 2>/dev/null | grep 'badvpn-udpgw' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs || true)
+        if [[ -n "$_bad_p" ]]; then
             is_bad_active=1
-            _bad_p=$(ss -ulpn 2>/dev/null | grep -E 'badvpn-udpgw|udpvpn' | awk '{print $5}' | grep -oE '[0-9]+$' | sort -un | xargs || true)
-            [[ -z "$_bad_p" && -f /etc/systemd/system/badvpn-udpgw.service ]] && _bad_p=$(grep -oE '\-\-listen\-addr[[:space:]]+127\.0\.0\.1:[0-9]+' /etc/systemd/system/badvpn-udpgw.service 2>/dev/null | cut -d: -f2 | xargs || true)
-            [[ -z "$_bad_p" ]] && _bad_p="7300"
         fi
 
         # 10. Squid
