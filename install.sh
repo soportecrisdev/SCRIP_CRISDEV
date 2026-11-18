@@ -143,6 +143,42 @@ choose_timezone() {
     sleep 1
 }
 
+if [[ "$IS_UPDATE" -eq 1 && ( "${1:-}" == "--update" || "${1:-}" == "-u" || "${1:-}" == "update" ) ]]; then
+    echo -e "${CYAN}============================================================${NC}"
+    echo -e "${WHITE}   ⚡ ACTUALIZACIÓN LIMPIA — HTTP CONEXIÓN (SOLO SCRIPT) ⚡${NC}"
+    echo -e "${CYAN}============================================================${NC}"
+    mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/proxy/wsclasico" /usr/local/bin /etc/SSHPlus
+
+    echo -e "${YELLOW}[1/3]${NC} Descargando menú actualizado (ssh-cris.sh)..."
+    curl -fsSL "$REPO_RAW/ssh-cris.sh" -o "$INSTALL_DIR/$BIN_NAME" 2>/dev/null || \
+        wget -q "$REPO_RAW/ssh-cris.sh" -O "$INSTALL_DIR/$BIN_NAME"
+    chmod +x "$INSTALL_DIR/$BIN_NAME"
+    ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/menu
+    ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/menu
+
+    echo -e "${YELLOW}[2/3]${NC} Descargando módulo proxy/wsclasico (v4.6 Gaming/VoIP/Anti-MTU)..."
+    for _pf in wsproxy.py instalar.sh desinstalar.sh check.sh ws.conf.template; do
+        curl -fsSL "$REPO_RAW/proxy/wsclasico/$_pf" -o "$INSTALL_DIR/proxy/wsclasico/$_pf" 2>/dev/null || \
+            wget -q "$REPO_RAW/proxy/wsclasico/$_pf" -O "$INSTALL_DIR/proxy/wsclasico/$_pf" 2>/dev/null || true
+    done
+    chmod +x "$INSTALL_DIR/proxy/wsclasico/"*.sh "$INSTALL_DIR/proxy/wsclasico/wsproxy.py" 2>/dev/null || true
+    cp -af "$INSTALL_DIR/proxy/wsclasico/wsproxy.py" /usr/local/bin/wsproxy.py 2>/dev/null || true
+    cp -af "$INSTALL_DIR/proxy/wsclasico/wsproxy.py" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+    chmod 755 /usr/local/bin/wsproxy.py /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+
+    echo -e "${YELLOW}[3/3]${NC} Sincronizando módulos base sin activar ningún puerto ni servicio..."
+    for _py_mod in crisdev_db.py crisdev_checkuser.py crisdev_limiter.py crisdev_pam_banner.py crisdev_api_server.py; do
+        curl -fsSL "$REPO_RAW/$_py_mod" -o "$INSTALL_DIR/$_py_mod" 2>/dev/null || true
+        chmod +x "$INSTALL_DIR/$_py_mod" 2>/dev/null || true
+    done
+
+    echo ""
+    echo -e "${GREEN}✔ ACTUALIZACIÓN LIMPIA COMPLETADA.${NC}"
+    echo -e "${WHITE}  • No se instalaron paquetes ni se activó ningún puerto automáticamente.${NC}"
+    echo -e "${WHITE}  • Ejecuta ${GREEN}menu${WHITE} para administrar tus protocolos.${NC}\n"
+    exit 0
+fi
+
 if [[ "$IS_UPDATE" -eq 0 && "${1:-}" != "--update" && "${1:-}" != "-u" ]]; then
     choose_language
     choose_timezone
@@ -277,6 +313,18 @@ else
     wget -q "$REPO_RAW/ssh-cris.sh" -O "$INSTALL_DIR/$BIN_NAME"
 fi
 chmod +x "$INSTALL_DIR/$BIN_NAME"
+
+# Desplegar carpeta modular proxy/wsclasico (sin activar puertos automáticamente)
+mkdir -p "$INSTALL_DIR/proxy/wsclasico"
+for _pf in wsproxy.py instalar.sh desinstalar.sh check.sh ws.conf.template; do
+    if [[ -f "./proxy/wsclasico/$_pf" ]]; then
+        cp -af "./proxy/wsclasico/$_pf" "$INSTALL_DIR/proxy/wsclasico/$_pf"
+    else
+        curl -fsSL "$REPO_RAW/proxy/wsclasico/$_pf" -o "$INSTALL_DIR/proxy/wsclasico/$_pf" 2>/dev/null || \
+        wget -q "$REPO_RAW/proxy/wsclasico/$_pf" -O "$INSTALL_DIR/proxy/wsclasico/$_pf" 2>/dev/null || true
+    fi
+done
+chmod +x "$INSTALL_DIR/proxy/wsclasico/"*.sh "$INSTALL_DIR/proxy/wsclasico/wsproxy.py" 2>/dev/null || true
 
 # Desplegar componentes backend Python CRISDEV v2.0
 echo -e "${YELLOW}[*]${NC} Desplegando motor de base de datos SQLite WAL y demonios CRISDEV..."

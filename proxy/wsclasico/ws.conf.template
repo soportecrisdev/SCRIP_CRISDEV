@@ -1,0 +1,12 @@
+# ==============================================================================
+# Plantilla de Configuración — CRISDEV WebSocket Clásico Python v4.6
+# ==============================================================================
+LISTEN_ADDR=0.0.0.0
+LISTEN_PORT=80
+TARGET_HOST=127.0.0.1
+TARGET_PORT=22
+HTTP_STATUS=101
+BANNER_MSG="<font color=\"cyan\"><b>HTTP CONEXION</b></font>"
+BANNER_RAW="HTTP CONEXION"
+BANNER_COLOR="cyan"
+CUSTOM_HEADERS=""
