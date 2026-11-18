@@ -67,7 +67,62 @@ ensure_dirs() {
     mkdir -p "${INSTALL_DIR}"
     touch "${PORTS_FILE}"
     chmod 600 "${PORTS_FILE}" 2>/dev/null || true
+    ensure_bbr
+    ensure_sshd_tuning
     reconcile_ports
+}
+
+ensure_sshd_tuning() {
+    local sshd_cfg="/etc/ssh/sshd_config"
+    [[ -f "$sshd_cfg" ]] || return 0
+    local changed=0
+    
+    # Crear drop-in de límites para el servicio systemd de ssh (evita fallo ppoll: Invalid argument)
+    mkdir -p /etc/systemd/system/ssh.service.d 2>/dev/null || true
+    cat << 'EOF_LIMITS' > /etc/systemd/system/ssh.service.d/limits.conf
+[Service]
+LimitNOFILE=65536
+LimitNPROC=65536
+TasksMax=infinity
+EOF_LIMITS
+    systemctl daemon-reload >/dev/null 2>&1 || true
+
+    if ! grep -q "^MaxStartups 200:30:500" "$sshd_cfg" 2>/dev/null; then
+        sed -i 's/^#*MaxStartups.*/MaxStartups 200:30:500/' "$sshd_cfg"
+        grep -q "^MaxStartups 200:30:500" "$sshd_cfg" || echo "MaxStartups 200:30:500" >> "$sshd_cfg"
+        changed=1
+    fi
+    if ! grep -q "^MaxSessions 256" "$sshd_cfg" 2>/dev/null; then
+        sed -i 's/^#*MaxSessions.*/MaxSessions 256/' "$sshd_cfg"
+        grep -q "^MaxSessions 256" "$sshd_cfg" || echo "MaxSessions 256" >> "$sshd_cfg"
+        changed=1
+    fi
+    if [[ "$changed" -eq 1 ]]; then
+        systemctl restart ssh >/dev/null 2>&1 || systemctl restart sshd >/dev/null 2>&1 || service ssh restart >/dev/null 2>&1 || true
+    fi
+}
+
+ensure_bbr() {
+    if ! sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q "bbr"; then
+        modprobe tcp_bbr 2>/dev/null || true
+        cat << 'EOF' > /etc/sysctl.d/99-hcr-tuning.conf
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.core.rmem_default = 1048576
+net.core.wmem_default = 1048576
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.core.somaxconn = 8192
+net.core.netdev_max_backlog = 16384
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 15
+EOF
+        sysctl --system >/dev/null 2>&1 || true
+    fi
 }
 
 ensure_binary() {
@@ -183,7 +238,16 @@ create_unit() {
         elif [[ -f "/etc/bhttp/server.crt" && -f "/etc/bhttp/server.key" ]]; then
             tls_args=" --tls-cert /etc/bhttp/server.crt --tls-key /etc/bhttp/server.key"
         else
-            transport="plain"
+            # Generar certificado autofirmado para HCR si se pide TLS/auto y no existe ninguno
+            echo -e "${YELLOW}[*] Generando certificado SSL autofirmado para HCR...${NC}"
+            openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 \
+                -subj "/C=US/ST=VPN/L=Server/O=HCR/CN=hcr.server" \
+                -keyout "${INSTALL_DIR}/privkey.pem" -out "${INSTALL_DIR}/fullchain.pem" >/dev/null 2>&1 || true
+            if [[ -f "${INSTALL_DIR}/fullchain.pem" && -f "${INSTALL_DIR}/privkey.pem" ]]; then
+                tls_args=" --tls-cert ${INSTALL_DIR}/fullchain.pem --tls-key ${INSTALL_DIR}/privkey.pem"
+            else
+                transport="plain"
+            fi
         fi
     fi
 
@@ -197,7 +261,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=${INSTALL_DIR}
-ExecStart=${BINARY_PATH} --listen :${port} --target ${target} --transport ${transport}${tls_args} --max-download-frame ${frame} --download-poll-timeout ${poll}
+ExecStart=${BINARY_PATH} --listen :${port} --target ${target} --transport ${transport}${tls_args} --max-download-frame ${frame} --download-poll-timeout ${poll} --max-connections 8192 --max-sessions 2048 --max-sessions-per-ip 256
 Restart=always
 RestartSec=3s
 LimitNOFILE=65535

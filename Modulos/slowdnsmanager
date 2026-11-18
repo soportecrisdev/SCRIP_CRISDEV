@@ -372,7 +372,11 @@ slow_detect_targets() {
 		port="$(ps x | grep '[S]SHPlus/proxy.py' | head -1 | awk '{print $NF}')"
 		slow_add_target "PROXY SOCKS" "$port"
 	fi
-	if pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
+	if systemctl is-active --quiet sshplus-ws.service 2>/dev/null || pgrep -x wsproxy-c >/dev/null 2>&1; then
+		port="$(grep '^LISTEN_PORT=' /etc/sshplus-ws.conf 2>/dev/null | cut -d= -f2)"
+		[[ "$port" =~ ^[0-9]+$ ]] || port="80"
+		slow_add_target "WEBSOCKET" "$port"
+	elif pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
 		port="$(ps x | grep '[S]SHPlus/wsproxy.py' | head -1 | awk '{print $NF}')"
 		slow_add_target "WEBSOCKET" "$port"
 	fi

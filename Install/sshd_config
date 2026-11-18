@@ -21,6 +21,14 @@ X11DisplayOffset 10
 PrintMotd no
 PrintLastLog yes
 TCPKeepAlive yes
+ClientAliveInterval 30
+ClientAliveCountMax 5
+AllowTcpForwarding yes
+AllowAgentForwarding yes
+GatewayPorts yes
+MaxStartups 100:30:200
+MaxSessions 100
+UseDNS no
 #UseLogin no
 AcceptEnv LANG LC_*
 Subsystem sftp /usr/lib/openssh/sftp-server

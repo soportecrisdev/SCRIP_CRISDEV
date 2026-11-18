@@ -124,7 +124,7 @@ echo -e "\n${YELLOW}[3/5] Analizando puertos en uso en la VPS...${NC}"
 
 check_port_in_use() {
     local port="$1"
-    ss -lntu | awk '{print $5}' | grep -E "(:|\])$port$" >/dev/null 2>&1
+    ss -lntup 2>/dev/null | grep -v 'bhttp-server' | awk '{print $5}' | grep -E "(:|\])$port$" >/dev/null 2>&1
 }
 
 # Mostrar servicios conocidos detectados
@@ -137,7 +137,9 @@ DEFAULT_SSH_PORT="${SSH_PORT:-22}"
 
 if [[ -z "$SELECTED_BHTTP_PORT" ]]; then
     # Evaluar puertos sugeridos para evitar pisar V2Ray (8080) o Proxy Socks (80)
-    if ! check_port_in_use 8881; then
+    if ! check_port_in_use 8080; then
+        SUGGESTED_PORT="8080"
+    elif ! check_port_in_use 8881; then
         SUGGESTED_PORT="8881"
     elif ! check_port_in_use 7081; then
         SUGGESTED_PORT="7081"
@@ -168,82 +170,154 @@ else
 fi
 
 # ============================================================================
-# 4. CONFIGURACIÓN O ACTUALIZACIÓN DEL SERVICIO BILOLA-SERVER
+# 4. COMPILACIÓN E INSTALACIÓN DEL MOTOR NATIVO C BHTTP (AVX2 + LONG-POLLING)
 # ============================================================================
-echo -e "\n${YELLOW}[4/5] Configurando servicio bilola-server...${NC}"
+echo -e "\n${YELLOW}[4/5] Compilando e instalando Motor BHTTP C (AVX2 x8 + Long-Polling 800ms)...${NC}"
 
-# Buscar binario bilola-server
-BILOLA_BIN=""
-for path in /usr/local/lib/bilola/bilola-server /usr/local/lib/btun/bilola-server /root/BTUN/bin/amd64/bilola-server /opt/crisdev/btun/bilola-server; do
-    if [[ -x "$path" ]]; then
-        BILOLA_BIN="$path"
-        break
-    fi
-done
+mkdir -p /etc/bhttp /etc/bhttp/certs /usr/local/bin
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
+if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/bhttp-server.c" ]]; then
+    cp -f "$SCRIPT_DIR/bhttp-server.c" /etc/bhttp/bhttp-server.c 2>/dev/null || true
+fi
+if [[ ! -s /etc/bhttp/bhttp-server.c ]]; then
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server.c" -o /etc/bhttp/bhttp-server.c 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server.c" -O /etc/bhttp/bhttp-server.c 2>/dev/null || true
+fi
 
-if [[ -z "$BILOLA_BIN" ]]; then
-    # Copiar desde el paquete local si existe
-    if [[ -f "/root/BTUN/bin/$(uname -m)/bilola-server" ]]; then
-        mkdir -p /usr/local/lib/bilola
-        cp "/root/BTUN/bin/$(uname -m)/bilola-server" /usr/local/lib/bilola/bilola-server
-        chmod +x /usr/local/lib/bilola/bilola-server
-        BILOLA_BIN="/usr/local/lib/bilola/bilola-server"
+if ! command -v gcc >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gcc libc6-dev >/dev/null 2>&1 || true
+fi
+
+systemctl stop bhttp.service bilola-go-server.service wakkodev-bhttp.service 2>/dev/null || true
+rm -f /etc/systemd/system/bilola-go-server.service /etc/systemd/system/wakkodev-bhttp.service 2>/dev/null || true
+
+if [[ -s /etc/bhttp/bhttp-server.c ]] && command -v gcc >/dev/null 2>&1; then
+    if gcc -O3 -march=native -mtune=native -pthread -o /usr/local/bin/bhttp-server.new /etc/bhttp/bhttp-server.c 2>/dev/null || \
+       gcc -O2 -pthread -o /usr/local/bin/bhttp-server.new /etc/bhttp/bhttp-server.c 2>/dev/null; then
+        mv -f /usr/local/bin/bhttp-server.new /usr/local/bin/bhttp-server
+        chmod 755 /usr/local/bin/bhttp-server
+        ln -sfn /usr/local/bin/bhttp-server /usr/local/bin/bhttp 2>/dev/null || true
+        ln -sfn /usr/local/bin/bhttp-server /bin/bhttp-server 2>/dev/null || true
+        ln -sfn /usr/local/bin/bhttp-server /bin/bhttp 2>/dev/null || true
+        /usr/local/bin/bhttp-server --self-test || true
     fi
 fi
 
-if [[ -n "$BILOLA_BIN" ]]; then
-    cat > /etc/systemd/system/bilola-go-server.service <<EOF
+BHTTP_LISTEN_LIST="0.0.0.0:8080,0.0.0.0:8088,0.0.0.0:8881"
+if [[ -n "$SELECTED_BHTTP_PORT" && "$SELECTED_BHTTP_PORT" != "8080" && "$SELECTED_BHTTP_PORT" != "8088" && "$SELECTED_BHTTP_PORT" != "8881" ]]; then
+    BHTTP_LISTEN_LIST="0.0.0.0:${SELECTED_BHTTP_PORT},${BHTTP_LISTEN_LIST}"
+fi
+
+cat > /etc/bhttp/config <<EOF
+BHTTP_PORT=8080,8088,8881
+BACKEND_PORT=${DEFAULT_SSH_PORT}
+SESSION_TTL=180
+MAX_SESSIONS=4096
+PROFILE=performance
+EOF
+
+cat > /etc/systemd/system/bhttp.service <<EOF
 [Unit]
-Description=Bilola BHTTP Go server (CRISDEV)
-After=network-online.target ssh.service
+Description=HTTP Conexion BHTTP C Engine (AVX2 + Long-Polling 800ms)
+After=network-online.target ssh.service sshd.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$BILOLA_BIN --listen 0.0.0.0:$SELECTED_BHTTP_PORT --target 127.0.0.1:$DEFAULT_SSH_PORT
-Restart=on-failure
-RestartSec=3
-User=root
-LimitNOFILE=65536
-NoNewPrivileges=true
+EnvironmentFile=-/etc/bhttp/config
+ExecStart=/usr/local/bin/bhttp-server --listen ${BHTTP_LISTEN_LIST} --backend 127.0.0.1:${DEFAULT_SSH_PORT} --session-ttl 180 --max-sessions 4096 --max-per-ip 256 --poll-wait-ms 800 --max-requests-per-conn 2048
+Restart=always
+RestartSec=1
+LimitNOFILE=524288
+TasksMax=infinity
+OOMScoreAdjust=-300
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable bilola-go-server >/dev/null 2>&1 || true
-    systemctl restart bilola-go-server 2>/dev/null || systemctl start bilola-go-server 2>/dev/null || true
-    echo -e "${GREEN}[OK] Servicio bilola-go-server activo en puerto $SELECTED_BHTTP_PORT -> SSH $DEFAULT_SSH_PORT${NC}"
-else
-    echo -e "${YELLOW}[INFO] Binario bilola-server no detectado aún en el sistema.${NC}"
-    echo -e "       El puerto $SELECTED_BHTTP_PORT ha quedado preparado para cuando instales el servicio con BTUN."
+# Configurar BHTTP TLS (XHTTP) en puertos Cloudflare (2053, 2083) + directo (8444) si existe xhttp-server
+if [[ -x /usr/local/bin/xhttp-server ]]; then
+    if [[ ! -f /etc/bhttp/server.crt || ! -f /etc/bhttp/server.key ]]; then
+        openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
+            -keyout /etc/bhttp/server.key -out /etc/bhttp/server.crt -subj "/CN=crisdev.online" >/dev/null 2>&1 || true
+        chmod 600 /etc/bhttp/server.key 2>/dev/null || true
+        chmod 644 /etc/bhttp/server.crt 2>/dev/null || true
+    fi
+    echo "2053,2083,8444" > /etc/bhttp/tls_port
+    cat > /etc/systemd/system/bhttp-tls.service <<EOF
+[Unit]
+Description=HTTP Conexion BHTTP TLS (XHTTP) Relay Service (Ports 2053, 2083, 8444)
+After=network-online.target ssh.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/xhttp-server -listen 0.0.0.0:2053,0.0.0.0:2083,0.0.0.0:8444 -target 127.0.0.1:${DEFAULT_SSH_PORT} -tls-cert /etc/bhttp/server.crt -tls-key /etc/bhttp/server.key -session-timeout 5m
+Restart=always
+RestartSec=1
+LimitNOFILE=524288
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl enable --now bhttp-tls.service >/dev/null 2>&1 || true
+    systemctl restart bhttp-tls.service 2>/dev/null || true
 fi
 
-# ============================================================================
-# 5. ENRUTAMIENTO Y FIREWALL
-# ============================================================================
-echo -e "\n${YELLOW}[5/5] Configurando Firewall y Enrutamiento de Paquetes...${NC}"
+systemctl daemon-reload
+systemctl enable --now bhttp.service >/dev/null 2>&1 || true
+systemctl restart bhttp.service 2>/dev/null || true
+echo -e "${GREEN}[OK] Servicio bhttp.service activo (${BHTTP_LISTEN_LIST}) -> SSH 127.0.0.1:${DEFAULT_SSH_PORT}${NC}"
 
-# Habilitar IP Forwarding en el Kernel
+# ============================================================================
+# 5. ENRUTAMIENTO, KERNEL BBR Y FIREWALL
+# ============================================================================
+echo -e "\n${YELLOW}[5/5] Configurando Kernel BBR, Keepalive 60s y Firewall...${NC}"
+
+modprobe tcp_bbr 2>/dev/null || true
 mkdir -p /etc/sysctl.d
 cat > /etc/sysctl.d/99-bhttp.conf <<'EOF'
-net.ipv4.ip_forward=1
-net.ipv6.conf.all.forwarding=1
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+fs.file-max = 2097152
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 100000
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.ipv4.tcp_rmem = 4096 87380 67108864
+net.ipv4.tcp_wmem = 4096 65536 67108864
+net.ipv4.ip_local_port_range = 10240 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.tcp_max_tw_buckets = 2000000
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.tcp_keepalive_intvl = 10
+net.ipv4.tcp_keepalive_probes = 6
+net.ipv4.tcp_mtu_probing = 1
 EOF
-sysctl -p /etc/sysctl.d/99-bhttp.conf >/dev/null 2>&1 || sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+sysctl -p /etc/sysctl.d/99-bhttp.conf >/dev/null 2>&1 || sysctl --system >/dev/null 2>&1 || true
 
-# Abrir puertos en UFW si está activo
-if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
-    ufw allow "$SELECTED_BHTTP_PORT/tcp" comment "BHTTP Relay" >/dev/null 2>&1 || true
-    ufw allow 7300/udp comment "UDPGW / BTUN" >/dev/null 2>&1 || true
-    ufw allow 7300/tcp comment "UDPGW / BTUN" >/dev/null 2>&1 || true
-    echo -e "${GREEN}[OK] Reglas agregadas en UFW para $SELECTED_BHTTP_PORT/tcp y 7300/udp${NC}"
-elif command -v iptables >/dev/null 2>&1; then
-    iptables -I INPUT -p tcp --dport "$SELECTED_BHTTP_PORT" -j ACCEPT 2>/dev/null || true
-    iptables -I INPUT -p udp --dport 7300 -j ACCEPT 2>/dev/null || true
-    echo -e "${GREEN}[OK] Reglas añadidas en iptables para puertos $SELECTED_BHTTP_PORT y 7300.${NC}"
+for p in 8080 8088 8881 2053 2083 8444 "$SELECTED_BHTTP_PORT"; do
+    [[ -z "$p" ]] && continue
+    if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
+        ufw allow "$p/tcp" comment "BHTTP/XHTTP Relay" >/dev/null 2>&1 || true
+    fi
+    if command -v iptables >/dev/null 2>&1; then
+        iptables -C INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null || true
+    fi
+done
+if command -v iptables >/dev/null 2>&1 && [[ -d /etc/iptables ]]; then
+    iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
 fi
+echo -e "${GREEN}[OK] Reglas de Firewall y Kernel BBR aplicadas para BHTTP/XHTTP (8080, 8088, 8881, 2053, 2083, 8444).${NC}"
 
 # ============================================================================
 # REPORTE FINAL

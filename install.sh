@@ -278,6 +278,93 @@ else
 fi
 chmod +x "$INSTALL_DIR/$BIN_NAME"
 
+# Desplegar componentes backend Python CRISDEV v2.0
+echo -e "${YELLOW}[*]${NC} Desplegando motor de base de datos SQLite WAL y demonios CRISDEV..."
+mkdir -p "$INSTALL_DIR" /etc/crisdev /var/log/crisdev
+
+for _py_mod in crisdev_db.py crisdev_checkuser.py crisdev_limiter.py crisdev_pam_banner.py crisdev_api_server.py; do
+    if [[ -f "./$_py_mod" ]]; then
+        cp -af "./$_py_mod" "$INSTALL_DIR/$_py_mod"
+    else
+        curl -fsSL "$REPO_RAW/$_py_mod" -o "$INSTALL_DIR/$_py_mod" 2>/dev/null || \
+        wget -q "$REPO_RAW/$_py_mod" -O "$INSTALL_DIR/$_py_mod" 2>/dev/null || true
+    fi
+    chmod +x "$INSTALL_DIR/$_py_mod" 2>/dev/null || true
+    ln -sfn "$INSTALL_DIR/$_py_mod" "/usr/local/bin/$_py_mod" 2>/dev/null || true
+done
+
+# Inicializar Base de Datos SQLite WAL y sincronizar usuarios existentes
+python3 -c "import sys; sys.path.append('$INSTALL_DIR'); import crisdev_db; crisdev_db.init_db(); crisdev_db.sync_from_system()" >/dev/null 2>&1 || true
+
+# Configurar servicio systemd: CheckUser & aToken (Puertos 5000 y 8888)
+cat > /etc/systemd/system/crisdev-checkuser.service << 'EOF'
+[Unit]
+Description=CRISDEV CheckUser & aToken Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ssh-cris
+ExecStart=/usr/bin/python3 /opt/ssh-cris/crisdev_checkuser.py
+Restart=always
+RestartSec=3
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Configurar servicio systemd: Limitador Multilogin Multi-Protocolo
+cat > /etc/systemd/system/crisdev-limiter.service << 'EOF'
+[Unit]
+Description=CRISDEV Multi-Protocol Limiter Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ssh-cris
+ExecStart=/usr/bin/python3 /opt/ssh-cris/crisdev_limiter.py
+Restart=always
+RestartSec=5
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Configurar servicio systemd: API REST Catálogo y Clúster (Puerto 8088)
+cat > /etc/systemd/system/crisdev-api.service << 'EOF'
+[Unit]
+Description=CRISDEV Server API & Cluster Sync Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ssh-cris
+ExecStart=/usr/bin/python3 /opt/ssh-cris/crisdev_api_server.py --port 8088
+Restart=always
+RestartSec=3
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl enable crisdev-checkuser.service crisdev-limiter.service crisdev-api.service >/dev/null 2>&1 || true
+systemctl restart crisdev-checkuser.service crisdev-limiter.service crisdev-api.service >/dev/null 2>&1 || true
+
+# Configurar banner dinámico PAM en OpenSSH
+if ! grep -q 'crisdev_pam_banner.py' /etc/pam.d/sshd 2>/dev/null; then
+    echo "session optional pam_exec.so stdout /usr/bin/python3 /opt/ssh-cris/crisdev_pam_banner.py" >> /etc/pam.d/sshd
+fi
+
 # Instalar BadVPN (badvpn-udpgw) binario y compilar si es necesario
 echo -e "${YELLOW}[*]${NC} Compilando e instalando BadVPN udpgw..."
 if [[ ! -x /usr/local/bin/badvpn-udpgw && ! -x /bin/badvpn-udpgw ]]; then
@@ -303,15 +390,175 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 9000 --max-connections-for-client 5 --client-socket-sndbuf 10000
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1024 --max-connections-for-client 64 --client-socket-sndbuf 262144
 Restart=always
 RestartSec=2
+LimitNOFILE=65535
+MemoryHigh=384M
+MemoryMax=512M
 
 [Install]
 WantedBy=multi-user.target
 EOF
 systemctl daemon-reload >/dev/null 2>&1 || true
 # BadVPN service installed (will start only when activated from menu)
+
+# ==============================================================================
+# Instalar Motor Nativo C epoll WebSocket/HTTP Proxy (wsproxy-c) en Puerto 80
+# ==============================================================================
+echo -e "${YELLOW}[*]${NC} Compilando e instalando Motor Nativo wsproxy-c (epoll - Puerto 80)..."
+mkdir -p /usr/local/src /usr/local/bin
+WS_ARCH="$(uname -m)"
+if [[ -f "./wsproxy-c.c" ]]; then
+    cp -af "./wsproxy-c.c" /usr/local/src/wsproxy-c.c
+else
+    curl -fsSL "${REPO_RAW}/wsproxy-c.c" -o /usr/local/src/wsproxy-c.c 2>/dev/null || \
+    wget -qO /usr/local/src/wsproxy-c.c "${REPO_RAW}/wsproxy-c.c" 2>/dev/null || true
+fi
+if [[ -s /usr/local/src/wsproxy-c.c ]] && command -v gcc >/dev/null 2>&1; then
+    gcc -O2 -Wall -Wextra -o /usr/local/bin/wsproxy-c.tmp /usr/local/src/wsproxy-c.c 2>/dev/null && \
+        mv -f /usr/local/bin/wsproxy-c.tmp /usr/local/bin/wsproxy-c || rm -f /usr/local/bin/wsproxy-c.tmp
+fi
+if [[ ! -x /usr/local/bin/wsproxy-c ]]; then
+    if [[ "$WS_ARCH" == "x86_64" || "$WS_ARCH" == "amd64" ]]; then
+        [[ -f "./wsproxy-c-amd64" ]] && cp -af "./wsproxy-c-amd64" /usr/local/bin/wsproxy-c || \
+        curl -fsSL "${REPO_RAW}/wsproxy-c-amd64" -o /usr/local/bin/wsproxy-c 2>/dev/null || \
+        wget -qO /usr/local/bin/wsproxy-c "${REPO_RAW}/wsproxy-c-amd64" 2>/dev/null || true
+    elif [[ "$WS_ARCH" == "aarch64" || "$WS_ARCH" == "arm64" ]]; then
+        [[ -f "./wsproxy-c-arm64" ]] && cp -af "./wsproxy-c-arm64" /usr/local/bin/wsproxy-c || \
+        curl -fsSL "${REPO_RAW}/wsproxy-c-arm64" -o /usr/local/bin/wsproxy-c 2>/dev/null || \
+        wget -qO /usr/local/bin/wsproxy-c "${REPO_RAW}/wsproxy-c-arm64" 2>/dev/null || true
+    fi
+fi
+chmod 755 /usr/local/bin/wsproxy-c 2>/dev/null || true
+
+# ==============================================================================
+# Configurar e Instalar Motor Dual WebSocket (Nativo en C + Clásico Python v4.5)
+# Zero-Reconnections Edition (Anti-CGNAT, Keepalive 20s/5s, Sin Timeouts Mutilados)
+# ==============================================================================
+mkdir -p /etc/crisdev /etc/SSHPlus
+
+# 1. Copiar Motor Python v4.5 Zero-Reconnect
+if [[ -f "./wsproxy.py" ]]; then
+    cp -af "./wsproxy.py" /usr/local/bin/wsproxy.py
+    cp -af "./wsproxy.py" /etc/SSHPlus/wsproxy.py
+elif [[ -f "/opt/ssh-cris/wsproxy.py" ]]; then
+    cp -af "/opt/ssh-cris/wsproxy.py" /usr/local/bin/wsproxy.py
+    cp -af "/opt/ssh-cris/wsproxy.py" /etc/SSHPlus/wsproxy.py
+else
+    curl -fsSL "${REPO_RAW}/wsproxy.py" -o /usr/local/bin/wsproxy.py 2>/dev/null || \
+    wget -qO /usr/local/bin/wsproxy.py "${REPO_RAW}/wsproxy.py" 2>/dev/null || true
+    cp -af /usr/local/bin/wsproxy.py /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+fi
+chmod 755 /usr/local/bin/wsproxy.py /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+ln -sfn /usr/local/bin/wsproxy.py /usr/bin/wsproxy.py 2>/dev/null || true
+
+# 2. Configuración Central WebSocket
+if [[ ! -f /etc/crisdev/ws.conf ]]; then
+    cat > /etc/crisdev/ws.conf << 'EOF'
+WS_ACTIVE_ENGINE=c
+LISTEN_ADDR=0.0.0.0
+LISTEN_PORT=80
+TARGET_HOST=127.0.0.1
+TARGET_PORT=22
+HTTP_STATUS=101
+BANNER_MSG=HTTP CONEXION WS
+IDLE_TIMEOUT=300
+MAX_CONNS=16384
+WS_C_PORT=80
+WS_PY_PORT=8080
+EOF
+    chmod 644 /etc/crisdev/ws.conf
+fi
+cp -af /etc/crisdev/ws.conf /etc/sshplus-ws.conf 2>/dev/null || true
+
+# 3. Servicio Systemd: Motor Nativo en C (crisdev-ws-c.service)
+cat > /etc/systemd/system/crisdev-ws-c.service << 'EOF'
+[Unit]
+Description=CRISDEV Native epoll WebSocket/HTTP Proxy (Port 80 C Core)
+After=network-online.target ssh.service
+Wants=network-online.target ssh.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/etc/crisdev/ws.conf
+ExecStart=/bin/sh -c 'exec /usr/local/bin/wsproxy-c --bind "${LISTEN_ADDR:-0.0.0.0}" --port "${LISTEN_PORT:-80}" --target "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" --status "${HTTP_STATUS:-101}" --idle "${IDLE_TIMEOUT:-300}" --max-conns "${MAX_CONNS:-16384}" ${BANNER_MSG:+--msg "$BANNER_MSG"}'
+Restart=always
+RestartSec=1
+OOMScoreAdjust=-900
+LimitNOFILE=65535
+MemoryMax=256M
+TasksMax=64
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 4. Servicio Systemd: Motor Clásico Python v4.5 epoll (crisdev-ws-python.service)
+cat > /etc/systemd/system/crisdev-ws-python.service << 'EOF'
+[Unit]
+Description=CRISDEV Ultra-Stable WebSocket/HTTP Proxy (Python v4.5 Zero-Reconnect)
+After=network-online.target ssh.service
+Wants=network-online.target ssh.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/etc/crisdev/ws.conf
+ExecStart=/usr/bin/python3 /usr/local/bin/wsproxy.py -b "${LISTEN_ADDR:-0.0.0.0}" -p "${LISTEN_PORT:-80}" -t "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" -s "${HTTP_STATUS:-101}" ${BANNER_MSG:+-m "$BANNER_MSG"}
+Restart=always
+RestartSec=1
+OOMScoreAdjust=-900
+LimitNOFILE=65535
+MemoryMax=512M
+TasksMax=128
+NoNewPrivileges=yes
+ProtectSystem=full
+PrivateTmp=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Alias de compatibilidad hacia el servicio activo
+ln -sfn /etc/systemd/system/crisdev-ws-c.service /etc/systemd/system/sshplus-ws.service 2>/dev/null || true
+
+# 5. Tuning TCP Agresivo Anti-Desconexión Móvil (Tigo, Claro, Movistar, CGNAT)
+cat > /etc/sysctl.d/99-crisdev-cdn-tuning.conf << 'EOF'
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_slow_start_after_idle = 0
+net.core.somaxconn = 8192
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_tw_reuse = 1
+# Sondeo TCP agresivo a los 30s para evitar que las antenas CGNAT maten el túnel
+net.ipv4.tcp_keepalive_time = 30
+net.ipv4.tcp_keepalive_intvl = 5
+net.ipv4.tcp_keepalive_probes = 3
+net.ipv4.tcp_fin_timeout = 15
+EOF
+sysctl --system >/dev/null 2>&1 || true
+
+# Eliminar arranques legacy de wsproxy.py en /etc/autostart para evitar colisiones
+[[ -f /etc/autostart ]] && sed -i '/wsproxy\.py/d' /etc/autostart 2>/dev/null || true
+systemctl daemon-reload >/dev/null 2>&1 || true
+
+# Iniciar por defecto Motor Nativo en C (o Python si no hay binario)
+if [[ -x /usr/local/bin/wsproxy-c ]]; then
+    systemctl enable --now crisdev-ws-c.service >/dev/null 2>&1 || true
+else
+    systemctl enable --now crisdev-ws-python.service >/dev/null 2>&1 || true
+fi
 
 # Instalar Core UDP CRIS (Hysteria v1.3.5)
 echo -e "${YELLOW}[*]${NC} Descargando Core UDP CRIS (Hysteria v1.3.5)..."
@@ -383,17 +630,56 @@ ln -sfn /usr/local/bin/chisel /usr/bin/chisel 2>/dev/null || true
 ln -sfn /usr/local/bin/chisel /bin/chisel 2>/dev/null || true
 chmod 755 /bin/chisel /usr/bin/chisel 2>/dev/null || true
 
-# Instalar Core BHTTP (Plano) y XHTTP (TLS/HTTP2)
-echo -e "${YELLOW}[*]${NC} Descargando Cores BHTTP & BHTTP-TLS (XHTTP)..."
-mkdir -p /etc/bhttp /etc/bhttp/certs
+# Instalar Core BHTTP (Motor C AVX2 + Long-Polling 800ms + BHP2 Lanes) y XHTTP (TLS/HTTP2)
+echo -e "${YELLOW}[*]${NC} Instalando Cores BHTTP v3 (Motor C AVX2/BHP2) & BHTTP-TLS (XHTTP)..."
+mkdir -p /etc/bhttp /etc/bhttp/certs /etc/sysctl.d
+if [[ -f "./bhttp-server.c" ]]; then
+    cp -af "./bhttp-server.c" /etc/bhttp/bhttp-server.c
+else
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server.c" -o /etc/bhttp/bhttp-server.c 2>/dev/null || \
+    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server.c" -O /etc/bhttp/bhttp-server.c 2>/dev/null || true
+fi
+
+if [[ -s /etc/bhttp/bhttp-server.c ]] && ! command -v gcc >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+        DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gcc 2>/dev/null || true
+    fi
+fi
+
+BHTTP_C_BUILT=0
+if [[ -s /etc/bhttp/bhttp-server.c ]] && command -v gcc >/dev/null 2>&1; then
+    if gcc -O3 -march=native -mtune=native -pthread -o /usr/local/bin/bhttp-server /etc/bhttp/bhttp-server.c 2>/dev/null || \
+       gcc -O2 -pthread -o /usr/local/bin/bhttp-server /etc/bhttp/bhttp-server.c 2>/dev/null; then
+        BHTTP_C_BUILT=1
+    fi
+fi
+
+cat > /etc/sysctl.d/99-crisdev-bhttp.conf << 'EOF_SYSCTL_BHTTP_INST'
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_fastopen = 3
+net.core.somaxconn = 16384
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+EOF_SYSCTL_BHTTP_INST
+sysctl -p /etc/sysctl.d/99-crisdev-bhttp.conf >/dev/null 2>&1 || true
+
 if [[ "$ARCH" == "x86_64" || "$ARCH" == "amd64" ]]; then
-    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-amd64" -o /usr/local/bin/bhttp-server 2>/dev/null || \
-    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-amd64" -O /usr/local/bin/bhttp-server 2>/dev/null || true
+    if [[ "$BHTTP_C_BUILT" -eq 0 ]]; then
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-amd64" -o /usr/local/bin/bhttp-server 2>/dev/null || \
+        wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-amd64" -O /usr/local/bin/bhttp-server 2>/dev/null || true
+    fi
     curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-amd64" -o /usr/local/bin/xhttp-server 2>/dev/null || \
     wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-amd64" -O /usr/local/bin/xhttp-server 2>/dev/null || true
 elif [[ "$ARCH" == "aarch64" || "$ARCH" == "arm64" ]]; then
-    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-arm64" -o /usr/local/bin/bhttp-server 2>/dev/null || \
-    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-arm64" -O /usr/local/bin/bhttp-server 2>/dev/null || true
+    if [[ "$BHTTP_C_BUILT" -eq 0 ]]; then
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-arm64" -o /usr/local/bin/bhttp-server 2>/dev/null || \
+        wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server-arm64" -O /usr/local/bin/bhttp-server 2>/dev/null || true
+    fi
     curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-arm64" -o /usr/local/bin/xhttp-server 2>/dev/null || \
     wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/xhttp-server-arm64" -O /usr/local/bin/xhttp-server 2>/dev/null || true
 fi
@@ -505,18 +791,19 @@ sanitize_broken_symlinks() {
 }
 sanitize_broken_symlinks
 
-echo -e "${YELLOW}[3/4]${NC} Creando accesos directos y enlaces globales..."
+echo -e "${YELLOW}[3/4]${NC} Creando acceso canónico 'menu' y enlaces globales..."
+# Garantizar que 'menu' sea la ÚNICA palabra oficial para abrir la suite
+rm -f /bin/menu /usr/bin/menu /usr/local/bin/menu 2>/dev/null || true
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/menu
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/menu
+ln -sfn "$INSTALL_DIR/$BIN_NAME" /bin/menu
+chmod +x "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/menu /usr/bin/menu /bin/menu 2>/dev/null || true
+
+# Accesos secundarios silenciosos
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/ssh-cris
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/cris
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/ssh-cris 2>/dev/null || true
 ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/cris 2>/dev/null || true
-
-# Garantizar que 'menu' ejecute siempre el menú oficial (/bin/menu)
-if [[ -f "/bin/menu" ]]; then
-    ln -sfn /bin/menu /usr/local/bin/menu 2>/dev/null || true
-    ln -sfn /bin/menu /usr/bin/menu 2>/dev/null || true
-    chmod +x /bin/menu /usr/local/bin/menu /usr/bin/menu 2>/dev/null || true
-fi
 
 # Garantizar que 'connection' y 'conexao' ejecuten el gestor de protocolos (/bin/connection)
 if [[ -f "/bin/connection" ]]; then
@@ -628,23 +915,81 @@ BASHRC_BANNER
 
 echo -e "${GREEN}[✔]${NC} Banner exclusivo de bienvenida HTTP Conexión configurado."
 
-echo -e "${YELLOW}[4/4]${NC} Optimizando puertos SSH base y firewall..."
+echo -e "${YELLOW}[4/4]${NC} Optimizando Kernel TCP BBR, puertos SSH base y firewall..."
+modprobe tcp_bbr 2>/dev/null || true
+mkdir -p /etc/sysctl.d
+cat > /etc/sysctl.d/99-bbr-crisdev.conf << 'EOF_BBR'
+# ==============================================================================
+#  SSH-CRIS / HTTP CONEXIÓN — TCP BBR & BUFFER OPTIMIZER (sysctl)
+# ==============================================================================
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+
+# Buffers de Socket TCP y UDP de alta velocidad (64 MB)
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.core.rmem_default = 262144
+net.core.wmem_default = 262144
+net.core.optmem_max = 2048576
+
+# Rangos de memoria TCP (min, default, max)
+net.ipv4.tcp_rmem = 4096 87380 67108864
+net.ipv4.tcp_wmem = 4096 65536 67108864
+net.ipv4.udp_rmem_min = 16384
+net.ipv4.udp_wmem_min = 16384
+
+# Optimizaciones de Latencia, Keepalive Anti-CGNAT y Red
+net.ipv4.tcp_window_scaling = 1
+net.ipv4.tcp_timestamps = 1
+net.ipv4.tcp_sack = 1
+net.ipv4.tcp_dsack = 1
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_no_metrics_save = 1
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.tcp_keepalive_intvl = 10
+net.ipv4.tcp_keepalive_probes = 6
+net.ipv4.ip_local_port_range = 10240 65535
+
+# Conexiones simultáneas y cola de red
+net.core.netdev_max_backlog = 100000
+net.core.somaxconn = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.tcp_max_tw_buckets = 2000000
+fs.file-max = 2097152
+EOF_BBR
+sysctl -p /etc/sysctl.d/99-bbr-crisdev.conf >/dev/null 2>&1 || sysctl --system >/dev/null 2>&1 || true
+
 sed -i 's/#*AllowTcpForwarding.*/AllowTcpForwarding yes/' /etc/ssh/sshd_config 2>/dev/null || true
 sed -i 's/#*GatewayPorts.*/GatewayPorts yes/' /etc/ssh/sshd_config 2>/dev/null || true
 sed -i 's/#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
-sed -i 's/#*PermitOpen.*/PermitOpen any/' /etc/ssh/sshd_config 2>/dev/null || true
-sed -i 's/#*ClientAliveInterval.*/ClientAliveInterval 30/' /etc/ssh/sshd_config 2>/dev/null || true
-sed -i 's/#*ClientAliveCountMax.*/ClientAliveCountMax 3/' /etc/ssh/sshd_config 2>/dev/null || true
-if ! grep -q "^AllowTcpForwarding yes" /etc/ssh/sshd_config 2>/dev/null; then
-    echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config 2>/dev/null || true
-fi
+sed -i 's/#*TCPKeepAlive.*/TCPKeepAlive yes/' /etc/ssh/sshd_config 2>/dev/null || true
+grep -q "^ClientAliveInterval" /etc/ssh/sshd_config 2>/dev/null && sed -i 's/^#*ClientAliveInterval.*/ClientAliveInterval 25/' /etc/ssh/sshd_config || echo "ClientAliveInterval 25" >> /etc/ssh/sshd_config
+grep -q "^ClientAliveCountMax" /etc/ssh/sshd_config 2>/dev/null && sed -i 's/^#*ClientAliveCountMax.*/ClientAliveCountMax 4/' /etc/ssh/sshd_config || echo "ClientAliveCountMax 4" >> /etc/ssh/sshd_config
+grep -q "^MaxSessions" /etc/ssh/sshd_config 2>/dev/null && sed -i 's/^#*MaxSessions.*/MaxSessions 100/' /etc/ssh/sshd_config || echo "MaxSessions 100" >> /etc/ssh/sshd_config
+grep -q "^MaxStartups" /etc/ssh/sshd_config 2>/dev/null && sed -i 's/^#*MaxStartups.*/MaxStartups 100:30:200/' /etc/ssh/sshd_config || echo "MaxStartups 100:30:200" >> /etc/ssh/sshd_config
+grep -q "^UseDNS" /etc/ssh/sshd_config 2>/dev/null && sed -i 's/^#*UseDNS.*/UseDNS no/' /etc/ssh/sshd_config || echo "UseDNS no" >> /etc/ssh/sshd_config
 systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || true
+
+for _p in 22 80 443 5000 8080 8088 8888 8881 8444; do
+    iptables -C INPUT -p tcp --dport "$_p" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$_p" -j ACCEPT 2>/dev/null || true
+    ufw allow "$_p"/tcp >/dev/null 2>&1 || true
+done
+if [[ -d /etc/iptables ]]; then
+    iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+fi
 
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
 echo -e "${WHITE}  ⚡ ¡SUITE HTTP CONEXIÓN (CRISDEV) INSTALADA CON ÉXITO! ⚡${NC}"
 echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
-echo -e "${WHITE}Escribe ${CYAN}ssh-cris${WHITE}, ${CYAN}cris${WHITE} o ${CYAN}menu${WHITE} para abrir el panel.${NC}"
+echo -e "${WHITE}  👉 Para administrar tu servidor ejecuta únicamente: ${GREEN}menu${NC}"
+echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
 echo ""
 
 # Iniciar menú

@@ -33,7 +33,7 @@ V2_P=$(ss -tlpn 2>/dev/null | grep -E "v2ray|xray" | awk '{print $4}' | awk -F: 
 SLOW_P=$(pgrep -af dnstt-server 2>/dev/null | grep -oE -- "-udp :[0-9]+" | head -1 | grep -oE "[0-9]+" || true)
 DROP_P=$(ss -tlpn 2>/dev/null | grep dropbear | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | tr '\n' ' ' || true)
 SSH_P=$(grep '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | tr '\n' ' ' || echo "22")
-SOCKS_P=$(ss -tlpn 2>/dev/null | grep -E "proxy\.py|wsproxy\.py" | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | tr '\n' ' ' || true)
+SOCKS_P=$(ss -tlpn 2>/dev/null | grep -E "proxy\.py|wsproxy\.py|wsproxy-c" | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | tr '\n' ' ' || true)
 
 cat <<EOF
 {

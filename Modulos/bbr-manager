@@ -108,6 +108,10 @@ net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_no_metrics_save = 1
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.tcp_keepalive_intvl = 10
+net.ipv4.tcp_keepalive_probes = 6
+net.ipv4.ip_local_port_range = 10240 65535
 
 # Conexiones simultáneas y cola de red
 net.core.netdev_max_backlog = 100000

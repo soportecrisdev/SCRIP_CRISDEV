@@ -226,15 +226,18 @@ func (session *Session) UploadCommitted() (uint64, bool) {
 	return session.uploadNext - 1, true
 }
 
-func (session *Session) TakeDownload(sequence uint64, limit int, bannerTimeout time.Duration) []byte {
+func (session *Session) TakeDownload(sequence uint64, limit int, waitTimeout time.Duration) []byte {
 	if limit < 1 {
 		limit = 1
 	}
 	if limit > MaxDownloadSize {
 		limit = MaxDownloadSize
 	}
-	deadline := time.NewTimer(bannerTimeout)
-	defer deadline.Stop()
+	var deadline *time.Timer
+	if waitTimeout > 0 {
+		deadline = time.NewTimer(waitTimeout)
+		defer deadline.Stop()
+	}
 
 	session.readyMu.Lock()
 	defer session.readyMu.Unlock()
@@ -242,7 +245,7 @@ func (session *Session) TakeDownload(sequence uint64, limit int, bannerTimeout t
 		return nil
 	}
 	for session.downloadBuffer.available() == 0 && !session.targetEOF {
-		if session.bannerDelivered {
+		if deadline == nil {
 			return nil
 		}
 		signal := session.readySignal
@@ -272,21 +275,44 @@ func (session *Session) AssignDownload(sequence uint64, count int, limit int) []
 		<-signal
 		session.downloadMu.Lock()
 	}
-	isNew := sequence == session.downloadNext
+	if sequence < session.downloadNext {
+		chunks := make([][]byte, count)
+		for offset := 0; offset < count; offset++ {
+			chunks[offset] = append([]byte(nil), session.downloadFrames[sequence+uint64(offset)]...)
+		}
+		session.downloadMu.Unlock()
+		return chunks
+	}
+	// Liberar downloadMu durante Long-Polling (800ms) para no bloquear Close()/readTarget()
+	if sequence != session.downloadNext || session.downloadClosed {
+		session.downloadMu.Unlock()
+		return make([][]byte, count)
+	}
+	session.downloadMu.Unlock()
+
 	chunks := make([][]byte, count)
 	for offset := 0; offset < count; offset++ {
 		current := sequence + uint64(offset)
-		if isNew {
-			chunk := session.TakeDownload(current, limit, 5*time.Second)
-			if len(chunk) > 0 {
-				session.downloadFrames[current] = chunk
+		// Primer slot del batch usa Long-Poll (5s pre-banner, 800ms post-banner); siguientes no bloquean si ya hubo datos o vacío
+		wait := 0 * time.Millisecond
+		if offset == 0 {
+			wait = 800 * time.Millisecond
+			session.readyMu.Lock()
+			if !session.bannerDelivered {
+				wait = 5 * time.Second
 			}
-			chunks[offset] = chunk
-		} else {
-			chunks[offset] = append([]byte(nil), session.downloadFrames[current]...)
+			session.readyMu.Unlock()
 		}
+		chunks[offset] = session.TakeDownload(current, limit, wait)
 	}
-	if isNew {
+
+	session.downloadMu.Lock()
+	if sequence == session.downloadNext {
+		for offset := 0; offset < count; offset++ {
+			if len(chunks[offset]) > 0 {
+				session.downloadFrames[sequence+uint64(offset)] = chunks[offset]
+			}
+		}
 		session.downloadNext += uint64(count)
 		session.signalDownloadLocked()
 	}

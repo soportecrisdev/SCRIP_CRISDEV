@@ -15,6 +15,7 @@ import time
 import base64
 import hashlib
 import sqlite3
+from datetime import datetime, timedelta
 from threading import RLock
 
 try:
@@ -141,7 +142,9 @@ def parse_boolean(val, default=False):
 # GESTIÓN DE BASE DE DATOS SQLITE (WAL MODE)
 # ═════════════════════════════════════════════════════════════════════
 def get_db_connection(db_file=DB_PATH):
-    os.makedirs(os.path.dirname(db_file), exist_ok=True)
+    dir_name = os.path.dirname(db_file)
+    if dir_name:
+        os.makedirs(dir_name, exist_ok=True)
     conn = sqlite3.connect(db_file, check_same_thread=False, timeout=15.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -316,6 +319,78 @@ def init_db(db_file=DB_PATH):
         );
         """)
 
+        # 6. Tabla Maestra de Usuarios Unificados (SSH / HWID / Token / Demo)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_plain TEXT NOT NULL,
+            password_hash TEXT,
+            user_type TEXT NOT NULL DEFAULT 'SSH', -- 'SSH', 'TOKEN', 'HWID_LOCK', 'DEMO'
+            hwid TEXT,                             -- Hardware ID o Device Token vinculado
+            device_model TEXT,                     -- Modelo opcional del dispositivo
+            limit_connections INTEGER DEFAULT 1,
+            expiration_date TEXT NOT NULL,         -- Formato legible DD/MM/YYYY
+            expires_at INTEGER NOT NULL,           -- Timestamp en milisegundos
+            status TEXT DEFAULT 'active',          -- 'active', 'expired', 'locked'
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+
+        # 7. Tabla de Tokens Únicos de Dispositivo (aToken / TK-XXXX)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS device_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT NOT NULL UNIQUE,            -- 16 caracteres hex (TK-XXXX...)
+            hwid_full TEXT,                        -- SHA-256 de 64 chars del teléfono
+            user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+            username TEXT NOT NULL,
+            expiration_date TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            limit_connections INTEGER DEFAULT 1,
+            status TEXT DEFAULT 'active',          -- 'active', 'expired', 'revoked'
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+
+        # 8. Tabla de Sesiones Activas y Monitor en Vivo
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            protocol TEXT NOT NULL,                -- 'SSH', 'DROPBEAR', 'BHTTP', 'HCR', 'HYSTERIA', 'UDPCUSTOM', 'ZIVPN'
+            client_ip TEXT,
+            pid INTEGER,
+            started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+            bytes_up INTEGER DEFAULT 0,
+            bytes_down INTEGER DEFAULT 0
+        );
+        """)
+
+        # 9. Tabla de Nodos del Clúster (Miami, USA, Brasil, etc.)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS nodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_code TEXT NOT NULL UNIQUE,        -- 'mia-01', 'usa-01', 'br-01'
+            node_name TEXT NOT NULL,
+            country_code TEXT NOT NULL,            -- 'us', 'br', 'co'
+            public_ip TEXT NOT NULL,
+            api_port INTEGER DEFAULT 8088,
+            auth_token TEXT,
+            is_master INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'online',          -- 'online', 'offline', 'maintenance'
+            last_heartbeat DATETIME,
+            online_users INTEGER DEFAULT 0,
+            cpu_load REAL DEFAULT 0.0,
+            ram_used_mb INTEGER DEFAULT 0,
+            total_ram_mb INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+
         # Índices de Alto Rendimiento para Búsqueda y Filtrado Instantáneo
         cur.execute("CREATE INDEX IF NOT EXISTS idx_servers_country ON servers(country_code);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_servers_operator ON servers(operator_name);")
@@ -324,6 +399,14 @@ def init_db(db_file=DB_PATH):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_servers_protocol ON servers(protocol_type);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_servers_active ON servers(is_active);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_servers_tunnel ON servers(tunnel_type);")
+
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_expires ON users(expires_at);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_users_hwid ON users(hwid);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_device_tokens_token ON device_tokens(token);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_sessions_username ON sessions(username);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_nodes_code ON nodes(node_code);")
 
         conn.commit()
         conn.close()
@@ -599,6 +682,531 @@ def query_servers(filters=None, limit=100, db_file=DB_PATH):
     except Exception as e:
         return []
 
+# ═════════════════════════════════════════════════════════════════════
+# GESTIÓN UNIFICADA DE USUARIOS, HWID, TOKENS Y SESIONES (v2.0)
+# ═════════════════════════════════════════════════════════════════════
+
+def _calc_expiration(days):
+    """Calcula timestamp ms y fecha DD/MM/YYYY a partir de cantidad de días."""
+    now = datetime.now()
+    exp_dt = now + timedelta(days=int(days))
+    date_formatted = exp_dt.strftime("%d/%m/%Y")
+    expires_at_ms = int(exp_dt.timestamp() * 1000)
+    return date_formatted, expires_at_ms
+
+def _calc_days_remaining(expires_at_ms):
+    """Calcula días restantes a partir de un timestamp en ms."""
+    now_ms = int(time.time() * 1000)
+    diff_ms = expires_at_ms - now_ms
+    if diff_ms <= 0:
+        return 0
+    return int((diff_ms + (1000 * 3600 * 12)) // (1000 * 3600 * 24))
+
+def create_or_update_user(username, password, days=30, limit=1, user_type='SSH', hwid=None, device_model=None, notes=None, db_file=DB_PATH):
+    """Crea o actualiza un usuario en la base de datos central."""
+    init_db(db_file)
+    username = username.strip()
+    date_formatted, expires_at_ms = _calc_expiration(days)
+    
+    with db_lock:
+        conn = get_db_connection(db_file)
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO users (username, password_plain, user_type, hwid, device_model, limit_connections, expiration_date, expires_at, status, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            ON CONFLICT(username) DO UPDATE SET
+                password_plain=excluded.password_plain,
+                user_type=excluded.user_type,
+                hwid=COALESCE(excluded.hwid, users.hwid),
+                device_model=COALESCE(excluded.device_model, users.device_model),
+                limit_connections=excluded.limit_connections,
+                expiration_date=excluded.expiration_date,
+                expires_at=excluded.expires_at,
+                status='active',
+                notes=excluded.notes,
+                updated_at=CURRENT_TIMESTAMP;
+        """, (username, password, user_type, hwid, device_model, int(limit), date_formatted, expires_at_ms, notes))
+        
+        # Si es de tipo TOKEN o tiene HWID, registrarlo en device_tokens
+        if user_type == 'TOKEN' or (hwid and hwid.startswith("TK-")):
+            token_clean = (hwid or username).replace("TK-", "").replace("-", "").upper()
+            cur.execute("""
+                INSERT INTO device_tokens (token, username, expiration_date, expires_at, limit_connections, status)
+                VALUES (?, ?, ?, ?, ?, 'active')
+                ON CONFLICT(token) DO UPDATE SET
+                    username=excluded.username,
+                    expiration_date=excluded.expiration_date,
+                    expires_at=excluded.expires_at,
+                    limit_connections=excluded.limit_connections,
+                    status='active';
+            """, (token_clean, username, date_formatted, expires_at_ms, int(limit)))
+
+        conn.commit()
+        conn.close()
+    return {
+        "success": True,
+        "username": username,
+        "user_type": user_type,
+        "limit": int(limit),
+        "days": int(days),
+        "expiration_date": date_formatted,
+        "expires_at": expires_at_ms
+    }
+
+def delete_user(username, db_file=DB_PATH):
+    """Elimina un usuario y sus tokens vinculados."""
+    init_db(db_file)
+    with db_lock:
+        conn = get_db_connection(db_file)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE username = ?", (username,))
+        cur.execute("DELETE FROM device_tokens WHERE username = ?", (username,))
+        cur.execute("DELETE FROM sessions WHERE username = ?", (username,))
+        conn.commit()
+        conn.close()
+    return {"success": True, "deleted": username}
+
+def get_user(username, db_file=DB_PATH):
+    """Obtiene información completa de un usuario por nombre."""
+    init_db(db_file)
+    conn = get_db_connection(db_file)
+    row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+    conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    d["days_remaining"] = _calc_days_remaining(d["expires_at"])
+    d["is_expired"] = d["days_remaining"] <= 0 or d["status"] == 'expired'
+    return d
+
+def list_users(filter_status=None, search=None, limit=1000, db_file=DB_PATH):
+    """Lista usuarios registrados con cálculo en vivo de días restantes y sesiones activas."""
+    init_db(db_file)
+    conn = get_db_connection(db_file)
+    sql = "SELECT u.*, (SELECT COUNT(*) FROM sessions s WHERE s.username = u.username) AS active_sessions FROM users u WHERE 1=1"
+    params = []
+    
+    if filter_status:
+        sql += " AND u.status = ?"
+        params.append(filter_status)
+    if search:
+        term = f"%{search}%"
+        sql += " AND (u.username LIKE ? OR u.hwid LIKE ? OR u.notes LIKE ?)"
+        params.extend([term, term, term])
+        
+    sql += " ORDER BY u.expires_at ASC LIMIT ?"
+    params.append(int(limit))
+    
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    
+    users = []
+    now_ms = int(time.time() * 1000)
+    for r in rows:
+        item = dict(r)
+        rem = _calc_days_remaining(item["expires_at"])
+        item["days_remaining"] = rem
+        if rem <= 0 and item["status"] == 'active':
+            item["status"] = 'expired'
+            item["is_expired"] = True
+        else:
+            item["is_expired"] = (item["status"] == 'expired')
+        users.append(item)
+    return users
+
+def renew_user(username, days=30, db_file=DB_PATH):
+    """Renueva un usuario fijando su vigencia desde el momento actual."""
+    date_formatted, expires_at_ms = _calc_expiration(days)
+    with db_lock:
+        conn = get_db_connection(db_file)
+        conn.execute("""
+            UPDATE users SET expiration_date = ?, expires_at = ?, status = 'active', updated_at = CURRENT_TIMESTAMP
+            WHERE username = ?
+        """, (date_formatted, expires_at_ms, username))
+        conn.execute("""
+            UPDATE device_tokens SET expiration_date = ?, expires_at = ?, status = 'active'
+            WHERE username = ?
+        """, (date_formatted, expires_at_ms, username))
+        conn.commit()
+        conn.close()
+    return {"success": True, "username": username, "days": days, "expiration_date": date_formatted, "expires_at": expires_at_ms}
+
+def add_days_user(username, extra_days, db_file=DB_PATH):
+    """Suma días a la fecha de vencimiento actual de un usuario."""
+    u = get_user(username, db_file)
+    if not u:
+        return {"error": "Usuario no encontrado"}
+    
+    cur_exp = u["expires_at"]
+    now_ms = int(time.time() * 1000)
+    base_ts = cur_exp if cur_exp > now_ms else now_ms
+    new_exp_ms = base_ts + (int(extra_days) * 86400 * 1000)
+    new_date = datetime.fromtimestamp(new_exp_ms / 1000.0).strftime("%d/%m/%Y")
+    
+    with db_lock:
+        conn = get_db_connection(db_file)
+        conn.execute("""
+            UPDATE users SET expiration_date = ?, expires_at = ?, status = 'active', updated_at = CURRENT_TIMESTAMP
+            WHERE username = ?
+        """, (new_date, new_exp_ms, username))
+        conn.execute("""
+            UPDATE device_tokens SET expiration_date = ?, expires_at = ?, status = 'active'
+            WHERE username = ?
+        """, (new_date, new_exp_ms, username))
+        conn.commit()
+        conn.close()
+    return {"success": True, "username": username, "added": extra_days, "expiration_date": new_date, "expires_at": new_exp_ms}
+
+def subtract_days_user(username, sub_days, db_file=DB_PATH):
+    """Resta días a la fecha de vencimiento actual de un usuario."""
+    u = get_user(username, db_file)
+    if not u:
+        return {"error": "Usuario no encontrado"}
+    
+    cur_exp = u["expires_at"]
+    new_exp_ms = cur_exp - (int(sub_days) * 86400 * 1000)
+    new_date = datetime.fromtimestamp(new_exp_ms / 1000.0).strftime("%d/%m/%Y")
+    now_ms = int(time.time() * 1000)
+    st = 'expired' if new_exp_ms <= now_ms else 'active'
+    
+    with db_lock:
+        conn = get_db_connection(db_file)
+        conn.execute("""
+            UPDATE users SET expiration_date = ?, expires_at = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE username = ?
+        """, (new_date, new_exp_ms, st, username))
+        conn.execute("""
+            UPDATE device_tokens SET expiration_date = ?, expires_at = ?, status = ?
+            WHERE username = ?
+        """, (new_date, new_exp_ms, st, username))
+        conn.commit()
+        conn.close()
+    return {"success": True, "username": username, "subtracted": sub_days, "expiration_date": new_date, "expires_at": new_exp_ms}
+
+def change_limit_user(username, new_limit, db_file=DB_PATH):
+    """Modifica el límite máximo de conexiones simultáneas."""
+    with db_lock:
+        conn = get_db_connection(db_file)
+        conn.execute("UPDATE users SET limit_connections = ?, updated_at = CURRENT_TIMESTAMP WHERE username = ?", (int(new_limit), username))
+        conn.execute("UPDATE device_tokens SET limit_connections = ? WHERE username = ?", (int(new_limit), username))
+        conn.commit()
+        conn.close()
+    return {"success": True, "username": username, "limit": int(new_limit)}
+
+def change_password_user(username, new_password, db_file=DB_PATH):
+    """Actualiza la contraseña del usuario."""
+    with db_lock:
+        conn = get_db_connection(db_file)
+        conn.execute("UPDATE users SET password_plain = ?, updated_at = CURRENT_TIMESTAMP WHERE username = ?", (new_password, username))
+        conn.commit()
+        conn.close()
+    return {"success": True, "username": username}
+
+def set_hwid_lock(username, hwid, device_model=None, db_file=DB_PATH):
+    """Vincula el candado HWID al usuario."""
+    with db_lock:
+        conn = get_db_connection(db_file)
+        conn.execute("""
+            UPDATE users SET hwid = ?, device_model = COALESCE(?, device_model), user_type = 'HWID_LOCK', updated_at = CURRENT_TIMESTAMP
+            WHERE username = ?
+        """, (hwid.strip(), device_model, username))
+        conn.commit()
+        conn.close()
+    return {"success": True, "username": username, "hwid": hwid}
+
+def reset_hwid(username, db_file=DB_PATH):
+    """Libera el candado HWID de un usuario para que pueda vincular un nuevo dispositivo."""
+    with db_lock:
+        conn = get_db_connection(db_file)
+        conn.execute("""
+            UPDATE users SET hwid = NULL, device_model = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE username = ?
+        """, (username,))
+        conn.commit()
+        conn.close()
+    return {"success": True, "username": username, "message": "Candado HWID liberado"}
+
+def set_user_status(username, status, db_file=DB_PATH):
+    """Cambia el estado de un usuario ('active', 'locked', 'expired')."""
+    with db_lock:
+        conn = get_db_connection(db_file)
+        conn.execute("UPDATE users SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE username = ?", (status, username))
+        conn.execute("UPDATE device_tokens SET status = ? WHERE username = ?", (status, username))
+        conn.commit()
+        conn.close()
+    return {"success": True, "username": username, "status": status}
+
+def clean_expired_users(db_file=DB_PATH):
+    """Marca como expirados y limpia usuarios vencidos."""
+    now_ms = int(time.time() * 1000)
+    with db_lock:
+        conn = get_db_connection(db_file)
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET status = 'expired' WHERE expires_at <= ? AND status = 'active'", (now_ms,))
+        cur.execute("UPDATE device_tokens SET status = 'expired' WHERE expires_at <= ? AND status = 'active'", (now_ms,))
+        count = cur.rowcount
+        conn.commit()
+        conn.close()
+    return {"success": True, "marked_expired": count}
+
+def get_user_stats(db_file=DB_PATH):
+    """Obtiene resumen instantáneo en < 2 ms para el dashboard superior del menú."""
+    init_db(db_file)
+    conn = get_db_connection(db_file)
+    now_ms = int(time.time() * 1000)
+    
+    total = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    active = conn.execute("SELECT COUNT(*) FROM users WHERE status = 'active' AND expires_at > ?", (now_ms,)).fetchone()[0]
+    expired = conn.execute("SELECT COUNT(*) FROM users WHERE status = 'expired' OR expires_at <= ?", (now_ms,)).fetchone()[0]
+    locked = conn.execute("SELECT COUNT(*) FROM users WHERE status = 'locked'").fetchone()[0]
+    online = conn.execute("SELECT COUNT(DISTINCT username) FROM sessions").fetchone()[0]
+    
+    ssh_users = conn.execute("SELECT COUNT(*) FROM users WHERE user_type IN ('SSH', 'HWID_LOCK')").fetchone()[0]
+    token_users = conn.execute("SELECT COUNT(*) FROM users WHERE user_type = 'TOKEN'").fetchone()[0]
+    demo_users = conn.execute("SELECT COUNT(*) FROM users WHERE user_type = 'DEMO'").fetchone()[0]
+    
+    conn.close()
+    return {
+        "total": total,
+        "active": active,
+        "expired": expired,
+        "locked": locked,
+        "online": online,
+        "ssh": ssh_users,
+        "token": token_users,
+        "demo": demo_users
+    }
+
+# ═════════════════════════════════════════════════════════════════════
+# DEMONIO CHECKUSER & VALIDADOR ATOKEN (COMPATIBLE CON HTTP CONEXIÓN)
+# ═════════════════════════════════════════════════════════════════════
+
+def register_device_token(token, days=30, limit=1, hwid_full=None, username=None, db_file=DB_PATH):
+    """Registra o renueva un token de teléfono de 16 caracteres (aToken)."""
+    clean_token = token.replace("TK-", "").replace("-", "").strip().upper()
+    user_name = username or f"Token_{clean_token}"
+    date_formatted, expires_at_ms = _calc_expiration(days)
+    
+    with db_lock:
+        conn = get_db_connection(db_file)
+        cur = conn.cursor()
+        # 1. Crear / actualizar en users
+        cur.execute("""
+            INSERT INTO users (username, password_plain, user_type, hwid, limit_connections, expiration_date, expires_at, status)
+            VALUES (?, ?, 'TOKEN', ?, ?, ?, ?, 'active')
+            ON CONFLICT(username) DO UPDATE SET
+                expiration_date=excluded.expiration_date,
+                expires_at=excluded.expires_at,
+                status='active',
+                updated_at=CURRENT_TIMESTAMP;
+        """, (user_name, clean_token, clean_token, int(limit), date_formatted, expires_at_ms))
+        
+        # 2. Registrar en device_tokens
+        cur.execute("""
+            INSERT INTO device_tokens (token, hwid_full, username, expiration_date, expires_at, limit_connections, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'active')
+            ON CONFLICT(token) DO UPDATE SET
+                username=excluded.username,
+                hwid_full=COALESCE(excluded.hwid_full, device_tokens.hwid_full),
+                expiration_date=excluded.expiration_date,
+                expires_at=excluded.expires_at,
+                limit_connections=excluded.limit_connections,
+                status='active';
+        """, (clean_token, hwid_full, user_name, date_formatted, expires_at_ms, int(limit)))
+        conn.commit()
+        conn.close()
+        
+    return {
+        "success": True,
+        "token": clean_token,
+        "formatted_token": f"TK-{clean_token[:4]}-{clean_token[4:8]}-{clean_token[8:12]}-{clean_token[12:16]}" if len(clean_token) == 16 else f"TK-{clean_token}",
+        "username": user_name,
+        "days": days,
+        "expiration_date": date_formatted,
+        "expires_at": expires_at_ms
+    }
+
+def validate_device_token(token, db_file=DB_PATH):
+    """
+    Valida un Token contra aToken en el VPS.
+    Retorna respuesta exacta compatible con VpsUserAuthManager.kt (L208-L230).
+    """
+    clean_token = token.replace("TK-", "").replace("-", "").strip().upper()
+    init_db(db_file)
+    conn = get_db_connection(db_file)
+    row = conn.execute("SELECT * FROM device_tokens WHERE token = ?", (clean_token,)).fetchone()
+    conn.close()
+    
+    if not row:
+        return {"status": "INVALID", "message": "Token no registrado", "is_valid": False}
+        
+    d = dict(row)
+    now_ms = int(time.time() * 1000)
+    rem_days = _calc_days_remaining(d["expires_at"])
+    
+    if d["status"] != 'active' or d["expires_at"] <= now_ms:
+        return {"status": "EXPIRED", "message": "Token expirado o revocado", "token": clean_token, "days": 0, "is_valid": False}
+        
+    # Compatible con: responseBody.contains("OK") || responseBody.contains(phoneToken)
+    return {
+        "status": "OK",
+        "message": "Token valido y activo",
+        "token": clean_token,
+        "username": d["username"],
+        "days": rem_days,
+        "expiration_date": d["expiration_date"],
+        "expires_at": d["expires_at"],
+        "limit": d["limit_connections"],
+        "is_valid": True
+    }
+
+def checkuser_query(username, hwid=None, db_file=DB_PATH):
+    """
+    Responde al demonio CheckUser en el contrato universal esperado por VpsUserAuthManager.kt.
+    Soporta verificación de expiración, límite de conexiones y candado HWID.
+    """
+    init_db(db_file)
+    user = get_user(username, db_file)
+    
+    if not user:
+        return {
+            "error": "not_found",
+            "message": "Usuario no existe",
+            "active": False,
+            "is_expired": True,
+            "days": 0,
+            "status": "not_found"
+        }
+        
+    # Verificar candado HWID si aplica
+    if user["user_type"] == 'HWID_LOCK' and hwid:
+        clean_hwid = hwid.strip()
+        if not user.get("hwid"):
+            # Primer dispositivo: vinculación automática
+            set_hwid_lock(username, clean_hwid, db_file=db_file)
+            user["hwid"] = clean_hwid
+        elif user["hwid"] != clean_hwid:
+            return {
+                "error": "device_mismatch",
+                "message": "Dispositivo no autorizado para esta cuenta (Candado HWID activo)",
+                "active": False,
+                "is_expired": False,
+                "status": "device_mismatch"
+            }
+            
+    # Contar sesiones activas actuales
+    conn = get_db_connection(db_file)
+    active_sessions = conn.execute("SELECT COUNT(*) FROM sessions WHERE username = ?", (username,)).fetchone()[0]
+    conn.close()
+    
+    is_exp = user["is_expired"] or user["days_remaining"] <= 0
+    st = "expired" if is_exp else user["status"]
+    
+    return {
+        "username": user["username"],
+        "user": user["username"],
+        "active": not is_exp and st == 'active',
+        "is_expired": is_exp,
+        "days": user["days_remaining"],
+        "expiration_days": user["days_remaining"],
+        "expiration_date": user["expiration_date"],
+        "expires_at": user["expires_at"],
+        "limit": user["limit_connections"],
+        "limit_connections": user["limit_connections"],
+        "max_connections": user["limit_connections"],
+        "active_sessions": active_sessions,
+        "count_connections": active_sessions,
+        "online": active_sessions,
+        "status": st
+    }
+
+def record_session(username, protocol, client_ip, pid=None, db_file=DB_PATH):
+    """Registra una sesión de conexión activa."""
+    init_db(db_file)
+    with db_lock:
+        conn = get_db_connection(db_file)
+        conn.execute("""
+            INSERT INTO sessions (username, protocol, client_ip, pid, last_seen)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, (username, protocol.upper(), client_ip, pid))
+        conn.commit()
+        conn.close()
+
+def remove_session(pid=None, username=None, client_ip=None, db_file=DB_PATH):
+    """Elimina una sesión activa."""
+    with db_lock:
+        conn = get_db_connection(db_file)
+        if pid:
+            conn.execute("DELETE FROM sessions WHERE pid = ?", (pid,))
+        elif username and client_ip:
+            conn.execute("DELETE FROM sessions WHERE username = ? AND client_ip = ?", (username, client_ip))
+        elif username:
+            conn.execute("DELETE FROM sessions WHERE username = ?", (username,))
+        conn.commit()
+        conn.close()
+
+def sync_from_system(db_file=DB_PATH):
+    """
+    Importa automáticamente cualquier usuario existente de Linux (/etc/passwd, /etc/shadow,
+    /etc/SSHPlus/senha/ y /root/usuarios.db) a la base de datos central sin duplicados.
+    """
+    imported = 0
+    init_db(db_file)
+    
+    # 1. Leer contraseñas de /etc/SSHPlus/senha/
+    passwords = {}
+    senha_dir = "/etc/SSHPlus/senha"
+    if os.path.isdir(senha_dir):
+        for fname in os.listdir(senha_dir):
+            fpath = os.path.join(senha_dir, fname)
+            if os.path.isfile(fpath):
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        passwords[fname] = f.readline().strip()
+                except Exception:
+                    pass
+                    
+    # 2. Leer límites de /etc/SSHPlus/usuarios.db o /root/usuarios.db
+    limits = {}
+    for db_text in ["/etc/SSHPlus/usuarios.db", "/root/usuarios.db", "/etc/ssh-cris/users.db"]:
+        if os.path.isfile(db_text):
+            try:
+                with open(db_text, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        parts = line.strip().split(":")
+                        if len(parts) >= 2:
+                            u = parts[0].strip()
+                            lim = int(parts[1].strip()) if parts[1].strip().isdigit() else 1
+                            limits[u] = lim
+            except Exception:
+                pass
+                
+    # 3. Leer usuarios Linux reales (UID >= 1000)
+    if os.path.isfile("/etc/passwd"):
+        ignored = {'nobody', 'daemon', 'bin', 'sys', 'sync', 'games', 'man', 'lp', 'mail', 'news', 'uucp', 'proxy', 'www-data', 'backup', 'list', 'irc', 'gnats', '_apt', 'sshd', 'statd', 'mysql', 'postfix', 'dovecot', 'redis', 'mongodb'}
+        try:
+            with open("/etc/passwd", "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    parts = line.strip().split(":")
+                    if len(parts) >= 6:
+                        u = parts[0].strip()
+                        uid = int(parts[2].strip()) if parts[2].strip().isdigit() else 0
+                        if uid >= 1000 and u not in ignored:
+                            # Comprobar si ya existe en SQLite
+                            existing = get_user(u, db_file)
+                            if not existing:
+                                pwd = passwords.get(u, "1234")
+                                lim = limits.get(u, 1)
+                                create_or_update_user(u, pwd, days=30, limit=lim, user_type='SSH', db_file=db_file)
+                                imported += 1
+        except Exception:
+            pass
+            
+    return {"success": True, "imported_from_system": imported}
+
 if __name__ == "__main__":
     init_db()
-    print("✔ Base de datos CRISDEV inicializada con esquema maestro optimizado (13 métodos + Free/Premium).")
+    stats = get_user_stats()
+    print(f"✔ Base de datos CRISDEV v2.0 inicializada con éxito.")
+    print(f"  Usuarios Totales: {stats['total']} | Activos: {stats['active']} | En Línea: {stats['online']}")
+

@@ -69,18 +69,20 @@ if [[ -n "$CURRENT_TOKEN" ]]; then
         read -p "  Ingresa el nuevo token del bot de Telegram: " NUEVO_TOKEN
         if [[ -n "$NUEVO_TOKEN" ]]; then
             echo "$NUEVO_TOKEN" > "$TOKEN_FILE"
-            echo -e "${GREEN}  ✔ Token actualizado.${NC}"
+            chmod 600 "$TOKEN_FILE"
+            echo -e "${GREEN}  ✔ Token actualizado y protegido con chmod 600.${NC}"
         fi
     fi
 else
-    echo -e "  No hay token personalizado guardado."
-    read -p "  Ingresa el token de tu bot de @BotFather (Enter para usar el token por defecto): " NUEVO_TOKEN
-    if [[ -n "$NUEVO_TOKEN" ]]; then
-        echo "$NUEVO_TOKEN" > "$TOKEN_FILE"
-        echo -e "${GREEN}  ✔ Token guardado en $TOKEN_FILE.${NC}"
-    else
-        echo -e "${CYAN}  ℹ Se utilizará el token oficial configurado en crisdev_bot.py.${NC}"
-    fi
+    echo -e "  No hay token configurado."
+    read -p "  Ingresa el token de tu bot de @BotFather: " NUEVO_TOKEN
+    while [[ -z "$NUEVO_TOKEN" ]]; do
+        echo -e "${RED}  ✖ El token es obligatorio para que el bot funcione de forma segura.${NC}"
+        read -p "  Ingresa el token de tu bot de @BotFather: " NUEVO_TOKEN
+    done
+    echo "$NUEVO_TOKEN" > "$TOKEN_FILE"
+    chmod 600 "$TOKEN_FILE"
+    echo -e "${GREEN}  ✔ Token guardado de forma segura en $TOKEN_FILE (chmod 600).${NC}"
 fi
 
 # 5. Crear servicio systemd

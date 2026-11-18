@@ -146,32 +146,38 @@ ensure_deps(){
 
 apply_performance_tuning(){
   need_root
-  info "Aplicando perfil BHTTP HIGH PERFORMANCE + STABILITY..."
+  info "Aplicando perfil BHTTP HIGH PERFORMANCE + STABILITY (TCP BBR + FQ + Keepalive 60s)..."
+  if have modprobe; then modprobe tcp_bbr >/dev/null 2>&1 || true; fi
   mkdir -p /etc/sysctl.d
   cat > "$SYSCTL_FILE" <<'EOF'
-# CRISDEV / WakkoDev BHTTP - ajustes de estabilidad y red
-fs.file-max = 1048576
-net.core.somaxconn = 16384
-net.core.netdev_max_backlog = 16384
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.ipv4.tcp_rmem = 4096 131072 16777216
-net.ipv4.tcp_wmem = 4096 131072 16777216
+# CRISDEV / WakkoDev BHTTP - ajustes de estabilidad, BBR y red
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+fs.file-max = 2097152
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 100000
+net.core.rmem_max = 67108864
+net.core.wmem_max = 67108864
+net.core.rmem_default = 262144
+net.core.wmem_default = 262144
+net.core.optmem_max = 2048576
+net.ipv4.tcp_rmem = 4096 87380 67108864
+net.ipv4.tcp_wmem = 4096 65536 67108864
 net.ipv4.ip_local_port_range = 10240 65535
-net.ipv4.tcp_max_syn_backlog = 16384
-net.ipv4.tcp_max_tw_buckets = 262144
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.tcp_max_tw_buckets = 2000000
 net.ipv4.tcp_fin_timeout = 15
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_no_metrics_save = 1
 net.ipv4.tcp_fastopen = 3
 net.ipv4.tcp_keepalive_time = 60
-net.ipv4.tcp_keepalive_intvl = 15
-net.ipv4.tcp_keepalive_probes = 4
+net.ipv4.tcp_keepalive_intvl = 10
+net.ipv4.tcp_keepalive_probes = 6
 net.ipv4.tcp_mtu_probing = 1
 EOF
-  if have modprobe; then modprobe tcp_bbr >/dev/null 2>&1 || true; fi
-  sysctl -p "$SYSCTL_FILE" >/dev/null 2>&1 || true
-  ok "Perfil de red aplicado exitosamente."
+  sysctl -p "$SYSCTL_FILE" >/dev/null 2>&1 || sysctl --system >/dev/null 2>&1 || true
+  ok "Perfil de red (TCP BBR + FQ + Buffers 64MB) aplicado exitosamente."
 }
 
 write_unit(){
@@ -192,7 +198,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 EnvironmentFile=-$CONFIG
-ExecStart=$BIN --listen 0.0.0.0 --port \${BHTTP_PORT} --backend-host 127.0.0.1 --backend-port \${BACKEND_PORT} --session-ttl \${SESSION_TTL} --max-sessions \${MAX_SESSIONS} --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
+ExecStart=$BIN --listen 0.0.0.0 --port \${BHTTP_PORT} --backend-host 127.0.0.1 --backend-port \${BACKEND_PORT} --session-ttl \${SESSION_TTL} --max-sessions \${MAX_SESSIONS} --request-timeout 30 --poll-wait-ms 800 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
 Restart=always
 RestartSec=1
 TimeoutStopSec=15
@@ -222,7 +228,7 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 EnvironmentFile=-$CONFIG
-ExecStart=$BIN --listen 0.0.0.0 --port $p --backend-host 127.0.0.1 --backend-port \${BACKEND_PORT} --session-ttl \${SESSION_TTL} --max-sessions \${MAX_SESSIONS} --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
+ExecStart=$BIN --listen 0.0.0.0 --port $p --backend-host 127.0.0.1 --backend-port \${BACKEND_PORT} --session-ttl \${SESSION_TTL} --max-sessions \${MAX_SESSIONS} --request-timeout 30 --poll-wait-ms 800 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
 Restart=always
 RestartSec=1
 TimeoutStopSec=15
@@ -238,3 +244,68 @@ EOF
   systemctl daemon-reload
   systemctl enable "$(basename "$unit")" >/dev/null
 }
+
+open_firewall_port(){
+  local p="$1"
+  valid_port "$p" || return 0
+  if have iptables; then
+    iptables -C INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null || true
+    if [ -d /etc/iptables ]; then
+      iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+    fi
+  fi
+  if have ufw; then
+    ufw allow "${p}/tcp" >/dev/null 2>&1 || true
+  fi
+}
+
+install_engine(){
+  need_root
+  ensure_deps
+  mkdir -p /etc/bhttp /usr/local/bin
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
+  if [ -n "$script_dir" ] && [ -f "$script_dir/bhttp-server.c" ]; then
+    cp -f "$script_dir/bhttp-server.c" /etc/bhttp/bhttp-server.c 2>/dev/null || true
+  fi
+  if [ ! -s /etc/bhttp/bhttp-server.c ]; then
+    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server.c" -o /etc/bhttp/bhttp-server.c 2>/dev/null || true
+  fi
+  if ! have gcc; then
+    pkg_install_fast gcc libc6-dev >/dev/null 2>&1 || true
+  fi
+  if [ -s /etc/bhttp/bhttp-server.c ] && have gcc; then
+    info "Compilando motor nativo BHTTP C (AVX2 x8 + Long-Polling 800ms)..."
+    if gcc -O3 -march=native -mtune=native -pthread -o "$BIN" /etc/bhttp/bhttp-server.c 2>/dev/null || \
+       gcc -O2 -pthread -o "$BIN" /etc/bhttp/bhttp-server.c 2>/dev/null; then
+      chmod 755 "$BIN"
+      cp -f "$BIN" /usr/local/bin/bhttp-server 2>/dev/null || true
+      ln -sfn /usr/local/bin/bhttp-server /bin/bhttp-server 2>/dev/null || true
+      "$BIN" --self-test || true
+      ok "Motor C BHTTP compilado e instalado en $BIN y /usr/local/bin/bhttp-server"
+      return 0
+    fi
+  fi
+  local url
+  url="$(engine_url)"
+  [ -n "$url" ] || { fail "Arquitectura no soportada: $(uname -m)"; return 1; }
+  info "Descargando binario BHTTP precompilado..."
+  curl -fsSL "$url" -o "$BIN"
+  chmod 755 "$BIN"
+  cp -f "$BIN" /usr/local/bin/bhttp-server 2>/dev/null || true
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  need_root
+  apply_performance_tuning
+  install_engine
+  load_config
+  if [ -n "${1:-}" ] && valid_port "$1"; then
+    BHTTP_PORT="$1"
+    save_config
+    write_unit
+    open_firewall_port "$BHTTP_PORT"
+    systemctl restart "$SERVICE"
+    ok "Servicio BHTTP activo en puerto $BHTTP_PORT"
+  fi
+fi

@@ -13,10 +13,9 @@ echo.
 cd /d "%~dp0"
 
 if not exist ".git" (
-    echo [ERROR] No se encontro repositorio Git aqui.
-    echo Asegurate de que este archivo esta en la carpeta SCRIP.
-    pause
-    exit /b 1
+    echo [INFO] Inicializando repositorio Git para SCRIP_CRISDEV...
+    git init -b main
+    git remote add origin https://github.com/soportecrisdev/SCRIP_CRISDEV.git
 )
 
 :: Configurar almacenamiento permanente de credenciales para no pedir usuario cada vez
@@ -56,11 +55,35 @@ git push origin main
 if %ERRORLEVEL% NEQ 0 (
     echo.
     echo ======================================================
-    echo [ERROR] Fallo al subir a GitHub.
+    echo [ERROR] Permiso denegado por GitHub (Error 403).
     echo ======================================================
-    echo Si es la primera vez que te pide el Token de GitHub,
-    echo ingresalo UNA SOLA VEZ y quedara guardado para siempre.
+    echo Tu PC tiene activa la cuenta de 'CristianBatero', pero el
+    echo repositorio pertenece a 'soportecrisdev'.
     echo.
+    echo Tienes 2 formas faciles de solucionarlo:
+    echo 1. Invitar a 'CristianBatero' como Colaborador con permisos
+    echo    de escritura en https://github.com/soportecrisdev/SCRIP_CRISDEV/settings/access
+    echo.
+    echo 2. O ingresar tu Token de GitHub (ghp_...) de la cuenta soportecrisdev.
+    echo ======================================================
+    echo.
+    set TOKEN=
+    set /p TOKEN="Pega aqui tu Personal Access Token (o presiona ENTER para salir): "
+    if not "!TOKEN!"=="" (
+        echo.
+        echo [INFO] Configurando Token en el repositorio...
+        git remote set-url origin https://!TOKEN!@github.com/soportecrisdev/SCRIP_CRISDEV.git
+        echo [INFO] Reintentando push con el Token...
+        git push origin main
+        if !ERRORLEVEL! EQU 0 (
+            echo.
+            echo ======================================================
+            echo    ✔ CAMBIOS SUBIDOS EXITOSAMENTE A GITHUB ✔
+            echo ======================================================
+            pause
+            exit /b 0
+        )
+    )
     pause
     exit /b 1
 )

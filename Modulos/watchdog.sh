@@ -99,11 +99,67 @@ check_and_heal() {
         fi
     fi
 
-    # 10. BHTTP / XHTTP
-    if [[ -f /etc/systemd/system/bhttp-server.service ]]; then
-        if ! systemctl is-active --quiet bhttp-server 2>/dev/null; then
-            systemctl restart bhttp-server 2>/dev/null || true
-            log_event "⚠️ ALERTA: BHTTP Server estaba caído. ¡Auto-recuperado con éxito!"
+    # 10. BHTTP / XHTTP (servicios reales bhttp.service, bhttp-tls.service y bhttp-port-*.service)
+    for bsvc in bhttp.service bhttp-tls.service bhttp-server.service; do
+        if [[ -f "/etc/systemd/system/${bsvc}" ]]; then
+            if ! systemctl is-active --quiet "$bsvc" 2>/dev/null; then
+                systemctl restart "$bsvc" 2>/dev/null || true
+                log_event "⚠️ ALERTA: ${bsvc} estaba caído. ¡Auto-recuperado con éxito!"
+            fi
+        fi
+    done
+    for bport_svc in /etc/systemd/system/bhttp-port-*.service; do
+        [[ -f "$bport_svc" ]] || continue
+        local bname
+        bname=$(basename "$bport_svc")
+        if ! systemctl is-active --quiet "$bname" 2>/dev/null; then
+            systemctl restart "$bname" 2>/dev/null || true
+            log_event "⚠️ ALERTA: ${bname} estaba caído. ¡Auto-recuperado con éxito!"
+        fi
+    done
+
+    # 11. Puerto 80 / WebSocket (wsproxy-c gestionado EXCLUSIVAMENTE por systemd sshplus-ws.service)
+    #     Incluye sonda HTTP 101 real (doble verificacion) y limpieza de copias legacy en screen.
+    if [[ -f /etc/systemd/system/sshplus-ws.service ]]; then
+        # Limpiar cualquier copia huerfana legacy en screen/wsproxy.py que intente robar el puerto
+        if pgrep -f '/etc/SSHPlus/wsproxy\.py' >/dev/null 2>&1; then
+            for sid in $(screen -ls 2>/dev/null | grep '\.ws' | awk '{print $1}'); do
+                screen -r -S "$sid" -X quit 2>/dev/null || true
+            done
+            pkill -f '/etc/SSHPlus/wsproxy\.py' 2>/dev/null || true
+            screen -wipe >/dev/null 2>&1 || true
+            log_event "🧹 Watchdog: eliminada instancia legacy wsproxy.py que competía con sshplus-ws.service."
+        fi
+
+        local ws_port="80"
+        if [[ -f /etc/sshplus-ws.conf ]]; then
+            local cfg_p
+            cfg_p=$(grep '^LISTEN_PORT=' /etc/sshplus-ws.conf 2>/dev/null | cut -d= -f2)
+            [[ "$cfg_p" =~ ^[0-9]+$ ]] && ws_port="$cfg_p"
+        fi
+
+        if ! systemctl is-active --quiet sshplus-ws.service 2>/dev/null; then
+            systemctl restart sshplus-ws.service 2>/dev/null || true
+            log_event "⚠️ ALERTA: sshplus-ws (wsproxy-c puerto ${ws_port}) estaba caído. ¡Auto-recuperado!"
+        else
+            # Sonda activa real: verificar que el puerto responde HTTP 101 en <3s (2 intentos antes de reiniciar)
+            local probe_ok=0
+            for _try in 1 2; do
+                if (exec 3<>"/dev/tcp/127.0.0.1/${ws_port}" 2>/dev/null && \
+                    printf 'GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n' >&3 && \
+                    IFS= read -r -t 3 _resp <&3 && \
+                    [[ "$_resp" == *"101"* || "$_resp" == *"200"* ]]); then
+                    exec 3>&- 2>/dev/null || true
+                    probe_ok=1
+                    break
+                fi
+                exec 3>&- 2>/dev/null || true
+                sleep 1
+            done
+            if [[ "$probe_ok" -eq 0 ]]; then
+                systemctl restart sshplus-ws.service 2>/dev/null || true
+                log_event "⚠️ ALERTA: sshplus-ws (puerto ${ws_port}) no respondió sonda HTTP 101 tras 2 intentos. ¡Reiniciado!"
+            fi
         fi
     fi
 }

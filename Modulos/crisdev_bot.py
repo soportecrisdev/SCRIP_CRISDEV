@@ -39,9 +39,9 @@ except ImportError:
     pytesseract = None
 
 # ═════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN Y CONSTANTES DEL SERVICIO
+# CONFIGURACIÓN Y CONSTANTES DEL SERVICIO (PROTEGIDO)
 # ═════════════════════════════════════════════════════════════════════
-DEFAULT_BOT_TOKEN = "8717022679:AAE8-9Og3EuU5eWMrSxYaB4_OuQnf2V1yQo"
+DEFAULT_BOT_TOKEN = ""
 TOKEN_FILE = "/etc/crisdev/bot/token.txt"
 
 def _resolve_bot_token():
@@ -53,9 +53,11 @@ def _resolve_bot_token():
                     return _t
         except Exception:
             pass
-    return os.environ.get("BOT_TOKEN", DEFAULT_BOT_TOKEN)
+    return os.environ.get("BOT_TOKEN", "").strip()
 
 BOT_TOKEN = _resolve_bot_token()
+if not BOT_TOKEN:
+    logging.warning("⚠️ SEGURIDAD: No hay token en %s ni en $BOT_TOKEN. Configura tu token de @BotFather.", TOKEN_FILE)
 ADMIN_IDS = [2006027987, 1087968824]
 ALLOWED_GROUP_ID = -1001737640771
 GROUP_USERNAME = "elcrischat"
@@ -2025,6 +2027,18 @@ def handle_callback_query(cb):
 def bot_polling_loop():
     logging.info("Iniciando bucle de polling del Bot Telegram Soporte HTTP Conexión...")
     
+    if not BOT_TOKEN:
+        logging.error("❌ ERROR DE SEGURIDAD: No hay token de Telegram configurado.")
+        logging.error("   Guarda tu token privado en: /etc/crisdev/bot/token.txt con permisos 600.")
+        return
+
+    # 0. Watchdog de Seguridad Anti-Secuestro: purgar cualquier webhook no autorizado
+    try:
+        urllib.request.urlopen(f"{API_URL}/deleteWebhook?drop_pending_updates=false", timeout=10)
+        logging.info("✔ Seguridad Anti-Secuestro: Webhook no autorizado purgado con éxito.")
+    except Exception as _sec_e:
+        logging.warning(f"Aviso de seguridad en purge de webhook: {_sec_e}")
+
     # 1. Configurar comandos y perfil en Telegram (Público vs Admin)
     setup_telegram_bot_commands()
 

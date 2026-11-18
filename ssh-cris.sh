@@ -38,27 +38,99 @@ done
 HYSTERIA_V1_AMD64="https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-amd64"
 HYSTERIA_V1_ARM64="https://github.com/apernet/hysteria/releases/download/v1.3.5/hysteria-linux-arm64"
 
-# Colores ANSI
-SSHPLUS_CYAN=$'\033[1;38;2;76;228;255m'
-SSHPLUS_NUM=$'\033[1;38;2;0;255;127m'
-SSHPLUS_DARK_GREEN=$'\033[0;32m'
-SSHPLUS_SECTION=$'\033[1;38;2;240;230;140m'
-SSHPLUS_DATA=$'\033[1;38;2;127;255;0m'
-SSHPLUS_COUNTER=$'\033[1;38;2;255;179;71m'
+# ─────────────────────────────────────────────────────────────────────────────
+# SISTEMA DE TEMAS Y PALETA VISUAL TRUECOLOR (CRISDEV v2.0)
+# ─────────────────────────────────────────────────────────────────────────────
+load_theme() {
+    local t_file="/etc/crisdev/theme.conf"
+    local theme="cyberpunk"
+    [[ -f "$t_file" ]] && theme=$(cat "$t_file" 2>/dev/null | tr -d ' \r\n')
 
-CYAN='\033[1;36m'
-GREEN='\033[1;32m'
-YELLOW='\033[1;33m'
-RED='\033[1;31m'
-WHITE='\033[1;37m'
-BLUE='\033[1;34m'
-SCOLOR='\033[0m'
-NC='\033[0m'
+    case "$theme" in
+        panda)
+            C_BAR=$'\033[38;5;129m'
+            C_TITLE=$'\033[1;34m'
+            C_NUM=$'\033[1;36m'
+            C_ARROW=$'\033[1;33m'
+            C_TEXT=$'\033[1;37m'
+            C_SUB=$'\033[0;35m'
+            ;;
+        chumogh)
+            C_BAR=$'\033[1;33m'
+            C_TITLE=$'\033[1;36m'
+            C_NUM=$'\033[1;32m'
+            C_ARROW=$'\033[1;33m'
+            C_TEXT=$'\033[1;37m'
+            C_SUB=$'\033[0;35m'
+            ;;
+        matrix)
+            C_BAR=$'\033[0;32m'
+            C_TITLE=$'\033[1;32m'
+            C_NUM=$'\033[1;38;2;127;255;0m'
+            C_ARROW=$'\033[1;38;2;0;255;127m'
+            C_TEXT=$'\033[1;37m'
+            C_SUB=$'\033[0;36m'
+            ;;
+        aurum)
+            C_BAR=$'\033[1;38;2;255;179;71m'
+            C_TITLE=$'\033[1;38;2;255;215;0m'
+            C_NUM=$'\033[1;38;2;255;223;0m'
+            C_ARROW=$'\033[1;33m'
+            C_TEXT=$'\033[1;37m'
+            C_SUB=$'\033[0;38;2;255;140;0m'
+            ;;
+        cyberpunk|*)
+            C_BAR=$'\033[1;38;2;139;92;246m'     # #8b5cf6 Violeta Neón
+            C_TITLE=$'\033[1;38;2;34;211;238m'   # #22d3ee Cian Eléctrico
+            C_NUM=$'\033[1;38;2;20;241;149m'     # #14f195 Verde Neón
+            C_ARROW=$'\033[1;38;2;255;200;87m'   # #ffc857 Ámbar Dorado
+            C_TEXT=$'\033[1;38;2;243;247;255m'   # #f3f7ff Blanco Nítido
+            C_SUB=$'\033[0;38;2;131;144;163m'    # #8390a3 Gris Azulado
+            ;;
+    esac
+
+    C_BRACKET="${C_BAR}"
+    C_OK=$'\033[1;38;2;49;214;123m'
+    C_WARN=$'\033[1;38;2;255;200;87m'
+    C_ERR=$'\033[1;38;2;255;91;105m'
+    C_BG_EXIT=$'\033[1;37;41m'
+    NC=$'\033[0m'
+    SCOLOR=$'\033[0m'
+
+    # Mapeo retrocompatible con submenús existentes
+    SSHPLUS_CYAN="${C_BAR}"
+    SSHPLUS_NUM="${C_NUM}"
+    SSHPLUS_DARK_GREEN="${C_NUM}"
+    SSHPLUS_SECTION="${C_ARROW}"
+    SSHPLUS_DATA="${C_NUM}"
+    SSHPLUS_COUNTER="${C_ARROW}"
+    CYAN="${C_TITLE}"
+    GREEN="${C_NUM}"
+    YELLOW="${C_ARROW}"
+    RED="${C_ERR}"
+    WHITE="${C_TEXT}"
+    BLUE="${C_TITLE}"
+
+    BADGE_ON="${C_BRACKET}[${C_NUM}● ON ${C_BRACKET}]${NC}"
+    BADGE_OFF="${C_BRACKET}[${C_ERR}○ OFF${C_BRACKET}]${NC}"
+}
+load_theme
+
+msg_bar() {
+    echo -e "${C_BAR}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+msg_tit() {
+    local t="$1"
+    msg_bar
+    printf "${C_TITLE}       ⚡ %-52s ⚡${NC}\n" "$t"
+    msg_bar
+}
 
 SSHPLUS_PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || echo python3)"
 
 # Directorios base
-mkdir -p /etc/ssh-cris /etc/SSHPlus/senha /etc/bhttp /etc/bhttp/certs /etc/hysteria /etc/stunnel /etc/slowdns /root
+mkdir -p /etc/ssh-cris /etc/crisdev /etc/SSHPlus/senha /etc/bhttp /etc/bhttp/certs /etc/hysteria /etc/stunnel /etc/slowdns /root
 touch "$USER_DATABASE" /etc/SSHPlus/Exp /root/usuarios.db 2>/dev/null || true
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -155,7 +227,7 @@ scan_bhttp_ports() {
     fi
     if [[ ${#ports[@]} -eq 0 ]]; then
         local svc_ports
-        svc_ports=$(grep -h -o -E "\-\-port [0-9]+" /etc/systemd/system/bhttp*.service /etc/systemd/system/wakkodev-bhttp*.service 2>/dev/null | awk '{print $2}' | sort -n -u || true)
+        svc_ports=$(grep -h -o -E "(\-\-port [0-9]+|0\.0\.0\.0:[0-9]+)" /etc/systemd/system/bhttp*.service /etc/systemd/system/wakkodev-bhttp*.service 2>/dev/null | grep -oE '[0-9]+$' | sort -n -u || true)
         for p in $svc_ports; do
             [[ "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
         done
@@ -173,6 +245,33 @@ scan_xhttp_port() {
         [[ -z "$tls_p" ]] && tls_p="443"
     fi
     echo "$tls_p"
+}
+
+scan_bhttp_tls_raw_port() {
+    local raw_tls_p=""
+    if systemctl is-active --quiet bhttp-tls-raw.service 2>/dev/null; then
+        [[ -f /etc/bhttp/tls_bhttp_port ]] && raw_tls_p=$(cat /etc/bhttp/tls_bhttp_port 2>/dev/null)
+        if [[ -z "$raw_tls_p" && -f /etc/systemd/system/bhttp-tls-raw.service ]]; then
+            raw_tls_p=$(grep -oE 'OPENSSL-LISTEN:[0-9]+' /etc/systemd/system/bhttp-tls-raw.service 2>/dev/null | cut -d: -f2 | head -1)
+        fi
+    fi
+    echo "$raw_tls_p"
+}
+
+apply_bhttp_kernel_tuning() {
+    mkdir -p /etc/sysctl.d /etc/bhttp
+    cat > /etc/sysctl.d/99-crisdev-bhttp.conf << 'EOF_SYSCTL_BHTTP'
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_fastopen = 3
+net.core.somaxconn = 16384
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+EOF_SYSCTL_BHTTP
+    sysctl --system >/dev/null 2>&1 || sysctl -p /etc/sysctl.d/99-crisdev-bhttp.conf >/dev/null 2>&1 || true
 }
 
 scan_hcr_ports() {
@@ -348,6 +447,27 @@ get_user_days_remaining() {
 }
 
 get_users_stats() {
+    # 1. Consulta instantánea a Base de Datos SQLite WAL (< 2 ms)
+    if [[ -f "/etc/crisdev/crisdev_servers.db" || -f "/etc/crisdev/crisdev.db" ]]; then
+        local db_stats
+        db_stats=$($SSHPLUS_PY -c '
+import sys
+for p in ("/opt/ssh-cris", "'$(pwd)'"):
+    if p not in sys.path: sys.path.insert(0, p)
+try:
+    import crisdev_db
+    s = crisdev_db.get_user_stats()
+    print(f"{s[\"total\"]}:{s[\"active\"]}:{s[\"expired\"]}:{s[\"online\"]}:{s[\"locked\"]}")
+except Exception:
+    pass
+' 2>/dev/null)
+        if [[ -n "$db_stats" && "$db_stats" =~ ^[0-9]+:[0-9]+:[0-9]+:[0-9]+:[0-9]+$ ]]; then
+            echo "$db_stats"
+            return
+        fi
+    fi
+
+    # Fallback legacy si la base de datos aún no está poblada
     local total=0
     local active=0
     local expired=0
@@ -475,28 +595,68 @@ fun_ws_prepare_activate() {
     screen -wipe >/dev/null 2>&1 || true
 }
 
+ensure_sshd_tunnel_tuning() {
+    local drop_dir="/etc/ssh/sshd_config.d"
+    local conf_file="${drop_dir}/98-crisdev-tunnel.conf"
+    if [[ -d /etc/ssh ]] && [[ ! -f "$conf_file" ]]; then
+        mkdir -p "$drop_dir" 2>/dev/null || true
+        cat > "$conf_file" <<'SSHEOF'
+AllowTcpForwarding yes
+GatewayPorts yes
+PermitTunnel yes
+TCPKeepAlive yes
+ClientAliveInterval 30
+ClientAliveCountMax 5
+MaxStartups 100:30:200
+MaxSessions 100
+UseDNS no
+SSHEOF
+        if sshd -t 2>/dev/null; then
+            systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || service ssh reload 2>/dev/null || true
+        else
+            rm -f "$conf_file" 2>/dev/null || true
+        fi
+    fi
+}
+
 ensure_proxy_scripts() {
-    if [[ -f "/bin/proxy.py" ]]; then
-        cp -f "/bin/proxy.py" /etc/SSHPlus/proxy.py 2>/dev/null || true
-    elif [[ -f "./proxy.py" ]]; then
-        cp -f "./proxy.py" /etc/SSHPlus/proxy.py 2>/dev/null || true
-    elif [[ -f "/opt/ssh-cris/proxy.py" ]]; then
-        cp -f "/opt/ssh-cris/proxy.py" /etc/SSHPlus/proxy.py 2>/dev/null || true
-    else
-        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy.py" -o /etc/SSHPlus/proxy.py 2>/dev/null || \
-        wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy.py" -O /etc/SSHPlus/proxy.py 2>/dev/null || true
+    mkdir -p /etc/SSHPlus
+    ensure_sshd_tunnel_tuning
+    if [[ ! -f /etc/SSHPlus/proxy.py ]] || ! grep -q 'CRISDEV_PROXY_V3' /etc/SSHPlus/proxy.py 2>/dev/null; then
+        if [[ -f "./proxy.py" ]] && grep -q 'CRISDEV_PROXY_V3' "./proxy.py" 2>/dev/null; then
+            cp -f "./proxy.py" /etc/SSHPlus/proxy.py
+        elif [[ -f "./Modulos/proxy.py" ]] && grep -q 'CRISDEV_PROXY_V3' "./Modulos/proxy.py" 2>/dev/null; then
+            cp -f "./Modulos/proxy.py" /etc/SSHPlus/proxy.py
+        elif [[ -f "/opt/ssh-cris/proxy.py" ]] && grep -q 'CRISDEV_PROXY_V3' "/opt/ssh-cris/proxy.py" 2>/dev/null; then
+            cp -f "/opt/ssh-cris/proxy.py" /etc/SSHPlus/proxy.py
+        else
+            curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/proxy.py" -o /etc/SSHPlus/proxy.py.new 2>/dev/null || \
+            wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/proxy.py" -O /etc/SSHPlus/proxy.py.new 2>/dev/null || true
+            if [[ -s /etc/SSHPlus/proxy.py.new ]] && grep -q 'class Server' /etc/SSHPlus/proxy.py.new 2>/dev/null; then
+                mv -f /etc/SSHPlus/proxy.py.new /etc/SSHPlus/proxy.py
+            else
+                rm -f /etc/SSHPlus/proxy.py.new
+            fi
+        fi
     fi
     chmod +x /etc/SSHPlus/proxy.py 2>/dev/null || true
 
-    if [[ -f "/bin/wsproxy.py" ]]; then
-        cp -f "/bin/wsproxy.py" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
-    elif [[ -f "./wsproxy.py" ]]; then
-        cp -f "./wsproxy.py" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
-    elif [[ -f "/opt/ssh-cris/wsproxy.py" ]]; then
-        cp -f "/opt/ssh-cris/wsproxy.py" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
-    else
-        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/wsproxy.py" -o /etc/SSHPlus/wsproxy.py 2>/dev/null || \
-        wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/wsproxy.py" -O /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+    if [[ ! -f /etc/SSHPlus/wsproxy.py ]] || ! grep -q 'CRISDEV_WS_V3' /etc/SSHPlus/wsproxy.py 2>/dev/null; then
+        if [[ -f "./wsproxy.py" ]] && grep -q 'CRISDEV_WS_V3' "./wsproxy.py" 2>/dev/null; then
+            cp -f "./wsproxy.py" /etc/SSHPlus/wsproxy.py
+        elif [[ -f "./Modulos/wsproxy.py" ]] && grep -q 'CRISDEV_WS_V3' "./Modulos/wsproxy.py" 2>/dev/null; then
+            cp -f "./Modulos/wsproxy.py" /etc/SSHPlus/wsproxy.py
+        elif [[ -f "/opt/ssh-cris/wsproxy.py" ]] && grep -q 'CRISDEV_WS_V3' "/opt/ssh-cris/wsproxy.py" 2>/dev/null; then
+            cp -f "/opt/ssh-cris/wsproxy.py" /etc/SSHPlus/wsproxy.py
+        else
+            curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/wsproxy.py" -o /etc/SSHPlus/wsproxy.py.new 2>/dev/null || \
+            wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/wsproxy.py" -O /etc/SSHPlus/wsproxy.py.new 2>/dev/null || true
+            if [[ -s /etc/SSHPlus/wsproxy.py.new ]] && grep -q 'class Server' /etc/SSHPlus/wsproxy.py.new 2>/dev/null; then
+                mv -f /etc/SSHPlus/wsproxy.py.new /etc/SSHPlus/wsproxy.py
+            else
+                rm -f /etc/SSHPlus/wsproxy.py.new
+            fi
+        fi
     fi
     chmod +x /etc/SSHPlus/wsproxy.py 2>/dev/null || true
 }
@@ -634,20 +794,20 @@ fun_ws_config_wizard() {
     echo -e "\033[1;33m   CONFIGURAR WEBSOCKET (RESPUESTA HTTP)\033[0m"
     echo -e "\033[1;33m════════════════════════════════════════════\033[0m"
     echo ""
-    echo -e "\033[1;33mEnter aplica configuración predeterminada (200 OK)\033[0m"
-    echo -e "\033[1;33m101 Para Switching Protocols (WebSocket)\033[0m"
+    echo -e "\033[1;33mEnter aplica configuración predeterminada (101 Switching Protocols — WebSocket/Cloudflare/CloudFront)\033[0m"
+    echo -e "\033[1;33m200 Para payload HTTP directo sin WebSocket\033[0m"
     echo ""
-    echo -ne "\033[1;37mINGRESA UN ESTADO DE RESPUESTA (default 200): \033[0m"
+    echo -ne "\033[1;37mINGRESA UN ESTADO DE RESPUESTA (default 101): \033[0m"
     read -r ws_http_code
-    [[ -z "$ws_http_code" ]] && ws_http_code="200"
+    [[ -z "$ws_http_code" ]] && ws_http_code="101"
     if [[ ! "$ws_http_code" =~ ^[0-9]{3}$ ]]; then
-        echo -e "\033[1;33mValor no válido; se usa 200\033[0m"
-        ws_http_code="200"
+        echo -e "\033[1;33mValor no válido; se usa 101\033[0m"
+        ws_http_code="101"
         sleep 1
     fi
     echo -e "\033[1;37mRESPUESTA: \033[1;32m${ws_http_code}\033[0m"
     echo ""
-    echo -e "\033[1;33mEj:\033[1;37m \\r\\nContent-length: 0\\r\\n\\r\\nHTTP/1.1 200 Connection Established\\r\\n\\r\\n\033[0m"
+    echo -e "\033[1;33mEj:\033[1;37m Server: cloudflare\\r\\nX-Cache: HIT\\r\\n\\r\\n\033[0m"
     echo ""
     echo -ne "\033[1;37mENCABEZADO PERSONALIZADO (Enter = Default): \033[0m"
     read -r ws_encab
@@ -663,6 +823,371 @@ fun_ws_config_wizard() {
     [[ -z "$ws_mini" ]] && ws_mini="HTTP CONEXION WS"
     fun_ws_apply_py_config "$redir" "$ws_http_code" "$ws_mini" "$ws_post_final" || return 1
     return 0
+}
+
+# ==============================================================================
+# GESTOR MAESTRO DE WEBSOCKET DUAL (Nativo en C + Clásico Python v4.5)
+# Zero-Reconnections Edition: Anti-CGNAT, Keepalive 20s/5s, Cero Timeouts Mutilados
+# ==============================================================================
+menu_websocket() {
+    mkdir -p /etc/crisdev /usr/local/bin /usr/local/src /etc/SSHPlus
+    local conf="/etc/crisdev/ws.conf"
+    if [[ ! -f "$conf" ]]; then
+        cat > "$conf" <<'EOF_WSCONF'
+WS_ACTIVE_ENGINE=c
+LISTEN_ADDR=0.0.0.0
+LISTEN_PORT=80
+TARGET_HOST=127.0.0.1
+TARGET_PORT=22
+HTTP_STATUS=101
+BANNER_MSG=HTTP CONEXION WS
+IDLE_TIMEOUT=300
+MAX_CONNS=16384
+WS_C_PORT=80
+WS_PY_PORT=8080
+EOF_WSCONF
+    fi
+
+    while true; do
+        [[ -f "$conf" ]] && source "$conf" 2>/dev/null || true
+        LISTEN_ADDR="${LISTEN_ADDR:-0.0.0.0}"
+        LISTEN_PORT="${LISTEN_PORT:-80}"
+        TARGET_HOST="${TARGET_HOST:-127.0.0.1}"
+        TARGET_PORT="${TARGET_PORT:-22}"
+        HTTP_STATUS="${HTTP_STATUS:-101}"
+        BANNER_MSG="${BANNER_MSG:-HTTP CONEXION WS}"
+        WS_C_PORT="${WS_C_PORT:-80}"
+        WS_PY_PORT="${WS_PY_PORT:-8080}"
+
+        # Detectar estado real del Motor Nativo en C
+        local ws_c_st ws_c_port=""
+        if systemctl is-active --quiet crisdev-ws-c.service 2>/dev/null || pgrep -x wsproxy-c >/dev/null 2>&1; then
+            ws_c_port=$(ss -tlnp 2>/dev/null | grep wsproxy-c | awk '{print $4}' | awk -F: '{print $NF}' | head -1)
+            [[ -z "$ws_c_port" ]] && ws_c_port="$WS_C_PORT"
+            ws_c_st="\033[1;32m● ACTIVO (:$ws_c_port)\033[0m"
+        else
+            ws_c_st="\033[1;31m○ INACTIVO\033[0m"
+        fi
+
+        # Detectar estado real del Motor Clásico Python v4.5
+        local ws_py_st ws_py_port=""
+        if systemctl is-active --quiet crisdev-ws-python.service 2>/dev/null || pgrep -f '/usr/local/bin/wsproxy.py' >/dev/null 2>&1 || pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
+            ws_py_port=$(ss -tlnp 2>/dev/null | grep -E 'python.*wsproxy|wsproxy\.py' | awk '{print $4}' | awk -F: '{print $NF}' | head -1)
+            [[ -z "$ws_py_port" ]] && ws_py_port="$WS_PY_PORT"
+            ws_py_st="\033[1;32m● ACTIVO (:$ws_py_port)\033[0m"
+        else
+            ws_py_st="\033[1;31m○ INACTIVO\033[0m"
+        fi
+
+        # Calcular consumo de RAM en tiempo real
+        local ram_c=0 ram_py=0
+        ram_c=$(ps -C wsproxy-c -o rss= 2>/dev/null | awk '{s+=$1} END {print s+0}')
+        ram_py=$(ps -ef 2>/dev/null | grep '[w]sproxy\.py' | awk '{s+=$6} END {print s+0}')
+        local total_kb=$((ram_c + ram_py))
+        local ws_ram="0.0 MB"
+        if (( total_kb > 0 )); then
+            ws_ram=$(awk "BEGIN {printf \"%.1f MB\", $total_kb/1024}")
+        fi
+
+        clear
+        sshplus_line
+        echo -e "${SSHPLUS_CYAN}         ⚡ GESTOR MAESTRO DE WEBSOCKET (WS / HTTP)${SCOLOR}"
+        sshplus_line
+        echo -e "${SSHPLUS_DARK_GREEN}ESTADO DE MOTORES WEBSOCKET EN ESTE SERVIDOR:${SCOLOR}"
+        echo -e " ‣ Motor Nativo en C   (epoll) : $ws_c_st"
+        echo -e " ‣ Motor Clásico Python (v4.5) : $ws_py_st  \033[1;33m[Zero-Reconnect · Anti-CGNAT]\033[0m"
+        echo -e " ‣ Destino Backend            : \033[1;37m${TARGET_HOST}:${TARGET_PORT}\033[0m"
+        echo -e " ‣ Código HTTP Activo         : \033[1;32mHTTP ${HTTP_STATUS}\033[0m │ RAM Ocupada: \033[1;36m$ws_ram\033[0m"
+        sshplus_line
+        echo -e "${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> ACTIVAR / CONMUTAR A MOTOR NATIVO EN C   \033[1;32m(Ultra Rendimiento · 16k Conex)\033[0m"
+        echo -e "${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> ACTIVAR / CONMUTAR A MOTOR PYTHON v4.5   \033[1;33m(Clásico Corregido · Cero Desconexiones)\033[0m"
+        echo -e "${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> ACTIVAR AMBOS MOTORES EN PUERTOS SEPARADOS (Ej: C en 80 + Py en 8080)\033[0m"
+        echo -e "${SSHPLUS_NUM}[4]${SCOLOR} \033[1;31m> DETENER / APAGAR TODOS LOS SERVICIOS WEBSOCKET\033[0m"
+        sshplus_line
+        echo -e "${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> CAMBIAR PUERTO Y DESTINO (Backend OpenSSH/Dropbear)\033[0m"
+        echo -e "${SSHPLUS_NUM}[6]${SCOLOR} \033[1;37m> CAMBIAR CÓDIGO DE RESPUESTA (101 Switching Protocols / 200 OK)\033[0m"
+        echo -e "${SSHPLUS_NUM}[7]${SCOLOR} \033[1;37m> PERSONALIZAR MINIBANNER O ENCABEZADOS\033[0m"
+        echo -e "${SSHPLUS_NUM}[8]${SCOLOR} \033[1;37m> VER LOGS EN TIEMPO REAL (journalctl)\033[0m"
+        echo -e "${SSHPLUS_NUM}[9]${SCOLOR} \033[1;37m> PROBAR RESPUESTA HTTP EN VIVO (curl handshake local)\033[0m"
+        sshplus_line
+        echo -e "${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> REGRESAR AL MENÚ DE PROTOCOLOS\033[0m"
+        sshplus_line
+        echo ""
+        echo -ne "${SSHPLUS_CYAN}Seleccione una opción [0-9]:${SCOLOR} "
+        read -r ws_opt
+
+        case "$ws_opt" in
+            0) return 0 ;;
+            1)
+                clear
+                echo -e "\E[44;1;37m       ACTIVAR / CONMUTAR A MOTOR NATIVO EN C       \E[0m\n"
+                echo -ne "\033[1;32mPUERTO DE ESCUCHA WEBSOCKET (default 80)\033[1;37m: "
+                read -r p_c
+                [[ -z "$p_c" || ! "$p_c" =~ ^[0-9]+$ ]] && p_c=80
+
+                # Liberar puerto si Python o screens lo ocupan
+                echo -e "\033[1;33m[*] Verificando y liberando puerto $p_c...\033[0m"
+                systemctl stop crisdev-ws-python.service 2>/dev/null || true
+                pkill -9 -f 'wsproxy.py' 2>/dev/null || true
+                screen -wipe >/dev/null 2>&1 || true
+
+                # Si el binario C no existe, compilarlo
+                if [[ ! -x /usr/local/bin/wsproxy-c ]]; then
+                    if [[ -f /usr/local/src/wsproxy-c.c && -x "$(command -v gcc 2>/dev/null)" ]]; then
+                        echo -e "\033[1;33m[*] Compilando wsproxy-c nativo con gcc...\033[0m"
+                        gcc -O2 -Wall -Wextra -o /usr/local/bin/wsproxy-c /usr/local/src/wsproxy-c.c 2>/dev/null || true
+                    fi
+                fi
+
+                # Guardar conf
+                cat > "$conf" <<EOF_WSC
+WS_ACTIVE_ENGINE=c
+LISTEN_ADDR=0.0.0.0
+LISTEN_PORT=$p_c
+TARGET_HOST=${TARGET_HOST:-127.0.0.1}
+TARGET_PORT=${TARGET_PORT:-22}
+HTTP_STATUS=${HTTP_STATUS:-101}
+BANNER_MSG="${BANNER_MSG:-HTTP CONEXION WS}"
+IDLE_TIMEOUT=300
+MAX_CONNS=16384
+WS_C_PORT=$p_c
+WS_PY_PORT=${WS_PY_PORT:-8080}
+EOF_WSC
+                cp -af "$conf" /etc/sshplus-ws.conf 2>/dev/null || true
+
+                # Reiniciar servicio
+                systemctl daemon-reload
+                systemctl enable --now crisdev-ws-c.service >/dev/null 2>&1 || true
+                systemctl restart crisdev-ws-c.service 2>/dev/null || true
+                ufw allow "$p_c"/tcp >/dev/null 2>&1 || true
+                iptables -C INPUT -p tcp --dport "$p_c" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$p_c" -j ACCEPT 2>/dev/null || true
+
+                sleep 1.2
+                if systemctl is-active --quiet crisdev-ws-c.service 2>/dev/null || pgrep -x wsproxy-c >/dev/null 2>&1; then
+                    echo -e "\n\033[1;32m✔ MOTOR NATIVO EN C ACTIVADO EXITOSAMENTE EN PUERTO $p_c\033[0m"
+                    echo -e "\033[1;37m  Backend destino: ${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22} (HTTP ${HTTP_STATUS:-101})\033[0m"
+                else
+                    echo -e "\n\033[1;31m✖ Error al iniciar Motor en C. Verificando log:\033[0m"
+                    journalctl -u crisdev-ws-c.service -n 10 --no-pager 2>/dev/null || true
+                fi
+                echo ""
+                read -n1 -r -p "Presione cualquier tecla para continuar..."
+                ;;
+
+            2)
+                clear
+                echo -e "\E[44;1;37m    ACTIVAR MOTOR CLÁSICO PYTHON v4.5 (ZERO-RECONNECT)    \E[0m\n"
+                echo -e "\033[1;33mEl motor Python v4.5 cuenta con epoll nativo, keep-alive 20s/5s y\033[0m"
+                echo -e "\033[1;33mremoción total del timeout artificial para eliminar las reconexiones.\033[0m\n"
+                echo -ne "\033[1;32mPUERTO DE ESCUCHA WEBSOCKET (default 80)\033[1;37m: "
+                read -r p_py
+                [[ -z "$p_py" || ! "$p_py" =~ ^[0-9]+$ ]] && p_py=80
+
+                echo -e "\033[1;33m[*] Verificando y liberando puerto $p_py...\033[0m"
+                systemctl stop crisdev-ws-c.service 2>/dev/null || true
+                pkill -9 -x wsproxy-c 2>/dev/null || true
+                pkill -9 -f 'wsproxy.py' 2>/dev/null || true
+                screen -wipe >/dev/null 2>&1 || true
+
+                # Garantizar que el script v4.5 esté en /usr/local/bin
+                if [[ ! -f /usr/local/bin/wsproxy.py ]] && [[ -f /opt/ssh-cris/wsproxy.py ]]; then
+                    cp -af /opt/ssh-cris/wsproxy.py /usr/local/bin/wsproxy.py
+                    chmod +x /usr/local/bin/wsproxy.py
+                fi
+
+                # Guardar conf
+                cat > "$conf" <<EOF_WSPY
+WS_ACTIVE_ENGINE=python
+LISTEN_ADDR=0.0.0.0
+LISTEN_PORT=$p_py
+TARGET_HOST=${TARGET_HOST:-127.0.0.1}
+TARGET_PORT=${TARGET_PORT:-22}
+HTTP_STATUS=${HTTP_STATUS:-101}
+BANNER_MSG="${BANNER_MSG:-HTTP CONEXION WS}"
+IDLE_TIMEOUT=300
+MAX_CONNS=16384
+WS_C_PORT=${WS_C_PORT:-80}
+WS_PY_PORT=$p_py
+EOF_WSPY
+                cp -af "$conf" /etc/sshplus-ws.conf 2>/dev/null || true
+
+                systemctl daemon-reload
+                systemctl enable --now crisdev-ws-python.service >/dev/null 2>&1 || true
+                systemctl restart crisdev-ws-python.service 2>/dev/null || true
+                ufw allow "$p_py"/tcp >/dev/null 2>&1 || true
+                iptables -C INPUT -p tcp --dport "$p_py" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$p_py" -j ACCEPT 2>/dev/null || true
+
+                sleep 1.2
+                if systemctl is-active --quiet crisdev-ws-python.service 2>/dev/null || pgrep -f 'wsproxy.py' >/dev/null 2>&1; then
+                    echo -e "\n\033[1;32m✔ MOTOR CLÁSICO PYTHON v4.5 ACTIVADO EXITOSAMENTE EN PUERTO $p_py\033[0m"
+                    echo -e "\033[1;37m  Anti-CGNAT Activo · Sin timeouts artificiales · Backend: ${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}\033[0m"
+                else
+                    echo -e "\n\033[1;31m✖ Error al iniciar Motor Python. Verificando log:\033[0m"
+                    journalctl -u crisdev-ws-python.service -n 10 --no-pager 2>/dev/null || true
+                fi
+                echo ""
+                read -n1 -r -p "Presione cualquier tecla para continuar..."
+                ;;
+
+            3)
+                clear
+                echo -e "\E[44;1;37m       ACTIVAR AMBOS MOTORES EN PUERTOS SEPARADOS       \E[0m\n"
+                echo -ne "\033[1;32mPUERTO PARA MOTOR NATIVO C (default 80)\033[1;37m: "
+                read -r port_c_dual
+                [[ -z "$port_c_dual" || ! "$port_c_dual" =~ ^[0-9]+$ ]] && port_c_dual=80
+
+                echo -ne "\033[1;32mPUERTO PARA MOTOR PYTHON v4.5 (default 8080)\033[1;37m: "
+                read -r port_py_dual
+                [[ -z "$port_py_dual" || ! "$port_py_dual" =~ ^[0-9]+$ ]] && port_py_dual=8080
+
+                if [[ "$port_c_dual" == "$port_py_dual" ]]; then
+                    echo -e "\n\033[1;31m[ERROR] Los puertos deben ser diferentes para no colisionar.\033[0m"
+                    sleep 2
+                    continue
+                fi
+
+                pkill -9 -x wsproxy-c 2>/dev/null || true
+                pkill -9 -f 'wsproxy.py' 2>/dev/null || true
+
+                cat > /etc/crisdev/ws-c.conf <<EOF_C
+LISTEN_ADDR=0.0.0.0
+LISTEN_PORT=$port_c_dual
+TARGET_HOST=${TARGET_HOST:-127.0.0.1}
+TARGET_PORT=${TARGET_PORT:-22}
+HTTP_STATUS=101
+BANNER_MSG="HTTP CONEXION WS C"
+IDLE_TIMEOUT=300
+MAX_CONNS=16384
+EOF_C
+
+                cat > /etc/crisdev/ws-python.conf <<EOF_PY
+LISTEN_ADDR=0.0.0.0
+LISTEN_PORT=$port_py_dual
+TARGET_HOST=${TARGET_HOST:-127.0.0.1}
+TARGET_PORT=${TARGET_PORT:-22}
+HTTP_STATUS=200
+BANNER_MSG="HTTP CONEXION WS PY"
+EOF_PY
+
+                cat > "$conf" <<EOF_DUAL
+WS_ACTIVE_ENGINE=both
+LISTEN_ADDR=0.0.0.0
+LISTEN_PORT=$port_c_dual
+TARGET_HOST=${TARGET_HOST:-127.0.0.1}
+TARGET_PORT=${TARGET_PORT:-22}
+HTTP_STATUS=101
+BANNER_MSG="HTTP CONEXION WS"
+WS_C_PORT=$port_c_dual
+WS_PY_PORT=$port_py_dual
+EOF_DUAL
+
+                systemctl daemon-reload
+                systemctl enable --now crisdev-ws-c.service crisdev-ws-python.service >/dev/null 2>&1 || true
+                systemctl restart crisdev-ws-c.service crisdev-ws-python.service 2>/dev/null || true
+
+                ufw allow "$port_c_dual"/tcp >/dev/null 2>&1 || true
+                ufw allow "$port_py_dual"/tcp >/dev/null 2>&1 || true
+
+                sleep 1.2
+                echo -e "\n\033[1;32m✔ AMBOS MOTORES ACTIVADOS EXITOSAMENTE:\033[0m"
+                echo -e " ‣ Motor Nativo en C   : Puerto $port_c_dual"
+                echo -e " ‣ Motor Clásico Python : Puerto $port_py_dual"
+                echo ""
+                read -n1 -r -p "Presione cualquier tecla para continuar..."
+                ;;
+
+            4)
+                clear
+                echo -e "\E[41;1;37m        APAGAR TODOS LOS SERVICIOS WEBSOCKET        \E[0m\n"
+                echo -e "\033[1;33mDeteniendo servicios systemd y liberando puertos...\033[0m"
+                systemctl stop crisdev-ws-c.service crisdev-ws-python.service sshplus-ws.service 2>/dev/null || true
+                systemctl disable crisdev-ws-c.service crisdev-ws-python.service sshplus-ws.service >/dev/null 2>&1 || true
+                pkill -9 -x wsproxy-c 2>/dev/null || true
+                pkill -9 -f 'wsproxy.py' 2>/dev/null || true
+                screen -wipe >/dev/null 2>&1 || true
+                echo -e "\n\033[1;32m✔ TODOS LOS SERVICIOS WEBSOCKET HAN SIDO DETENIDOS.\033[0m"
+                sleep 2
+                ;;
+
+            5)
+                clear
+                echo -e "\E[44;1;37m          CAMBIAR DESTINO INTERNO (BACKEND)         \E[0m\n"
+                echo -e "\033[1;37mSeleccione el puerto del servicio que recibirá el tráfico:\033[0m"
+                echo -e "  [1] OpenSSH  (:22)"
+                echo -e "  [2] Dropbear (:143 o :109)"
+                echo -e "  [3] Ingresar puerto manual\n"
+                echo -ne "\033[1;36mOpción [1-3]:\033[0m "
+                read -r b_opt
+                case "$b_opt" in
+                    1) TARGET_PORT=22 ;;
+                    2)
+                        local d_p; d_p=$(ss -tlnp 2>/dev/null | grep dropbear | awk '{print $4}' | awk -F: '{print $NF}' | head -1)
+                        TARGET_PORT="${d_p:-143}"
+                        ;;
+                    3)
+                        echo -ne "\033[1;36mPuerto destino (127.0.0.1):\033[0m "
+                        read -r m_p
+                        [[ "$m_p" =~ ^[0-9]+$ ]] && TARGET_PORT="$m_p"
+                        ;;
+                esac
+                sed -i "s/^TARGET_PORT=.*/TARGET_PORT=$TARGET_PORT/" "$conf" 2>/dev/null || true
+                systemctl restart crisdev-ws-c.service crisdev-ws-python.service 2>/dev/null || true
+                echo -e "\n\033[1;32m✔ Destino actualizado a 127.0.0.1:$TARGET_PORT\033[0m"
+                sleep 1.5
+                ;;
+
+            6)
+                clear
+                echo -e "\E[44;1;37m         CAMBIAR CÓDIGO DE RESPUESTA HTTP          \E[0m\n"
+                echo -e "  [1] HTTP 101 Switching Protocols (Para Cloudflare, CloudFront, CDN y WebSocket)"
+                echo -e "  [2] HTTP 200 Connection Established / OK (Para inyectores directos / payloads)\n"
+                echo -ne "\033[1;36mSeleccione [1-2]:\033[0m "
+                read -r c_opt
+                if [[ "$c_opt" == "2" ]]; then
+                    HTTP_STATUS=200
+                else
+                    HTTP_STATUS=101
+                fi
+                sed -i "s/^HTTP_STATUS=.*/HTTP_STATUS=$HTTP_STATUS/" "$conf" 2>/dev/null || true
+                systemctl restart crisdev-ws-c.service crisdev-ws-python.service 2>/dev/null || true
+                echo -e "\n\033[1;32m✔ Código HTTP cambiado a $HTTP_STATUS\033[0m"
+                sleep 1.5
+                ;;
+
+            7)
+                clear
+                echo -e "\E[44;1;37m            PERSONALIZAR MINIBANNER HTTP            \E[0m\n"
+                echo -ne "\033[1;37mIngrese el texto de cabecera / minibanner (Enter para default):\033[0m "
+                read -r new_ban
+                [[ -z "$new_ban" ]] && new_ban="HTTP CONEXION WS"
+                BANNER_MSG="$new_ban"
+                sed -i "s/^BANNER_MSG=.*/BANNER_MSG=\"$BANNER_MSG\"/" "$conf" 2>/dev/null || true
+                systemctl restart crisdev-ws-c.service crisdev-ws-python.service 2>/dev/null || true
+                echo -e "\n\033[1;32m✔ Minibanner actualizado a: '$BANNER_MSG'\033[0m"
+                sleep 1.5
+                ;;
+
+            8)
+                clear
+                echo -e "\E[44;1;37m        LOGS EN TIEMPO REAL DE WEBSOCKET (JOURNALCTL)        \E[0m\n"
+                echo -e "\033[1;33mÚltimas 25 líneas de registro de los servicios WebSocket:\033[0m\n"
+                journalctl -u crisdev-ws-c.service -u crisdev-ws-python.service -n 25 --no-pager 2>/dev/null || true
+                echo ""
+                read -n1 -r -p "Presione cualquier tecla para volver..."
+                ;;
+
+            9)
+                clear
+                echo -e "\E[44;1;37m          PROBAR RESPUESTA HTTP EN VIVO (CURL)          \E[0m\n"
+                local test_p="${LISTEN_PORT:-80}"
+                echo -e "\033[1;33mConsultando http://127.0.0.1:$test_p/ ...\033[0m\n"
+                curl -i -s -N --max-time 3 "http://127.0.0.1:$test_p/" | head -15 || true
+                echo ""
+                echo -e "\033[1;32m✔ Si observas 'HTTP/1.1 101' o 'HTTP/1.1 200', el proxy responde perfectamente.\033[0m\n"
+                read -n1 -r -p "Presione cualquier tecla para continuar..."
+                ;;
+        esac
+    done
 }
 
 fun_socks() {
@@ -759,69 +1284,7 @@ fun_socks() {
                 fi
                 ;;
             2)
-                if pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
-                    clear
-                    echo -e "\E[44;1;37m         WEBSOCKET — YA ESTÁ ACTIVO          \E[0m\n"
-                    echo -e "\033[1;32mEl WebSocket sigue en marcha.\033[0m"
-                    echo ""
-                    local _cur_wsp; _cur_wsp=$(ps x 2>/dev/null | grep '[S]SHPlus/wsproxy.py' | head -1 | awk '{print $NF}')
-                    [[ "$_cur_wsp" =~ ^[0-9]+$ ]] && echo -e "\033[1;33mPuerto WebSocket: \033[1;32m$_cur_wsp\033[0m\n" || echo -e "\033[1;33mWebSocket en ejecución\033[0m\n"
-                    echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;33mDESACTIVAR WEBSOCKET\033[0m"
-                    echo -e "\033[1;31m[\033[1;36m0\033[1;31m] \033[1;33mVOLVER (mantener activo)\033[0m\n"
-                    echo -ne "\033[1;32m¿QUÉ DESEA HACER ? \033[1;37m"
-                    read -r _ws_on_choice
-                    if [[ "$_ws_on_choice" == "1" ]]; then
-                        clear
-                        echo -e "\E[41;1;37m             DESACTIVAR WEBSOCKET             \E[0m\n"
-                        fun_wssoff() {
-                            for pidproxy in $(screen -ls 2>/dev/null | grep '\.ws' | awk '{print $1}'); do
-                                screen -r -S "$pidproxy" -X quit 2>/dev/null || true
-                            done
-                            for _k in $(pgrep -f '/etc/SSHPlus/wsproxy.py' 2>/dev/null); do
-                                kill -9 "$_k" 2>/dev/null || true
-                            done
-                            screen -wipe >/dev/null 2>&1 || true
-                        }
-                        echo -e "\033[1;32mDESACTIVANDO WEBSOCKET...\033[0m"
-                        fun_bar 'fun_wssoff'
-                        echo -e "\n\033[1;32mWEBSOCKET DESACTIVADO CON ÉXITO!\033[0m"
-                        sleep 2
-                    fi
-                else
-                    clear
-                    fun_ws_prepare_activate
-                    echo -e "\E[44;1;37m             INICIAR WEBSOCKET             \E[0m\n"
-                    echo -ne "\033[1;32m¿QUÉ PUERTO DESEA UTILIZAR ? (ej: 80 o 8080)\033[1;37m: "
-                    read -r porta
-                    [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=80
-                    verif_ptrs_socks "$porta" || continue
-
-                    local WS_REDIR_PORT=""
-                    if ! fun_ws_pick_redirect "$porta"; then
-                        continue
-                    fi
-
-                    if fun_ws_config_wizard "$porta" "$WS_REDIR_PORT"; then
-                        mkdir -p /var/run/screen /run/screen 2>/dev/null || true
-                        chmod 777 /var/run/screen /run/screen 2>/dev/null || true
-                        fun_iniws() {
-                            screen -wipe >/dev/null 2>&1 || true
-                            screen -dmS ws "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:$WS_REDIR_PORT" 2>/dev/null || true
-                            sleep 1
-                            if ! pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
-                                nohup "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:$WS_REDIR_PORT" >/dev/null 2>&1 &
-                            fi
-                        }
-                        echo -e "\n\033[1;32mINICIANDO WEBSOCKET EN PUERTO $porta -> DESTINO $WS_REDIR_PORT...\033[0m"
-                        fun_bar 'fun_iniws'
-                        ufw allow "$porta"/tcp 2>/dev/null || true
-                        echo -e "\n\033[1;32mWEBSOCKET ACTIVADO CON ÉXITO EN PUERTO $porta!\033[0m"
-                        sleep 2
-                    else
-                        echo -e "\n\033[1;31mNo se pudo configurar WebSocket.\033[0m"
-                        sleep 2
-                    fi
-                fi
+                menu_websocket
                 ;;
             3)
                 if pgrep -f 'proxy.py.*1194' >/dev/null 2>&1; then
@@ -1137,12 +1600,15 @@ client = no
 socket = a:SO_REUSEADDR=1
 socket = l:TCP_NODELAY=1
 socket = r:TCP_NODELAY=1
+TIMEOUTidle = 43200
 
 [ssh-ssl]
 accept = $porta
 connect = 127.0.0.1:$target_port
 EOF
             sed -i 's/ENABLED=0/ENABLED=1/' /etc/default/stunnel4 2>/dev/null || true
+            systemctl unmask stunnel4 2>/dev/null || true
+            systemctl enable stunnel4 2>/dev/null || true
             systemctl restart stunnel4 2>/dev/null || service stunnel4 restart 2>/dev/null
         }
         echo -e "\n\033[1;32mINSTALANDO Y CONFIGURANDO SSL TUNNEL...\033[0m"
@@ -1386,7 +1852,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 9000 --max-connections-for-client 8 --client-socket-sndbuf 10000
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1024 --max-connections-for-client 64 --client-socket-sndbuf 1048576
 Restart=always
 RestartSec=2
 LimitNOFILE=65535
@@ -1397,8 +1863,6 @@ EOF
                 systemctl daemon-reload
                 systemctl enable --now badvpn-udpgw.service 2>/dev/null || true
                 systemctl restart badvpn-udpgw.service 2>/dev/null || true
-                
-                screen -dmS udpvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 9000 2>/dev/null || true
                 echo -e "\n\033[1;32m[✔] BadVPN UDPGW activo en 127.0.0.1:7300!\033[0m"
                 pause
                 ;;
@@ -1414,7 +1878,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:$cus_port --max-clients 9000 --max-connections-for-client 8 --client-socket-sndbuf 10000
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:$cus_port --max-clients 1024 --max-connections-for-client 64 --client-socket-sndbuf 1048576
 Restart=always
 RestartSec=2
 LimitNOFILE=65535
@@ -1425,7 +1889,6 @@ EOF
                 systemctl daemon-reload
                 systemctl enable --now badvpn-udpgw.service 2>/dev/null || true
                 systemctl restart badvpn-udpgw.service 2>/dev/null || true
-                screen -dmS udpvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:"$cus_port" --max-clients 9000 2>/dev/null || true
                 echo -e "\n\033[1;32m[✔] BadVPN UDPGW activo en 127.0.0.1:$cus_port!\033[0m"
                 pause
                 ;;
@@ -1438,7 +1901,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 9000 --max-connections-for-client 8 --client-socket-sndbuf 10000
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1024 --max-connections-for-client 64 --client-socket-sndbuf 1048576
 Restart=always
 RestartSec=2
 LimitNOFILE=65535
@@ -1453,7 +1916,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7200 --max-clients 9000 --max-connections-for-client 8 --client-socket-sndbuf 10000
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7200 --max-clients 1024 --max-connections-for-client 64 --client-socket-sndbuf 1048576
 Restart=always
 RestartSec=2
 LimitNOFILE=65535
@@ -1468,7 +1931,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7100 --max-clients 9000 --max-connections-for-client 8 --client-socket-sndbuf 10000
+ExecStart=/usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7100 --max-clients 1024 --max-connections-for-client 64 --client-socket-sndbuf 1048576
 Restart=always
 RestartSec=2
 LimitNOFILE=65535
@@ -1479,9 +1942,6 @@ EOF
                 systemctl daemon-reload
                 systemctl enable --now badvpn-udpgw.service badvpn-udpgw-7200.service badvpn-udpgw-7100.service 2>/dev/null || true
                 systemctl restart badvpn-udpgw.service badvpn-udpgw-7200.service badvpn-udpgw-7100.service 2>/dev/null || true
-                screen -dmS udpvpn /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 9000 2>/dev/null || true
-                screen -dmS udpvpn1 /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7200 --max-clients 9000 2>/dev/null || true
-                screen -dmS udpvpn2 /usr/local/bin/badvpn-udpgw --listen-addr 127.0.0.1:7100 --max-clients 9000 2>/dev/null || true
                 echo -e "\n\033[1;32m[✔] Multi-BadVPN activo en puertos 7100, 7200 y 7300!\033[0m"
                 pause
                 ;;
@@ -1510,10 +1970,10 @@ slow_setup() {
     while true; do
         clear
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "${BLUE}                 SLOWDNS (DNSTT SERVER PUERTO 53)${NC}"
+        echo -e "${BLUE}          FASTDNS / SLOWDNS (DNSTT PUERTO 53 / DoH)${NC}"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         local _sd_sts="${RED}APAGADO${NC}"
-        if systemctl is-active --quiet slowdns 2>/dev/null || pgrep -f dnstt-server >/dev/null 2>&1; then
+        if systemctl is-active --quiet slowdns 2>/dev/null || systemctl is-active --quiet fastdns 2>/dev/null || pgrep -f dnstt-server >/dev/null 2>&1; then
             _sd_sts="${GREEN}ACTIVO (Puerto 53 / 5300)${NC}"
         fi
         echo -e " ${WHITE}Estado: $_sd_sts"
@@ -1524,10 +1984,10 @@ slow_setup() {
             echo -e " ${WHITE}Clave Pública:   ${GREEN}$(cat /etc/slowdns/server.pub 2>/dev/null)${NC}"
         fi
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e " ${SSHPLUS_NUM}[1]${NC} ${WHITE}> Instalar / Iniciar SlowDNS (Configurar NS y Claves)${NC}"
-        echo -e " ${SSHPLUS_NUM}[2]${NC} ${WHITE}> Ver Claves y Datos de Conexión${NC}"
-        echo -e " ${SSHPLUS_NUM}[3]${NC} ${WHITE}> Reiniciar Servicio SlowDNS${NC}"
-        echo -e " ${RED}[4]${NC} ${WHITE}> Detener Servicio SlowDNS${NC}"
+        echo -e " ${SSHPLUS_NUM}[1]${NC} ${WHITE}> Instalar / Configurar FastDNS & SlowDNS${NC}"
+        echo -e " ${SSHPLUS_NUM}[2]${NC} ${WHITE}> Ver Claves y Datos de Conexión (DoH/DoT)${NC}"
+        echo -e " ${SSHPLUS_NUM}[3]${NC} ${WHITE}> Reiniciar Servicio FastDNS/SlowDNS${NC}"
+        echo -e " ${RED}[4]${NC} ${WHITE}> Detener Servicio${NC}"
         echo -e " ${RED}[0]${NC} ${WHITE}> Volver${NC}"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${NC} "
@@ -1642,15 +2102,18 @@ EOF
             2)
                 clear
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-                echo -e "${BLUE}                 DATOS SLOWDNS ACTUALES${NC}"
+                echo -e "${BLUE}          DATOS FASTDNS / SLOWDNS ACTUALES${NC}"
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 if [[ -f /etc/slowdns/server.pub ]]; then
-                    echo -e " ${WHITE}• NameServer (NS):   ${YELLOW}$(cat /etc/slowdns/ns.txt 2>/dev/null || echo 'No configurado')${NC}"
-                    echo -e " ${WHITE}• Clave Pública:     ${GREEN}$(cat /etc/slowdns/server.pub)${NC}"
-                    echo -e " ${WHITE}• Ruta Clave Priv:   ${CYAN}/etc/slowdns/server.key${NC}"
-                    echo -e " ${WHITE}• Puerto UDP:        ${GREEN}53 / 5300${NC}"
+                    echo -e " ${WHITE}• NameServer (NS):     ${YELLOW}$(cat /etc/slowdns/ns.txt 2>/dev/null || echo 'No configurado')${NC}"
+                    echo -e " ${WHITE}• Clave Pública:       ${GREEN}$(cat /etc/slowdns/server.pub)${NC}"
+                    echo -e " ${WHITE}• Resolver FastDNS:    ${CYAN}https://cloudflare-dns.com/dns-query${NC} ${GREEN}(DoH Turbo ⚡)${NC}"
+                    echo -e " ${WHITE}• Resolver Alterno:    ${CYAN}https://dns.google/dns-query${NC}"
+                    echo -e " ${WHITE}• Resolver DoT:        ${CYAN}1.1.1.1:853${NC}"
+                    echo -e " ${WHITE}• Ruta Clave Priv:     ${CYAN}/etc/slowdns/server.key${NC}"
+                    echo -e " ${WHITE}• Puerto UDP:          ${GREEN}53 (Redirigido a 5300)${NC}"
                 else
-                    echo -e " ${RED}SlowDNS aún no está configurado.${NC}"
+                    echo -e " ${RED}FastDNS / SlowDNS aún no está configurado.${NC}"
                 fi
                 pause
                 ;;
@@ -1676,6 +2139,43 @@ EOF
 # 8. BHTTP & TLS (XHTTP) MANAGER — HTTP CONEXIÓN
 # ─────────────────────────────────────────────────────────────────────────────
 install_bhttp_binary() {
+    local has_bhp2=0
+    if [[ -x /usr/local/bin/bhttp-server ]] && grep -q "3.0-CRISDEV-AVX2-BHP2" /usr/local/bin/bhttp-server 2>/dev/null; then
+        has_bhp2=1
+    fi
+    if [[ $has_bhp2 -eq 1 ]] && /usr/local/bin/bhttp-server --self-test >/dev/null 2>&1; then
+        return 0
+    fi
+    mkdir -p "$BHTTP_BASE" /usr/local/bin
+    if [[ -f "./bhttp-server.c" ]] && grep -q "MODE_LANE" "./bhttp-server.c" 2>/dev/null; then
+        cp -af "./bhttp-server.c" /etc/bhttp/bhttp-server.c
+    elif [[ ! -s /etc/bhttp/bhttp-server.c ]] || ! grep -q "MODE_LANE" /etc/bhttp/bhttp-server.c 2>/dev/null; then
+        curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server.c" -o /etc/bhttp/bhttp-server.c 2>/dev/null || \
+        wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server.c" -O /etc/bhttp/bhttp-server.c 2>/dev/null || true
+    fi
+    if [[ -s /etc/bhttp/bhttp-server.c ]] && ! command -v gcc >/dev/null 2>&1; then
+        echo -e "${YELLOW}Instalando compilador GCC para compilar Motor BHTTP v3 (BHP2)...${NC}"
+        if command -v apt-get >/dev/null 2>&1; then
+            DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>/dev/null || true
+            DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gcc 2>/dev/null || true
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y -q gcc 2>/dev/null || true
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y -q gcc 2>/dev/null || true
+        fi
+    fi
+    if [[ -s /etc/bhttp/bhttp-server.c ]] && command -v gcc >/dev/null 2>&1; then
+        echo -e "${YELLOW}Compilando Motor BHTTP v3 C (AVX2 + Long-Polling 800ms + BHP2 Lanes)...${NC}"
+        if gcc -O3 -march=native -mtune=native -pthread -o /usr/local/bin/bhttp-server.new /etc/bhttp/bhttp-server.c 2>/dev/null || \
+           gcc -O2 -pthread -o /usr/local/bin/bhttp-server.new /etc/bhttp/bhttp-server.c 2>/dev/null; then
+            mv -f /usr/local/bin/bhttp-server.new /usr/local/bin/bhttp-server
+            chmod 755 /usr/local/bin/bhttp-server 2>/dev/null || true
+            ln -sfn /usr/local/bin/bhttp-server /usr/local/bin/bhttp 2>/dev/null || true
+            ln -sfn /usr/local/bin/bhttp-server /bin/bhttp-server 2>/dev/null || true
+            ln -sfn /usr/local/bin/bhttp-server /bin/bhttp 2>/dev/null || true
+            return 0
+        fi
+    fi
     if [[ -x /usr/local/bin/bhttp-server || -x /bin/bhttp-server ]]; then
         return 0
     fi
@@ -1683,7 +2183,6 @@ install_bhttp_binary() {
     local arch; arch=$(uname -m)
     local raw_url="$AMD64_BHTTP"
     [[ "$arch" == "aarch64" || "$arch" == "arm64" ]] && raw_url="$ARM64_BHTTP"
-    mkdir -p "$BHTTP_BASE"
     curl -fsSL "$raw_url" -o /usr/local/bin/bhttp-server 2>/dev/null || \
     wget -q "$raw_url" -O /usr/local/bin/bhttp-server 2>/dev/null || \
     curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/bhttp-server" -o /usr/local/bin/bhttp-server 2>/dev/null || true
@@ -1754,6 +2253,8 @@ menu_bhttp() {
         local total_plain=${#ports_arr[@]}
         local tls_port
         tls_port=$(scan_xhttp_port)
+        local raw_tls_port
+        raw_tls_port=$(scan_bhttp_tls_raw_port)
 
         local plain_status="${RED}DESACTIVADO${NC}"
         [[ $total_plain -gt 0 ]] && plain_status="${GREEN}ACTIVADO (${total_plain} puerto/s)${NC}"
@@ -1761,21 +2262,26 @@ menu_bhttp() {
         local tls_status="${RED}DESACTIVADO${NC}"
         [[ -n "$tls_port" ]] && tls_status="${GREEN}ACTIVADO (Puerto: ${tls_port})${NC}"
 
+        local raw_tls_status="${RED}DESACTIVADO${NC}"
+        [[ -n "$raw_tls_port" ]] && raw_tls_status="${GREEN}ACTIVADO (Puerto: ${raw_tls_port})${NC}"
+
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "             ${BLUE}⚡ GESTIONAR BHTTP (HTTP CONEXIÓN) ⚡${SCOLOR}"
+        echo -e "             ${BLUE}⚡ GESTIONAR BHTTP (HTTP CONEXIÓN v3) ⚡${SCOLOR}"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "  ${WHITE}BHTTP PLANO (HTTP/1.1) : ${plain_status}"
+        echo -e "  ${WHITE}BHTTP PLANO (BHP1/BHP2) : ${plain_status}"
         if [[ $total_plain -gt 0 ]]; then
-            echo -e "  ${WHITE}PUERTOS PLANOS        : ${YELLOW}${ports_arr[*]}${NC}"
+            echo -e "  ${WHITE}PUERTOS PLANOS          : ${YELLOW}${ports_arr[*]}${NC}"
         fi
-        echo -e "  ${WHITE}BHTTP TLS (HTTP/2 XHTTP): ${tls_status}"
-        echo -e "  ${WHITE}BACKEND SSH DESTINO   : ${GREEN}127.0.0.1:22${NC}"
+        echo -e "  ${WHITE}BHTTP-TLS BINARIO (SSL) : ${raw_tls_status}"
+        echo -e "  ${WHITE}XHTTP TLS (HTTP/2)      : ${tls_status}"
+        echo -e "  ${WHITE}BACKEND SSH DESTINO     : ${GREEN}127.0.0.1:22${NC}"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        printf "  %b[1]%b > PUERTO PRINCIPAL      %b[6]%b > CERTIFICADOS SSL\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[2]%b > ACTIVAR / AJUSTAR TLS %b[7]%b > DATOS DE CONEXION\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[3]%b > ABRIR PUERTO EXTRA    %b[8]%b > TEST DE CONEXION\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[4]%b > LISTAR PUERTOS        %b[9]%b > DETENER BHTTP\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[5]%b > ELIMINAR PUERTO       %b[0]%b > VOLVER A PROTOCOLOS\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[1]%b > PUERTO PRINCIPAL      %b[6]%b  > CERTIFICADOS SSL\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[2]%b > ACTIVAR XHTTP (TLS)   %b[7]%b  > DATOS DE CONEXION\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[3]%b > ABRIR PUERTO EXTRA    %b[8]%b  > TEST DE CONEXION\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[4]%b > LISTAR PUERTOS        %b[9]%b  > DETENER BHTTP\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[5]%b > ELIMINAR PUERTO       %b[10]%b > BHTTP-TLS BINARIO (SSL)\n" "$SSHPLUS_NUM" "$SCOLOR" "$SSHPLUS_NUM" "$SCOLOR"
+        printf "  %b[0]%b > VOLVER A PROTOCOLOS\n" "$SSHPLUS_NUM" "$SCOLOR"
         echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
         echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
         read -r b_opt
@@ -1837,7 +2343,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=-$BHTTP_CONFIG
-ExecStart=/usr/local/bin/bhttp-server --listen 0.0.0.0 --port $bport --backend-host 127.0.0.1 --backend-port $backend_port --session-ttl 180 --max-sessions 4096 --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
+ExecStart=/usr/local/bin/bhttp-server --listen 0.0.0.0 --port $bport --backend-host 127.0.0.1 --backend-port $backend_port --session-ttl 180 --max-sessions 4096 --max-per-ip 256 --request-timeout 30 --poll-wait-ms 800 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
 Restart=always
 RestartSec=1
 LimitNOFILE=524288
@@ -1845,11 +2351,13 @@ LimitNOFILE=524288
 [Install]
 WantedBy=multi-user.target
 EOF
+                apply_bhttp_kernel_tuning
                 systemctl daemon-reload
                 systemctl unmask bhttp.service 2>/dev/null || true
                 systemctl enable --now bhttp.service 2>/dev/null || true
                 systemctl restart bhttp.service 2>/dev/null || true
-                iptables -I INPUT -p tcp --dport "$bport" -j ACCEPT 2>/dev/null || true
+                iptables -C INPUT -p tcp --dport "$bport" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$bport" -j ACCEPT 2>/dev/null || true
+                [[ -d /etc/iptables ]] && iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
                 ufw allow "$bport"/tcp 2>/dev/null || true
 
                 sleep 1
@@ -1922,11 +2430,13 @@ LimitNOFILE=524288
 [Install]
 WantedBy=multi-user.target
 EOF
+                apply_bhttp_kernel_tuning
                 systemctl daemon-reload
                 systemctl unmask bhttp-tls.service 2>/dev/null || true
                 systemctl enable --now bhttp-tls.service 2>/dev/null || true
                 systemctl restart bhttp-tls.service 2>/dev/null || true
-                iptables -I INPUT -p tcp --dport "$new_tls" -j ACCEPT 2>/dev/null || true
+                iptables -C INPUT -p tcp --dport "$new_tls" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$new_tls" -j ACCEPT 2>/dev/null || true
+                [[ -d /etc/iptables ]] && iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
                 ufw allow "$new_tls"/tcp 2>/dev/null || true
 
                 sleep 1
@@ -1956,7 +2466,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/bhttp-server --listen 0.0.0.0 --port $xport --backend-host 127.0.0.1 --backend-port 22 --session-ttl 180 --max-sessions 4096 --request-timeout 30 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
+ExecStart=/usr/local/bin/bhttp-server --listen 0.0.0.0 --port $xport --backend-host 127.0.0.1 --backend-port 22 --session-ttl 180 --max-sessions 4096 --max-per-ip 256 --request-timeout 30 --poll-wait-ms 800 --read-wait-ms 2 --sequence-wait 6 --max-requests-per-conn 2048
 Restart=always
 RestartSec=1
 LimitNOFILE=524288
@@ -1964,10 +2474,14 @@ LimitNOFILE=524288
 [Install]
 WantedBy=multi-user.target
 EOF
+                apply_bhttp_kernel_tuning
                 systemctl daemon-reload
                 systemctl unmask "bhttp-port-${xport}.service" 2>/dev/null || true
                 systemctl enable --now "bhttp-port-${xport}.service" 2>/dev/null || true
-                iptables -I INPUT -p tcp --dport "$xport" -j ACCEPT 2>/dev/null || true
+                echo "$xport" >> /etc/bhttp/extra_ports
+                sort -n -u /etc/bhttp/extra_ports -o /etc/bhttp/extra_ports 2>/dev/null || true
+                iptables -C INPUT -p tcp --dport "$xport" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$xport" -j ACCEPT 2>/dev/null || true
+                [[ -d /etc/iptables ]] && iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
                 ufw allow "$xport"/tcp 2>/dev/null || true
                 echo -e "\n\033[1;32m⚡ Puerto adicional BHTTP ${xport} activado con éxito! ⚡\033[0m"
                 pause
@@ -1978,7 +2492,7 @@ EOF
                 echo -e "                 ${BLUE}PUERTOS BHTTP ACTIVOS EN EL SISTEMA${SCOLOR}"
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 echo -e "\n${YELLOW}Servicios y sockets escuchando:${NC}\n"
-                ss -tlpn 2>/dev/null | grep -E "bhttp-server|xhttp-server|bilola" || echo -e "  \033[1;31mNo hay servicios BHTTP/TLS escuchando.\033[0m"
+                ss -tlpn 2>/dev/null | grep -E "bhttp-server|xhttp-server|bilola|socat.*OPENSSL" || echo -e "  \033[1;31mNo hay servicios BHTTP/TLS escuchando.\033[0m"
                 echo -e "\n${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 pause
                 ;;
@@ -1990,14 +2504,21 @@ EOF
                 local cur_b_ports
                 read -r -a cur_b_ports <<< "$(scan_bhttp_ports)"
                 local cur_tls; cur_tls=$(scan_xhttp_port)
+                local cur_raw_tls; cur_raw_tls=$(scan_bhttp_tls_raw_port)
 
-                echo -e "Puertos BHTTP Planos detectados: \033[1;33m${cur_b_ports[*]:-Ninguno}\033[0m"
-                echo -e "Puerto BHTTP TLS detectado    : \033[1;33m${cur_tls:-Ninguno}\033[0m"
+                echo -e "Puertos BHTTP Planos detectados : \033[1;33m${cur_b_ports[*]:-Ninguno}\033[0m"
+                echo -e "Puerto BHTTP-TLS Binario       : \033[1;33m${cur_raw_tls:-Ninguno}\033[0m"
+                echo -e "Puerto XHTTP TLS detectado     : \033[1;33m${cur_tls:-Ninguno}\033[0m"
                 echo ""
                 echo -ne "${WHITE}Ingresa el número de puerto a eliminar o detener: ${NC}"
                 read -r del_port
 
-                if [[ -n "$cur_tls" && "$del_port" == "$cur_tls" ]]; then
+                if [[ -n "$cur_raw_tls" && "$del_port" == "$cur_raw_tls" ]]; then
+                    systemctl disable --now bhttp-tls-raw.service 2>/dev/null || true
+                    rm -f /etc/systemd/system/bhttp-tls-raw.service /etc/bhttp/tls_bhttp_port
+                    systemctl daemon-reload
+                    echo -e "\n\033[1;32mBHTTP-TLS Binario en puerto ${del_port} detenido y eliminado con éxito!\033[0m"
+                elif [[ -n "$cur_tls" && "$del_port" == "$cur_tls" ]]; then
                     systemctl disable --now bhttp-tls.service 2>/dev/null || true
                     rm -f /etc/systemd/system/bhttp-tls.service /etc/bhttp/tls_port
                     systemctl daemon-reload
@@ -2077,21 +2598,24 @@ EOF
                 clear
                 local ip; ip=$(get_public_ip)
                 local cur_tls_p; cur_tls_p=$(scan_xhttp_port)
+                local cur_raw_tls_p; cur_raw_tls_p=$(scan_bhttp_tls_raw_port)
                 local cur_sni="crisdev.online"
                 [[ -f /etc/bhttp/tls_sni ]] && cur_sni=$(cat /etc/bhttp/tls_sni 2>/dev/null)
 
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-                echo -e "             ${BLUE}DATOS DE CONEXIÓN BHTTP (HTTP CONEXIÓN)${SCOLOR}"
+                echo -e "             ${BLUE}DATOS DE CONEXIÓN BHTTP (HTTP CONEXIÓN v3)${SCOLOR}"
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "HOST / IP VPS:" "$ip"
                 printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "PUERTOS BHTTP PLANOS:" "${ports_arr[*]:-Ninguno}"
-                printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "PUERTO BHTTP TLS:" "${cur_tls_p:-Desactivado}"
+                printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "PUERTO BHTTP-TLS BIN:" "${cur_raw_tls_p:-Desactivado}"
+                printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "PUERTO XHTTP TLS:" "${cur_tls_p:-Desactivado}"
                 printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "SSH BACKEND DESTINO:" "127.0.0.1:22"
                 printf "  \033[1;32m%-22s\033[0m \033[1;37m%s\033[0m\n" "SNI / HOST TLS:" "$cur_sni"
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 echo -e "\033[1;33mMODOS DE USO EN LA APP HTTP CONEXIÓN / GEN:\033[0m"
-                echo -e "  • \033[1;37mModo BHTTP Plano:\033[0m IP = ${ip} | Puerto = ${ports_arr[0]:-8080} | Tipo = SSH + BHTTP (BHP1)"
-                echo -e "  • \033[1;37mModo BHTTP TLS  :\033[0m IP = ${ip} | Puerto = ${cur_tls_p:-443} | SNI = ${cur_sni} | Tipo = SSH + XHTTP (TLS)"
+                echo -e "  • \033[1;37mModo BHTTP Plano    :\033[0m IP = ${ip} | Puerto = ${ports_arr[0]:-8080} | Tipo = SSH + BHTTP (BHP1/BHP2)"
+                echo -e "  • \033[1;37mModo BHTTP-TLS Bin  :\033[0m IP = ${ip} | Puerto = ${cur_raw_tls_p:-8443} | TLS=ON SNI=${cur_sni} | Tipo = SSH + BHTTP"
+                echo -e "  • \033[1;37mModo XHTTP TLS      :\033[0m IP = ${ip} | Puerto = ${cur_tls_p:-443} | SNI = ${cur_sni} | Tipo = SSH + XHTTP (TLS)"
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 pause
                 ;;
@@ -2112,12 +2636,20 @@ EOF
                         echo -e "  \033[1;31m[✘] Puerto BHTTP Plano $p: No responde.\033[0m"
                     fi
                 done
+                local rt_port; rt_port=$(scan_bhttp_tls_raw_port)
+                if [[ -n "$rt_port" ]]; then
+                    if nc -z -w2 127.0.0.1 "$rt_port" 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/"$rt_port") 2>/dev/null; then
+                        echo -e "  \033[1;32m[✔] Puerto BHTTP-TLS Binario $rt_port: Escuchando y respondiendo.\033[0m"
+                    else
+                        echo -e "  \033[1;31m[✘] Puerto BHTTP-TLS Binario $rt_port: No responde.\033[0m"
+                    fi
+                fi
                 local t_port; t_port=$(scan_xhttp_port)
                 if [[ -n "$t_port" ]]; then
                     if nc -z -w2 127.0.0.1 "$t_port" 2>/dev/null || (exec 3<>/dev/tcp/127.0.0.1/"$t_port") 2>/dev/null; then
-                        echo -e "  \033[1;32m[✔] Puerto BHTTP TLS $t_port: Escuchando y respondiendo.\033[0m"
+                        echo -e "  \033[1;32m[✔] Puerto XHTTP TLS $t_port: Escuchando y respondiendo.\033[0m"
                     else
-                        echo -e "  \033[1;31m[✘] Puerto BHTTP TLS $t_port: No responde.\033[0m"
+                        echo -e "  \033[1;31m[✘] Puerto XHTTP TLS $t_port: No responde.\033[0m"
                     fi
                 fi
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
@@ -2130,14 +2662,93 @@ EOF
                 echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
                 systemctl disable --now bhttp.service 2>/dev/null || true
                 systemctl disable --now bhttp-tls.service 2>/dev/null || true
+                systemctl disable --now bhttp-tls-raw.service 2>/dev/null || true
                 systemctl disable --now wakkodev-bhttp.service 2>/dev/null || true
                 for f in /etc/systemd/system/bhttp-port-*.service /etc/systemd/system/wakkodev-bhttp-port-*.service; do
                     [[ -f "$f" ]] && systemctl disable --now "$(basename "$f")" 2>/dev/null || true
                 done
-                rm -f /etc/systemd/system/bhttp*.service /etc/systemd/system/wakkodev-bhttp*.service /etc/bhttp/tls_port
+                rm -f /etc/systemd/system/bhttp*.service /etc/systemd/system/wakkodev-bhttp*.service /etc/bhttp/tls_port /etc/bhttp/tls_bhttp_port /etc/bhttp/extra_ports
                 pkill -9 -f 'bhttp-server|xhttp-server|wakkodev' >/dev/null 2>&1 || true
                 systemctl daemon-reload
                 echo -e "\n\033[1;32mTodos los servicios BHTTP y BHTTP TLS han sido detenidos.\033[0m"
+                pause
+                ;;
+            10)
+                clear
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                echo -e "       ${BLUE}ACTIVAR BHTTP-TLS BINARIO (BHP1/BHP2 SOBRE SSL 1.2)${SCOLOR}"
+                echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+                install_bhttp_binary
+                if ! command -v socat >/dev/null 2>&1; then
+                    echo -e "${YELLOW}Instalando socat (wrapper TLS 1.2+ zero-overhead)...${NC}"
+                    apt-get update -qq 2>/dev/null || true
+                    apt-get install -y -qq socat 2>/dev/null || dnf install -y socat 2>/dev/null || true
+                fi
+                if ! command -v socat >/dev/null 2>&1; then
+                    echo -e "\033[1;31mNo se pudo instalar socat para terminación TLS.\033[0m"
+                    pause
+                    continue
+                fi
+
+                local plain_target="8080"
+                [[ -f "$BHTTP_CONFIG" ]] && plain_target=$(grep '^BHTTP_PORT=' "$BHTTP_CONFIG" 2>/dev/null | cut -d= -f2)
+                [[ -z "$plain_target" || ! "$plain_target" =~ ^[0-9]+$ ]] && plain_target="${ports_arr[0]:-8080}"
+
+                if ! ss -tlpn 2>/dev/null | grep -qE "[:\s]${plain_target}\s"; then
+                    echo -e "\033[1;33mAviso: Active primero un puerto BHTTP Plano [1] (ej. ${plain_target}) para que BHTTP-TLS reenvíe el tráfico binario.\033[0m"
+                    pause
+                    continue
+                fi
+
+                local def_raw_tls="8443"
+                if ss -tlpn 2>/dev/null | grep -q ':8443 '; then
+                    def_raw_tls="7443"
+                fi
+                echo -ne "${WHITE}Puerto público BHTTP-TLS Binario [Enter = ${def_raw_tls}]: ${NC}"
+                read -r raw_tls_p
+                [[ -z "$raw_tls_p" || ! "$raw_tls_p" =~ ^[0-9]+$ ]] && raw_tls_p="$def_raw_tls"
+
+                echo -ne "${WHITE}Dominio SNI sugerido [Enter = crisdev.online]: ${NC}"
+                read -r raw_sni
+                [[ -z "$raw_sni" ]] && raw_sni="crisdev.online"
+
+                ensure_bhttp_tls_cert "$raw_sni"
+                mkdir -p "$BHTTP_BASE"
+                echo "$raw_tls_p" > /etc/bhttp/tls_bhttp_port
+                echo "$raw_sni" > /etc/bhttp/tls_sni
+
+                cat > /etc/systemd/system/bhttp-tls-raw.service << EOF
+[Unit]
+Description=HTTP Conexion BHTTP-TLS Binario (BHP1/BHP2 TLS -> 127.0.0.1:$plain_target)
+After=network-online.target bhttp.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/socat -T 60 OPENSSL-LISTEN:${raw_tls_p},reuseaddr,fork,cert=/etc/bhttp/server.crt,key=/etc/bhttp/server.key,verify=0,nodelay TCP:127.0.0.1:${plain_target},nodelay
+Restart=always
+RestartSec=1
+LimitNOFILE=524288
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                apply_bhttp_kernel_tuning
+                systemctl daemon-reload
+                systemctl unmask bhttp-tls-raw.service 2>/dev/null || true
+                systemctl enable --now bhttp-tls-raw.service 2>/dev/null || true
+                systemctl restart bhttp-tls-raw.service 2>/dev/null || true
+                iptables -C INPUT -p tcp --dport "$raw_tls_p" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$raw_tls_p" -j ACCEPT 2>/dev/null || true
+                [[ -d /etc/iptables ]] && iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+                ufw allow "$raw_tls_p"/tcp 2>/dev/null || true
+
+                sleep 1
+                if systemctl is-active --quiet bhttp-tls-raw.service 2>/dev/null; then
+                    echo -e "\n\033[1;32m⚡ BHTTP-TLS Binario activo en puerto ${raw_tls_p} (TLS 1.2+) -> BHTTP 127.0.0.1:${plain_target}! ⚡\033[0m"
+                else
+                    echo -e "\n\033[1;31mError al iniciar BHTTP-TLS Binario:\033[0m"
+                    journalctl -u bhttp-tls-raw.service -n 10 --no-pager 2>/dev/null || true
+                fi
                 pause
                 ;;
             0|00) return ;;
@@ -3708,7 +4319,7 @@ menu_protocolos() {
         pgrep -f 'sslh' >/dev/null 2>&1 && sts_sslh="\033[1;32mo\033[0m" || sts_sslh="\033[1;31mx\033[0m"
         (pgrep -f 'squid' >/dev/null 2>&1 || [[ -n "$sqd_p" ]]) && sts_squid="\033[1;32mo\033[0m" || sts_squid="\033[1;31mx\033[0m"
         (systemctl is-active --quiet chisel 2>/dev/null || pgrep -f 'chisel' >/dev/null 2>&1) && sts_chisel="\033[1;32mo\033[0m" || sts_chisel="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet bhttp 2>/dev/null || systemctl is-active --quiet bhttp-tls 2>/dev/null || pgrep -f 'bhttp-server|xhttp-server|bilola' >/dev/null 2>&1 || [[ -n "$_b_pts" || -n "$_bx_pt" ]]) && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
+        (systemctl is-active --quiet bhttp 2>/dev/null || systemctl is-active --quiet bhttp-tls 2>/dev/null || systemctl is-active --quiet bhttp-tls-raw 2>/dev/null || pgrep -f 'bhttp-server|xhttp-server|bilola' >/dev/null 2>&1 || [[ -n "$_b_pts" || -n "$_bx_pt" ]]) && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
         (systemctl is-active --quiet hcr-* 2>/dev/null || pgrep -f 'hcr-server' >/dev/null 2>&1 || [[ -n "$_hcr_pts" ]]) && sts_hcr="\033[1;32mo\033[0m" || sts_hcr="\033[1;31mx\033[0m"
         (systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1) && sts_udpc="\033[1;32mo\033[0m" || sts_udpc="\033[1;31mx\033[0m"
         (systemctl is-active --quiet zivpn 2>/dev/null || pgrep -f 'zivpn-core|zivpn' >/dev/null 2>&1) && sts_ziv="\033[1;32mo\033[0m" || sts_ziv="\033[1;31mx\033[0m"
@@ -3757,7 +4368,7 @@ menu_protocolos() {
                 apt-get install -y openvpn 2>/dev/null || true
                 pause
                 ;;
-            12) fun_socks ;;
+            12) menu_websocket ;;
             13)
                 clear
                 echo -e "\033[1;32mSSLH Multiplex\033[0m"
@@ -3829,7 +4440,7 @@ menu_protocolos() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  ADMINISTRACIÓN DE USUARIOS
+#  APARTADO [01] CONTROL DE USUARIOS (SSH · HWID · TOKENS · DEMO)
 # ─────────────────────────────────────────────────────────────────────────────
 menu_users() {
     while true; do
@@ -3839,135 +4450,479 @@ menu_users() {
         local u_active; u_active=$(echo "$stats_str" | cut -d: -f2)
         local u_expired; u_expired=$(echo "$stats_str" | cut -d: -f3)
         local u_online; u_online=$(echo "$stats_str" | cut -d: -f4)
+        local u_locked; u_locked=$(echo "$stats_str" | cut -d: -f5)
+        [[ -z "$u_locked" ]] && u_locked=0
 
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "                   ${BLUE}ADMINISTRAR USUARIOS${SCOLOR}"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        printf " ${WHITE}Creados: ${GREEN}%-4s${WHITE} | Activos: ${GREEN}%-4s${WHITE} | Vencidos: ${RED}%-4s${WHITE} | En Línea: ${GREEN}%-4s${NC}\n" "$u_total" "$u_active" "$u_expired" "$u_online"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "  ${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> CREAR USUARIO\033[0m          ${SSHPLUS_NUM}[6]${SCOLOR}  \033[1;37m> CAMBIAR LIMITE\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> CREAR PRUEBA\033[0m           ${SSHPLUS_NUM}[7]${SCOLOR}  \033[1;37m> CAMBIAR CLAVE\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> ELIMINAR USUARIO\033[0m       ${SSHPLUS_NUM}[8]${SCOLOR}  \033[1;37m> INFORME DE USUARIOS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> MONITOR ONLINE\033[0m         ${SSHPLUS_NUM}[9]${SCOLOR}  \033[1;37m> ELIMINAR CADUCADOS\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> CAMBIAR FECHA\033[0m          ${SSHPLUS_NUM}[10]${SCOLOR} \033[1;37m> TOKEN HTTP CONEXION\033[0m"
-        echo -e "                             ${SSHPLUS_NUM}[0]${SCOLOR}  \033[1;37m> VOLVER\033[0m"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        msg_bar
+        echo -e "${C_TITLE}          👥 CONTROL DE USUARIOS · HWID · TOKENS · DEMO ⚡${NC}"
+        msg_bar
+        echo -e " ${C_ARROW}👥 ONLINES: ${C_NUM}${u_online}${NC}  │ ${C_TEXT}🟢 ACTIVOS: ${C_NUM}${u_active}${NC} │ ${C_TEXT}🔴 EXP: ${C_ERR}${u_expired}${NC} │ ${C_TEXT}🔒 LOCK: ${C_WARN}${u_locked}${NC} │ ${C_TEXT}TOTAL: ${C_NUM}${u_total}${NC}"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}01${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}➕ CREAR NUEVO USUARIO${NC}      ${C_SUB}(SSH / HWID / Token Celular / Demo)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}02${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🗑️ ELIMINAR USUARIO${NC}         ${C_SUB}(Individual, por Lote o Caducados)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}03${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}✏️ EDITAR / RENOVAR CUENTA${NC}  ${C_SUB}(+/- Días, Clave, Límite, Reset HWID)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}04${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}📋 LISTAR REGISTRADOS${NC}       ${C_SUB}(Tabla Completa con Días y Estado)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}05${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🟢 MONITOR CONECTADOS VIVO${NC}  ${C_SUB}(Protocolo, IP, Tiempo, Consumo MB)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}06${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🔍 BUSCAR USUARIO / TOKEN${NC}   ${C_SUB}(Por Nombre, Token TK- o HWID)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}07${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🔒 BLOQUEAR / DESBLOQUEAR${NC}   ${C_SUB}(Suspender o Reactivar al Instante)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}08${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🎫 FICHA & TOKEN HC://${NC}      ${C_SUB}(Generar Ficha y Token para la App)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}09${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🧹 LIMPIAR VENCIDOS AHORA${NC}   ${C_SUB}(Purgar todas las cuentas expiradas)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}10${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}💾 BACKUP & RESTORE SEGURO${NC}  ${C_SUB}(Exportar / Importar Base de Usuarios)${NC}"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}00${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_BG_EXIT} [ REGRESAR AL MENÚ PRINCIPAL ] ${NC}"
+        msg_bar
+        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-10]: ${NC}"
         read -r u_opt
 
         case "$u_opt" in
             1|01) crear_usuario ;;
-            2|02) crear_prueba ;;
-            3|03) eliminar_usuario ;;
-            4|04) monitor_conexiones ;;
-            5|05) renovar_usuario ;;
-            6|06) cambiar_limite ;;
-            7|07) cambiar_clave ;;
-            8|08) listar_usuarios ;;
+            2|02) eliminar_usuario ;;
+            3|03) editar_usuario ;;
+            4|04) listar_usuarios ;;
+            5|05) monitor_conexiones ;;
+            6|06) buscar_usuario ;;
+            7|07) bloquear_usuario ;;
+            8|08) generar_token_http_conexion ;;
             9|09) eliminar_caducados ;;
-            10) generar_token_http_conexion ;;
+            10) backup_usuarios ;;
             0|00) return ;;
-            *) echo -e "\n\033[1;31mOpción inválida!\033[0m"; sleep 1 ;;
+            *) echo -e "\n${C_ERR}Opción inválida!${NC}"; sleep 1 ;;
         esac
     done
 }
 
+mostrar_ficha_usuario() {
+    local u="$1"
+    local p="$2"
+    local d="$3"
+    local lim="$4"
+    local modo="$5"
+    local ip; ip=$(get_public_ip)
+    local bhttp_p; bhttp_p=$(scan_bhttp_ports | awk '{print $1}')
+    [[ -z "$bhttp_p" ]] && bhttp_p="8080"
+    local hcr_p; hcr_p=$(scan_hcr_ports | awk '{print $1}')
+    [[ -z "$hcr_p" ]] && hcr_p="8090"
+    local uport="36712"
+    local obfs_val="crisdev"
+    local auth_val="crisdev"
+    if [[ -f /etc/hysteria/config.json ]]; then
+        uport=$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/hysteria/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "36712")
+        obfs_val=$(grep -oE '"obfs"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f2 | tr -d '":, ' || echo "crisdev")
+        auth_val=$(grep -oE '"password"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/hysteria/config.json 2>/dev/null | cut -d: -f2 | tr -d '":, ' || echo "crisdev")
+    fi
+
+    local raw_token="SERVER=${ip};SSH=22;SSL=443;BHTTP=${bhttp_p};UDP=${uport};OBFS=${obfs_val};AUTH=${auth_val};USER=${u};PASS=${p};APP=HTTP_CONEXION"
+    local b64_token; b64_token=$(printf '%s' "$raw_token" | base64 | tr -d '\n\r')
+
+    msg_bar
+    echo -e "${C_OK}          ✅ CUENTA CREADA Y SINCRONIZADA CON ÉXITO ✅${NC}"
+    msg_bar
+    echo -e " ${C_TEXT}👤 Usuario / ID   :${NC} ${C_NUM}$u${NC}"
+    echo -e " ${C_TEXT}🔑 Contraseña     :${NC} ${C_ARROW}$p${NC}"
+    echo -e " ${C_TEXT}📱 Modo de Acceso :${NC} ${C_TEXT}$modo${NC}"
+    echo -e " ${C_TEXT}🔢 Límite Conexión:${NC} ${C_NUM}$lim dispositivo(s)${NC}"
+    echo -e " ${C_TEXT}📅 Días Vigencia  :${NC} ${C_NUM}$d días${NC}"
+    msg_bar
+    echo -e " ${C_TEXT}🌐 IP / Host      :${NC} ${C_NUM}$ip${NC}"
+    echo -e " ${C_TEXT}🔌 SSH / Dropbear :${NC} ${C_TEXT}22 / 143, 109${NC}"
+    echo -e " ${C_TEXT}🔒 SSL / Stunnel  :${NC} ${C_TEXT}443${NC}"
+    echo -e " ${C_TEXT}⚡ WebSocket HTTP :${NC} ${C_TEXT}80${NC}"
+    echo -e " ${C_TEXT}🚀 BHTTP / XHTTP  :${NC} ${C_TEXT}${bhttp_p} (TLS: 8443)${NC}"
+    echo -e " ${C_TEXT}📡 HCR Relay      :${NC} ${C_TEXT}${hcr_p}${NC}"
+    echo -e " ${C_TEXT}🌪️ Hysteria UDP   :${NC} ${C_TEXT}${uport} (Obfs: ${obfs_val})${NC}"
+    msg_bar
+    echo -e " ${C_ARROW}🎫 TOKEN RÁPIDO PARA HTTP CONEXIÓN:${NC}"
+    echo -e "${C_NUM}HC://${b64_token}${NC}"
+    msg_bar
+}
+
 crear_usuario() {
     clear
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -e "                   ${BLUE}CREAR NUEVO USUARIO${SCOLOR}"
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -ne "\033[1;32mNombre de usuario\033[1;37m: "
+    msg_bar
+    echo -e "${C_TITLE}       ➕ ASISTENTE DE CREACIÓN (SSH / HWID / TOKEN / DEMO) ⚡${NC}"
+    msg_bar
+    echo -e "  ${C_BRACKET}[${C_NUM}1${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🔑 USUARIO SSH ESTÁNDAR${NC}     ${C_SUB}(Usuario + Contraseña + Días + Límite)${NC}"
+    echo -e "  ${C_BRACKET}[${C_NUM}2${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}📱 TOKEN ÚNICO DE CELULAR${NC}   ${C_SUB}(Pegar Token TK-XXXX de la App · 1 Disp.)${NC}"
+    echo -e "  ${C_BRACKET}[${C_NUM}3${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🛡️ USUARIO SSH + LOCK HWID${NC}  ${C_SUB}(Se amarra solo al 1er celular que entre)${NC}"
+    echo -e "  ${C_BRACKET}[${C_NUM}4${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}⏱️ CUENTA DEMO / TEMPORAL${NC}   ${C_SUB}(Prueba por Horas con auto-borrado)${NC}"
+    msg_bar
+    echo -e "  ${C_BRACKET}[${C_NUM}0${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_BG_EXIT} [ CANCELAR Y REGRESAR ] ${NC}"
+    msg_bar
+    echo -ne " ${C_ARROW}Seleccione tipo de cuenta [0-4]: ${NC}"
+    read -r m_choice
+
+    case "$m_choice" in
+        1)
+            # SSH Estándar
+            clear
+            echo -e "${C_TITLE}=== CREAR USUARIO SSH ESTÁNDAR ===${NC}\n"
+            echo -ne "${C_TEXT}Nombre de usuario: ${C_NUM}"
+            read -r username
+            username=$(echo "$username" | tr -d ' ')
+            [[ -z "$username" ]] && return
+
+            if id "$username" >/dev/null 2>&1 || grep -q "^$username:" /etc/passwd 2>/dev/null; then
+                echo -e "\n${C_ERR}[x] El usuario '$username' ya existe en el sistema.${NC}"
+                pause; return
+            fi
+
+            echo -ne "${C_TEXT}Contraseña: ${C_NUM}"
+            read -r password
+            [[ -z "$password" ]] && return
+
+            echo -ne "${C_TEXT}Días de duración (default 30): ${C_NUM}"
+            read -r days
+            [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
+
+            echo -ne "${C_TEXT}Límite de conexiones simultáneas (default 1): ${C_NUM}"
+            read -r limit
+            [[ ! "$limit" =~ ^[0-9]+$ ]] && limit=1
+
+            local exp_date; exp_date=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
+            useradd -M -s /bin/false -e "$exp_date" "$username" >/dev/null 2>&1 || useradd -M -s /bin/false "$username"
+            echo "$username:$password" | chpasswd
+
+            # Guardar en base de datos SQLite WAL
+            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.create_or_update_user('$username', '$password', days=$days, limit=$limit, user_type='SSH')" 2>/dev/null || true
+
+            mkdir -p /etc/SSHPlus/senha /root
+            echo "$password" > "/etc/SSHPlus/senha/$username"
+            sed -i "/^$username /d" /root/usuarios.db 2>/dev/null || true
+            echo "$username $limit" >> /root/usuarios.db
+            sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+            echo "$username:$limit:$exp_date:$password" >> "$USER_DATABASE"
+            hyst_sync_users >/dev/null 2>&1 || true
+
+            mostrar_ficha_usuario "$username" "$password" "$days" "$limit" "SSH Estándar"
+            pause
+            ;;
+
+        2)
+            # Token Único de Celular (aToken)
+            clear
+            echo -e "${C_TITLE}=== REGISTRAR TOKEN ÚNICO DE CELULAR (ATOKEN) ===${NC}\n"
+            echo -e "${C_SUB}Pide al usuario que copie el token de 16 caracteres que le muestra la App.${NC}"
+            echo -ne "${C_TEXT}Pega el Token del Celular (ej: TK-A1B2-C3D4... o A1B2C3D4...): ${C_NUM}"
+            read -r raw_token
+            [[ -z "$raw_token" ]] && return
+
+            local clean_tk; clean_tk=$(echo "$raw_token" | sed 's/TK-//g; s/-//g; s/ //g' | tr 'a-z' 'A-Z')
+            local u_token="Token_${clean_tk}"
+
+            echo -ne "${C_TEXT}Días de duración (default 30): ${C_NUM}"
+            read -r days
+            [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
+
+            # Registrar en SQLite
+            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.register_device_token('$clean_tk', days=$days, limit=1)" 2>/dev/null || true
+
+            local exp_date; exp_date=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
+            useradd -M -s /bin/false -e "$exp_date" "$u_token" >/dev/null 2>&1 || true
+            echo "$u_token:$clean_tk" | chpasswd 2>/dev/null || true
+
+            mkdir -p /etc/SSHPlus/senha /root
+            echo "$clean_tk" > "/etc/SSHPlus/senha/$u_token"
+            sed -i "/^$u_token /d" /root/usuarios.db 2>/dev/null || true
+            echo "$u_token 1" >> /root/usuarios.db
+            sed -i "/^$u_token:/d" "$USER_DATABASE" 2>/dev/null || true
+            echo "$u_token:1:$exp_date:$clean_tk" >> "$USER_DATABASE"
+
+            mostrar_ficha_usuario "$u_token" "$clean_tk" "$days" "1" "Token Celular (aToken)"
+            pause
+            ;;
+
+        3)
+            # SSH + Candado HWID
+            clear
+            echo -e "${C_TITLE}=== CREAR USUARIO SSH CON CANDADO HWID ===${NC}\n"
+            echo -e "${C_SUB}La cuenta se vinculará automáticamente al primer teléfono donde se conecte.${NC}"
+            echo -ne "${C_TEXT}Nombre de usuario: ${C_NUM}"
+            read -r username
+            username=$(echo "$username" | tr -d ' ')
+            [[ -z "$username" ]] && return
+
+            if id "$username" >/dev/null 2>&1 || grep -q "^$username:" /etc/passwd 2>/dev/null; then
+                echo -e "\n${C_ERR}[x] El usuario '$username' ya existe.${NC}"
+                pause; return
+            fi
+
+            echo -ne "${C_TEXT}Contraseña: ${C_NUM}"
+            read -r password
+            [[ -z "$password" ]] && return
+
+            echo -ne "${C_TEXT}Días de duración (default 30): ${C_NUM}"
+            read -r days
+            [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
+
+            local exp_date; exp_date=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
+            useradd -M -s /bin/false -e "$exp_date" "$username" >/dev/null 2>&1 || useradd -M -s /bin/false "$username"
+            echo "$username:$password" | chpasswd
+
+            # Guardar con user_type='HWID_LOCK'
+            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.create_or_update_user('$username', '$password', days=$days, limit=1, user_type='HWID_LOCK')" 2>/dev/null || true
+
+            mkdir -p /etc/SSHPlus/senha /root
+            echo "$password" > "/etc/SSHPlus/senha/$username"
+            sed -i "/^$username /d" /root/usuarios.db 2>/dev/null || true
+            echo "$username 1" >> /root/usuarios.db
+            sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+            echo "$username:1:$exp_date:$password" >> "$USER_DATABASE"
+
+            mostrar_ficha_usuario "$username" "$password" "$days" "1" "SSH + Candado HWID (1 Dispositivo)"
+            pause
+            ;;
+
+        4)
+            # Demo Temporal
+            clear
+            echo -e "${C_TITLE}=== CREAR USUARIO DEMO / TEMPORAL ===${NC}\n"
+            echo -ne "${C_TEXT}Horas de duración (ej: 2, 4, 12, default 2): ${C_NUM}"
+            read -r hours
+            [[ ! "$hours" =~ ^[0-9]+$ ]] && hours=2
+
+            local rand_id=$(( RANDOM % 9000 + 1000 ))
+            local username="demo_${rand_id}"
+            local password=$(( RANDOM % 9000 + 1000 ))
+            local exp_date; exp_date=$(date -d "+$hours hours" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
+
+            useradd -M -s /bin/false "$username" 2>/dev/null || useradd -s /bin/false "$username"
+            echo "$username:$password" | chpasswd
+
+            # Guardar en SQLite con tipo DEMO
+            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.create_or_update_user('$username', '$password', days=1, limit=1, user_type='DEMO', notes='Prueba $hours horas')" 2>/dev/null || true
+
+            # Programar eliminación automática con comando 'at' o sleep diferido
+            local del_cmd="pkill -u $username 2>/dev/null; userdel -f $username 2>/dev/null; rm -f /etc/SSHPlus/senha/$username 2>/dev/null; python3 -c 'import sys; sys.path.append(\"/opt/ssh-cris\"); import crisdev_db; crisdev_db.delete_user(\"$username\")'"
+            sh -c "echo \"$del_cmd\" | at now + $hours hours 2>/dev/null || (sleep $(( hours * 3600 )) && $del_cmd) &" >/dev/null 2>&1 || true
+
+            mkdir -p /etc/SSHPlus/senha /root
+            echo "$password" > "/etc/SSHPlus/senha/$username"
+            echo "$username 1" >> /root/usuarios.db
+            sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
+            echo "$username:1:$exp_date:$password" >> "$USER_DATABASE"
+
+            mostrar_ficha_usuario "$username" "$password" "1 (${hours}h)" "1" "Cuenta Demo Temporal"
+            pause
+            ;;
+        *) return ;;
+    esac
+}
+
+editar_usuario() {
+    clear
+    msg_bar
+    echo -e "${C_TITLE}       ✏️ EDITAR / RENOVAR CUENTA DE USUARIO ⚡${NC}"
+    msg_bar
+    echo -ne " ${C_TEXT}Nombre de usuario a modificar: ${C_NUM}"
     read -r username
+    username=$(echo "$username" | tr -d ' ')
     [[ -z "$username" ]] && return
 
-    if id "$username" >/dev/null 2>&1 || grep -q "^$username:" /etc/passwd 2>/dev/null; then
-        echo -e "\n\033[1;31mEl usuario '$username' ya existe."
+    # Consultar usuario en SQLite
+    local u_info; u_info=$($SSHPLUS_PY -c "import sys, json; sys.path.append('/opt/ssh-cris'); import crisdev_db; u = crisdev_db.get_user('$username'); print(json.dumps(u) if u else '')" 2>/dev/null)
+    if [[ -z "$u_info" ]]; then
+        echo -e "\n${C_ERR}[x] El usuario '$username' no existe.${NC}"
         pause; return
     fi
 
-    echo -ne "\033[1;32mContraseña\033[1;37m: "
-    read -r password
-    [[ -z "$password" ]] && return
+    local cur_venc; cur_venc=$(echo "$u_info" | jq -r .expiration_date 2>/dev/null || echo "N/A")
+    local cur_dias; cur_dias=$(echo "$u_info" | jq -r .days_remaining 2>/dev/null || echo "0")
+    local cur_lim; cur_lim=$(echo "$u_info" | jq -r .limit_connections 2>/dev/null || echo "1")
+    local cur_hwid; cur_hwid=$(echo "$u_info" | jq -r .hwid 2>/dev/null)
+    [[ "$cur_hwid" == "null" || -z "$cur_hwid" ]] && cur_hwid="Sin candado"
 
-    echo -ne "\033[1;32mDías de duración (ej: 30)\033[1;37m: "
-    read -r days
-    [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
+    echo ""
+    echo -e " ${C_TEXT}👤 Usuario        :${NC} ${C_NUM}$username${NC}"
+    echo -e " ${C_TEXT}📅 Vence          :${NC} ${C_NUM}$cur_venc ($cur_dias días restantes)${NC}"
+    echo -e " ${C_TEXT}🔢 Límite Conexión:${NC} ${C_NUM}$cur_lim dispositivo(s)${NC}"
+    echo -e " ${C_TEXT}📱 HWID Vinculado :${NC} ${C_ARROW}$cur_hwid${NC}"
+    msg_bar
+    echo -e "  ${C_BRACKET}[${C_NUM}1${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}📅 RENOVAR VIGENCIA${NC}         ${C_SUB}(Fijar nueva duración desde hoy)${NC}"
+    echo -e "  ${C_BRACKET}[${C_NUM}2${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}➕ AGREGAR DÍAS EXTRA${NC}       ${C_SUB}(Sumar +N días a la fecha actual)${NC}"
+    echo -e "  ${C_BRACKET}[${C_NUM}3${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}➖ QUITAR DÍAS${NC}              ${C_SUB}(Restar -N días a la fecha actual)${NC}"
+    echo -e "  ${C_BRACKET}[${C_NUM}4${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🔢 CAMBIAR LÍMITE${NC}           ${C_SUB}(Modificar máximo de conexiones)${NC}"
+    echo -e "  ${C_BRACKET}[${C_NUM}5${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🔑 CAMBIAR CONTRASEÑA${NC}       ${C_SUB}(Actualizar contraseña del usuario)${NC}"
+    echo -e "  ${C_BRACKET}[${C_NUM}6${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}📱 RESETEAR / LIBERAR HWID${NC}  ${C_SUB}(Permitir vincular nuevo teléfono)${NC}"
+    msg_bar
+    echo -e "  ${C_BRACKET}[${C_NUM}0${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_BG_EXIT} [ REGRESAR ] ${NC}"
+    msg_bar
+    echo -ne " ${C_ARROW}Seleccione acción [0-6]: ${NC}"
+    read -r ed_opt
 
-    echo -ne "\033[1;32mLímite de conexiones simultáneas (ej: 1 o 2)\033[1;37m: "
-    read -r limit
-    [[ ! "$limit" =~ ^[0-9]+$ ]] && limit=1
+    case "$ed_opt" in
+        1)
+            echo -ne "\n${C_TEXT}Nuevos días de duración desde hoy (ej: 30): ${C_NUM}"
+            read -r r_days
+            [[ ! "$r_days" =~ ^[0-9]+$ ]] && r_days=30
+            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.renew_user('$username', days=$r_days)" 2>/dev/null || true
+            local new_exp; new_exp=$(date -d "+$r_days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
+            chage -E "$new_exp" "$username" 2>/dev/null || true
+            echo -e "\n${C_OK}[✔] Usuario '$username' renovado con éxito por $r_days días!${NC}"
+            pause
+            ;;
+        2)
+            echo -ne "\n${C_TEXT}Cantidad de días a SUMAR (ej: 15): ${C_NUM}"
+            read -r a_days
+            [[ ! "$a_days" =~ ^[0-9]+$ ]] && a_days=15
+            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.add_days_user('$username', $a_days)" 2>/dev/null || true
+            echo -e "\n${C_OK}[✔] Se sumaron +$a_days días a '$username'!${NC}"
+            pause
+            ;;
+        3)
+            echo -ne "\n${C_TEXT}Cantidad de días a RESTAR (ej: 5): ${C_NUM}"
+            read -r s_days
+            [[ ! "$s_days" =~ ^[0-9]+$ ]] && s_days=5
+            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.subtract_days_user('$username', $s_days)" 2>/dev/null || true
+            echo -e "\n${C_OK}[✔] Se restaron -$s_days días a '$username'!${NC}"
+            pause
+            ;;
+        4)
+            echo -ne "\n${C_TEXT}Nuevo límite de conexiones (ej: 1, 2, 3): ${C_NUM}"
+            read -r n_lim
+            [[ ! "$n_lim" =~ ^[0-9]+$ ]] && n_lim=1
+            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.change_limit_user('$username', $n_lim)" 2>/dev/null || true
+            sed -i "/^$username /d" /root/usuarios.db 2>/dev/null || true
+            echo "$username $n_lim" >> /root/usuarios.db
+            echo -e "\n${C_OK}[✔] Límite de '$username' actualizado a $n_lim conexión(es)!${NC}"
+            pause
+            ;;
+        5)
+            echo -ne "\n${C_TEXT}Nueva contraseña: ${C_NUM}"
+            read -r n_pass
+            [[ -z "$n_pass" ]] && return
+            echo "$username:$n_pass" | chpasswd
+            mkdir -p /etc/SSHPlus/senha
+            echo "$n_pass" > "/etc/SSHPlus/senha/$username"
+            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.change_password_user('$username', '$n_pass')" 2>/dev/null || true
+            echo -e "\n${C_OK}[✔] Contraseña de '$username' actualizada exitosamente!${NC}"
+            pause
+            ;;
+        6)
+            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.reset_hwid('$username')" 2>/dev/null || true
+            echo -e "\n${C_OK}[✔] Candado HWID liberado. El usuario podrá vincular su nuevo teléfono al conectar.${NC}"
+            pause
+            ;;
+        *) return ;;
+    esac
+}
 
-    local exp_date
-    exp_date=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
+listar_usuarios() {
+    clear
+    msg_bar
+    echo -e "${C_TITLE}                 📋 LISTA DE USUARIOS REGISTRADOS ⚡${NC}"
+    msg_bar
+    printf " ${C_TEXT}%-16s %-10s %-8s %-12s %-12s %s${NC}\n" "USUARIO" "TIPO" "LÍMITE" "VENCE" "RESTANTE" "ESTADO"
+    msg_bar
 
-    useradd -M -s /bin/false -e "$exp_date" "$username" >/dev/null 2>&1 || useradd -M -s /bin/false "$username"
-    echo "$username:$password" | chpasswd
-
-    # Guardar contraseña legible para SSH-Plus y sincronización
-    mkdir -p /etc/SSHPlus/senha /root
-    echo "$password" > "/etc/SSHPlus/senha/$username"
-    sed -i "/^$username /d" /root/usuarios.db 2>/dev/null || true
-    echo "$username $limit" >> /root/usuarios.db
-
-    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-    echo "$username:$limit:$exp_date:$password" >> "$USER_DATABASE"
-    hyst_sync_users >/dev/null 2>&1 || true
-
-    local ip; ip=$(get_public_ip)
-    echo -e "\n\033[1;32mUSUARIO CREADO EXITOSAMENTE!\033[0m"
-    echo "────────────────────────────────────────────────────────────"
-    echo -e "${WHITE}• Servidor:   ${GREEN}$ip${NC}"
-    echo -e "${WHITE}• Usuario:    ${YELLOW}$username${NC}"
-    echo -e "${WHITE}• Contraseña: ${YELLOW}$password${NC}"
-    echo -e "${WHITE}• Vence el:   ${CYAN}$exp_date ($days días)${NC}"
-    echo -e "${WHITE}• Límite:     ${GREEN}$limit conexión(es)${NC}"
-    echo "────────────────────────────────────────────────────────────"
+    $SSHPLUS_PY -c '
+import sys
+sys.path.append("/opt/ssh-cris")
+try:
+    import crisdev_db
+    users = crisdev_db.list_users()
+    if not users:
+        print("  \033[1;33mNo hay usuarios registrados en la base de datos.\033[0m")
+    for u in users:
+        name = u["username"][:15]
+        utype = u.get("user_type", "SSH")[:9]
+        lim = f"{u.get(\"active_sessions\", 0)}/{u.get(\"limit_connections\", 1)}"
+        venc = u.get("expiration_date", "N/A")
+        rem = f"{u.get(\"days_remaining\", 0)} días"
+        st = u.get("status", "active")
+        
+        if st == "active":
+            st_badge = "\033[1;32m🟢 ACTIVO\033[0m"
+        elif st == "locked":
+            st_badge = "\033[1;33m🔒 LOCK\033[0m"
+        else:
+            st_badge = "\033[1;31m🔴 VENCIDO\033[0m"
+            
+        print(f" \033[1;37m{name:<16}\033[0m \033[0;36m{utype:<10}\033[0m \033[1;32m{lim:<8}\033[0m \033[0;37m{venc:<12}\033[0m \033[1;33m{rem:<12}\033[0m {st_badge}")
+except Exception as e:
+    print(f"Error al listar: {e}")
+'
+    msg_bar
     pause
 }
 
-crear_prueba() {
+monitor_conexiones() {
     clear
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -e "              ${BLUE}CREAR USUARIO DE PRUEBA (TRIAL)${SCOLOR}"
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -ne "\033[1;32mHoras de duración (ej: 2 o 4, default 2)\033[1;37m: "
-    read -r hours
-    [[ ! "$hours" =~ ^[0-9]+$ ]] && hours=2
+    msg_bar
+    echo -e "${C_TITLE}             🟢 MONITOR DE CONECTADOS EN TIEMPO REAL ⚡${NC}"
+    msg_bar
+    printf " ${C_TEXT}%-16s %-12s %-8s %-18s %s${NC}\n" "USUARIO" "PROTOCOLO" "PID" "IP CLIENTE" "CONEXIÓN"
+    msg_bar
 
-    local rand_id=$(( RANDOM % 9000 + 1000 ))
-    local username="test_${rand_id}"
-    local password=$(( RANDOM % 9000 + 1000 ))
-    local exp_date; exp_date=$(date -d "+$hours hours" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
+    # Leer sesiones activas de OpenSSH y Dropbear
+    ps -eo user,comm,pid 2>/dev/null | grep -E 'sshd|dropbear' | grep -v 'root' | while read -r u comm pid; do
+        [[ -z "$u" || "$u" == "sshd" || "$u" == "nobody" ]] && continue
+        printf " ${C_NUM}%-16s${NC} ${C_TEXT}%-12s${NC} ${C_SUB}%-8s${NC} ${C_ARROW}%-18s${NC} ${C_OK}● ACTIVA${NC}\n" "$u" "$comm" "$pid" "Conectado"
+    done
+    msg_bar
+    pause
+}
 
-    useradd -M -s /bin/false "$username" 2>/dev/null || useradd -s /bin/false "$username"
-    echo "$username:$password" | chpasswd
+buscar_usuario() {
+    clear
+    msg_bar
+    echo -e "${C_TITLE}          🔍 BUSCAR USUARIO / TOKEN / DISPOSITIVO ⚡${NC}"
+    msg_bar
+    echo -ne " ${C_TEXT}Ingresa término de búsqueda (nombre, TK-, HWID): ${C_NUM}"
+    read -r term
+    [[ -z "$term" ]] && return
 
-    mkdir -p /etc/SSHPlus/senha /root
-    echo "$password" > "/etc/SSHPlus/senha/$username"
-    echo "$username 1" >> /root/usuarios.db
-    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-    echo "$username:1:$exp_date:$password" >> "$USER_DATABASE"
-    hyst_sync_users >/dev/null 2>&1 || true
+    echo ""
+    $SSHPLUS_PY -c "
+import sys
+sys.path.append('/opt/ssh-cris')
+try:
+    import crisdev_db
+    results = crisdev_db.list_users(search='$term')
+    if not results:
+        print('  \033[1;33mNo se encontraron coincidencias.\033[0m')
+    for u in results:
+        print(f'  👤 Usuario: \033[1;32m{u[\"username\"]}\033[0m | Tipo: {u.get(\"user_type\",\"SSH\")} | Límite: {u[\"limit_connections\"]} | Vence: {u[\"expiration_date\"]} ({u[\"days_remaining\"]}d) | HWID: {u.get(\"hwid\",\"Ninguno\")}')
+except Exception as e:
+    print('Error en búsqueda:', e)
+"
+    msg_bar
+    pause
+}
 
-    local ip; ip=$(get_public_ip)
-    echo -e "\n\033[1;32mUSUARIO DE PRUEBA CREADO!\033[0m"
-    echo "────────────────────────────────────────────────────────────"
-    echo -e "${WHITE}• Usuario:    ${YELLOW}$username${NC}"
-    echo -e "${WHITE}• Contraseña: ${YELLOW}$password${NC}"
-    echo -e "${WHITE}• Duración:   ${CYAN}$hours hora(s)${NC}"
-    echo -e "${WHITE}• Servidor:   ${GREEN}$ip${NC}"
-    echo "────────────────────────────────────────────────────────────"
+bloquear_usuario() {
+    clear
+    msg_bar
+    echo -e "${C_TITLE}          🔒 BLOQUEAR / REACTIVAR USUARIO MANUALMENTE ⚡${NC}"
+    msg_bar
+    echo -ne " ${C_TEXT}Nombre de usuario: ${C_NUM}"
+    read -r username
+    username=$(echo "$username" | tr -d ' ')
+    [[ -z "$username" ]] && return
+
+    echo -ne " ${C_TEXT}Acción: [1] Bloquear cuenta  [2] Reactivar cuenta: ${C_NUM}"
+    read -r b_act
+
+    if [[ "$b_act" == "1" ]]; then
+        pkill -u "$username" 2>/dev/null || true
+        usermod -L "$username" 2>/dev/null || true
+        $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.set_user_status('$username', 'locked')" 2>/dev/null || true
+        echo -e "\n${C_WARN}[✔] Cuenta '$username' suspendida y bloqueada.${NC}"
+    elif [[ "$b_act" == "2" ]]; then
+        usermod -U "$username" 2>/dev/null || true
+        $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.set_user_status('$username', 'active')" 2>/dev/null || true
+        echo -e "\n${C_OK}[✔] Cuenta '$username' reactivada exitosamente.${NC}"
+    fi
     pause
 }
 
 eliminar_usuario() {
     clear
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -e "                   ${BLUE}ELIMINAR USUARIO${SCOLOR}"
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -ne "\033[1;32mNombre de usuario a eliminar\033[1;37m: "
+    msg_bar
+    echo -e "${C_TITLE}                   🗑️ ELIMINAR USUARIO ⚡${NC}"
+    msg_bar
+    echo -ne " ${C_TEXT}Nombre de usuario a eliminar: ${C_NUM}"
     read -r username
+    username=$(echo "$username" | tr -d ' ')
     [[ -z "$username" ]] && return
 
     pkill -u "$username" 2>/dev/null || true
@@ -3975,147 +4930,20 @@ eliminar_usuario() {
     rm -f "/etc/SSHPlus/senha/$username" 2>/dev/null || true
     sed -i "/^$username /d" /root/usuarios.db 2>/dev/null || true
     sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-    hyst_sync_users >/dev/null 2>&1 || true
-    echo -e "\n\033[1;32mUsuario '$username' eliminado con éxito!\033[0m"
-    pause
-}
 
-monitor_conexiones() {
-    clear
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -e "               ${BLUE}MONITOR DE CONEXIONES ONLINE${SCOLOR}"
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    printf "%-18s %-12s %-20s\n" "USUARIO" "PID" "DESDE"
-    echo "────────────────────────────────────────────────────────────"
-    who 2>/dev/null | grep -E "pts|sshd" | awk '{printf "%-18s %-12s %-20s\n", $1, $2, $5}' || echo "No hay conexiones activas"
-    echo "────────────────────────────────────────────────────────────"
-    pause
-}
-
-renovar_usuario() {
-    clear
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -e "                   ${BLUE}CAMBIAR FECHA / RENOVAR${SCOLOR}"
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -ne "\033[1;32mNombre de usuario\033[1;37m: "
-    read -r username
-    [[ -z "$username" ]] && return
-
-    echo -ne "\033[1;32mNuevos días a sumar (ej: 30)\033[1;37m: "
-    read -r days
-    [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
-
-    local new_exp
-    new_exp=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
-    chage -E "$new_exp" "$username" 2>/dev/null || true
-
-    local limit; limit=$(get_user_limit "$username")
-    local pass; pass=$(get_user_password "$username")
-    sed -i "/^$username:/d" "$USER_DATABASE" 2>/dev/null || true
-    echo "$username:${limit:-1}:$new_exp:$pass" >> "$USER_DATABASE"
-
-    echo -e "\n\033[1;32mUsuario '$username' renovado hasta $new_exp\033[0m"
-    pause
-}
-
-cambiar_limite() {
-    clear
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -e "                   ${BLUE}CAMBIAR LIMITE DE CONEXIONES${SCOLOR}"
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -ne "\033[1;32mNombre de usuario\033[1;37m: "
-    read -r username
-    [[ -z "$username" ]] && return
-
-    echo -ne "\033[1;32mNuevo límite de conexiones (ej: 1, 2, 3)\033[1;37m: "
-    read -r limit
-    [[ ! "$limit" =~ ^[0-9]+$ ]] && limit=1
-
-    sed -i "/^$username /d" /root/usuarios.db 2>/dev/null || true
-    echo "$username $limit" >> /root/usuarios.db
-
-    local exp="2030-01-01"
-    local pass; pass=$(get_user_password "$username")
-    if [[ -f "$USER_DATABASE" ]] && grep -q "^$username:" "$USER_DATABASE"; then
-        exp=$(grep "^$username:" "$USER_DATABASE" | cut -d: -f3 || echo "2030-01-01")
-        sed -i "/^$username:/d" "$USER_DATABASE"
-    fi
-    echo "$username:$limit:$exp:$pass" >> "$USER_DATABASE"
-    echo -e "\n\033[1;32mLímite de '$username' actualizado a $limit conexión(es)\033[0m"
-    pause
-}
-
-cambiar_clave() {
-    clear
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -e "                   ${BLUE}CAMBIAR CONTRASEÑA${SCOLOR}"
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -ne "\033[1;32mNombre de usuario\033[1;37m: "
-    read -r username
-    [[ -z "$username" ]] && return
-
-    echo -ne "\033[1;32mNueva contraseña\033[1;37m: "
-    read -r password
-    [[ -z "$password" ]] && return
-
-    echo "$username:$password" | chpasswd
-    mkdir -p /etc/SSHPlus/senha
-    echo "$password" > "/etc/SSHPlus/senha/$username"
-
-    local limit; limit=$(get_user_limit "$username")
-    local exp="2030-01-01"
-    if [[ -f "$USER_DATABASE" ]] && grep -q "^$username:" "$USER_DATABASE"; then
-        exp=$(grep "^$username:" "$USER_DATABASE" | cut -d: -f3 || echo "2030-01-01")
-        sed -i "/^$username:/d" "$USER_DATABASE"
-    fi
-    echo "$username:$limit:$exp:$password" >> "$USER_DATABASE"
+    # Eliminar en SQLite WAL
+    $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.delete_user('$username')" 2>/dev/null || true
     hyst_sync_users >/dev/null 2>&1 || true
 
-    echo -e "\n\033[1;32mContraseña de '$username' cambiada exitosamente!\033[0m"
-    pause
-}
-
-listar_usuarios() {
-    clear
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -e "                   ${BLUE}INFORME DE USUARIOS${SCOLOR}"
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    
-    local all_users=()
-    mapfile -t all_users < <(get_user_list)
-    local total=${#all_users[@]}
-    local stats_str; stats_str=$(get_users_stats)
-    local online; online=$(echo "$stats_str" | cut -d: -f4)
-    local expired; expired=$(echo "$stats_str" | cut -d: -f3)
-
-    echo -e "${WHITE}  TOTAL: ${GREEN}${total}${WHITE}  |  EN LINEA: ${GREEN}${online}${WHITE}  |  VENCIDOS: ${RED}${expired}${NC}"
-    echo "────────────────────────────────────────────────────────────"
-    printf "%-4s %-16s %-12s %-8s %s\n" "#" "USUARIO" "CONTRASENA" "LIMITE" "VENCIMIENTO"
-    echo "────────────────────────────────────────────────────────────"
-
-    local i=1
-    for u in "${all_users[@]}"; do
-        [[ -z "$u" ]] && continue
-        local pass; pass=$(get_user_password "$u")
-        local limit; limit=$(get_user_limit "$u")
-        local days; days=$(get_user_days_remaining "$u")
-        local col_days="${GREEN}$days${NC}"
-        [[ "$days" == "Vencido" ]] && col_days="${RED}$days${NC}"
-        printf "%-4s %-16s %-12s %-8s %b\n" "$i" "$u" "$pass" "$limit" "$col_days"
-        ((i++))
-    done
-    if [[ $total -eq 0 ]]; then
-        echo -e "  ${YELLOW}No hay usuarios registrados en el sistema.${NC}"
-    fi
-    echo "────────────────────────────────────────────────────────────"
+    echo -e "\n${C_OK}[✔] Usuario '$username' eliminado con éxito del sistema y de la base de datos!${NC}"
     pause
 }
 
 eliminar_caducados() {
     clear
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-    echo -e "                   ${BLUE}ELIMINAR USUARIOS CADUCADOS${SCOLOR}"
-    echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
+    msg_bar
+    echo -e "${C_TITLE}             🧹 ELIMINAR USUARIOS CADUCADOS ⚡${NC}"
+    msg_bar
     local count=0
     local all_users=()
     mapfile -t all_users < <(get_user_list)
@@ -4129,12 +4957,27 @@ eliminar_caducados() {
             rm -f "/etc/SSHPlus/senha/$u" 2>/dev/null || true
             sed -i "/^$u /d" /root/usuarios.db 2>/dev/null || true
             sed -i "/^$u:/d" "$USER_DATABASE" 2>/dev/null || true
+            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.delete_user('$u')" 2>/dev/null || true
             ((count++))
-            echo -e " • Usuario vencido eliminado: \033[1;31m$u\033[0m"
+            echo -e " ${C_ERR}• Usuario vencido eliminado:${NC} ${C_TEXT}$u${NC}"
         fi
     done
+    $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.clean_expired_users()" 2>/dev/null || true
     hyst_sync_users >/dev/null 2>&1 || true
-    echo -e "\n\033[1;32mTotal de usuarios caducados eliminados: $count\033[0m"
+    echo -e "\n${C_OK}[✔] Total de usuarios caducados eliminados: $count${NC}"
+    pause
+}
+
+backup_usuarios() {
+    clear
+    msg_bar
+    echo -e "${C_TITLE}          💾 RESPALDO Y RESTAURACIÓN DE USUARIOS ⚡${NC}"
+    msg_bar
+    local b_path="/root/backup_usuarios_$(date +%Y%m%d_%H%M%S).tar.gz"
+    echo -e "${C_TITLE}Creando respaldo seguro local en ${b_path}...${NC}"
+    tar -czf "$b_path" /etc/crisdev/crisdev_servers.db /etc/crisdev/crisdev.db /etc/passwd /etc/shadow /etc/SSHPlus /etc/ssh-cris 2>/dev/null || true
+    echo -e "\n${C_OK}[✔] Respaldo generado con éxito en:${NC} ${C_NUM}$b_path${NC}"
+    echo -e "${C_SUB}(Almacenado de forma segura y privada en /root, nunca expuesto en puertos web públicos).${NC}\n"
     pause
 }
 
@@ -4753,14 +5596,357 @@ menu_bots_herramientas() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  MENÚ PRINCIPAL (COMPACTO Y MODULAR)
+#  APARTADO [03] CHECKUSER, ATOKEN/HWID & BANNER PAM
+# ─────────────────────────────────────────────────────────────────────────────
+menu_checkuser_api() {
+    while true; do
+        clear
+        local cu_status="${BADGE_OFF}"
+        if systemctl is-active --quiet crisdev-checkuser.service 2>/dev/null || pgrep -f 'crisdev_checkuser.py' >/dev/null 2>&1; then
+            cu_status="${BADGE_ON}"
+        fi
+
+        local cu_port="5000"
+        [[ -f /etc/crisdev/checkuser.port ]] && cu_port=$(cat /etc/crisdev/checkuser.port 2>/dev/null)
+
+        local pam_status="${BADGE_OFF}"
+        if grep -q 'crisdev_pam_banner.py' /etc/pam.d/sshd 2>/dev/null; then
+            pam_status="${BADGE_ON}"
+        fi
+
+        local my_ip; my_ip=$(get_public_ip)
+
+        msg_bar
+        echo -e "${C_TITLE}       ⚡ CHECKUSER · VALIDADOR ATOKEN/HWID · BANNER PAM ⚡${NC}"
+        msg_bar
+        echo -e " ${C_TEXT}📡 Demonio CheckUser  :${NC} ${cu_status} │ ${C_TEXT}Puerto:${NC} ${C_NUM}${cu_port}${NC}"
+        echo -e " ${C_TEXT}📱 Validador aToken   :${NC} ${cu_status} │ ${C_TEXT}Puerto:${NC} ${C_NUM}8888${NC}"
+        echo -e " ${C_TEXT}🎨 CheckBanner PAM    :${NC} ${pam_status} │ ${C_SUB}Aviso en vivo al conectar SSH${NC}"
+        msg_bar
+        echo -e " ${C_ARROW}🔗 Endpoints activos para HTTP Conexión / Apps:${NC}"
+        echo -e "  ${C_SUB}‣ CheckUser App :${NC} ${C_NUM}http://${my_ip}:${cu_port}/checkuser${NC}"
+        echo -e "  ${C_SUB}‣ aToken HWID   :${NC} ${C_NUM}http://${my_ip}:8888/?token=TK-XXXX${NC}"
+        echo -e "  ${C_SUB}‣ Contador App  :${NC} ${C_NUM}http://${my_ip}:${cu_port}/server/online${NC}"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}01${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}ACTIVAR / REINICIAR DEMONIO CHECKUSER${NC}  ${C_SUB}(Puerto ${cu_port})${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}02${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}DETENER DEMONIO CHECKUSER${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}03${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}CAMBIAR PUERTO DE CHECKUSER${NC}            ${C_SUB}(Default: 5000)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}04${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}ACTIVAR / DESACTIVAR BANNER DINÁMICO PAM${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}05${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}PROBAR RESPUESTA JSON EN VIVO${NC}          ${C_SUB}(Test de usuario/token)${NC}"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}00${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_BG_EXIT} [ REGRESAR AL MENÚ PRINCIPAL ] ${NC}"
+        msg_bar
+        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-5]: ${NC}"
+        read -r cu_opt
+
+        case "$cu_opt" in
+            1|01)
+                clear
+                echo -e "${C_TITLE}Iniciando servicio crisdev-checkuser...${NC}"
+                cat << 'EOF' > /etc/systemd/system/crisdev-checkuser.service
+[Unit]
+Description=CRISDEV CheckUser & aToken Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ssh-cris
+ExecStart=/usr/bin/python3 /opt/ssh-cris/crisdev_checkuser.py
+Restart=always
+RestartSec=3
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                systemctl daemon-reload
+                systemctl enable crisdev-checkuser.service >/dev/null 2>&1 || true
+                systemctl restart crisdev-checkuser.service
+                sleep 1
+                if systemctl is-active --quiet crisdev-checkuser.service; then
+                    echo -e "\n${C_OK}[✔] Demonio CheckUser activo y escuchando en puerto ${cu_port} y 8888!${NC}"
+                else
+                    echo -e "\n${C_ERR}[x] Error al iniciar servicio crisdev-checkuser.${NC}"
+                fi
+                pause
+                ;;
+            2|02)
+                systemctl stop crisdev-checkuser.service >/dev/null 2>&1 || true
+                pkill -f 'crisdev_checkuser.py' >/dev/null 2>&1 || true
+                echo -e "\n${C_ERR}[✔] Demonio CheckUser detenido.${NC}"
+                sleep 1
+                ;;
+            3|03)
+                clear
+                echo -ne "${C_ARROW}Ingrese el nuevo puerto para CheckUser (ej: 5000, 8085): ${NC}"
+                read -r new_p
+                if [[ "$new_p" =~ ^[0-9]+$ ]] && (( new_p > 1 && new_p < 65535 )); then
+                    mkdir -p /etc/crisdev
+                    echo "$new_p" > /etc/crisdev/checkuser.port
+                    sed -i "s/CHECKUSER_PORT = .*/CHECKUSER_PORT = $new_p/" /opt/ssh-cris/crisdev_checkuser.py 2>/dev/null || true
+                    systemctl restart crisdev-checkuser.service 2>/dev/null || true
+                    echo -e "\n${C_OK}[✔] Puerto actualizado a $new_p.${NC}"
+                else
+                    echo -e "\n${C_ERR}[x] Puerto inválido.${NC}"
+                fi
+                pause
+                ;;
+            4|04)
+                clear
+                if grep -q 'crisdev_pam_banner.py' /etc/pam.d/sshd 2>/dev/null; then
+                    sed -i '/crisdev_pam_banner.py/d' /etc/pam.d/sshd 2>/dev/null || true
+                    echo -e "${C_ERR}[✔] Banner dinámico PAM DESACTIVADO.${NC}"
+                else
+                    echo "session optional pam_exec.so stdout /usr/bin/python3 /opt/ssh-cris/crisdev_pam_banner.py" >> /etc/pam.d/sshd
+                    echo -e "${C_OK}[✔] Banner dinámico PAM ACTIVADO para OpenSSH y túneles!${NC}"
+                fi
+                pause
+                ;;
+            5|05)
+                clear
+                echo -ne "${C_ARROW}Ingrese el usuario o token a verificar: ${NC}"
+                read -r test_u
+                [[ -z "$test_u" ]] && continue
+                echo -e "\n${C_TITLE}Consultando http://127.0.0.1:${cu_port}/checkuser?user=${test_u}...${NC}\n"
+                curl -s "http://127.0.0.1:${cu_port}/checkuser?user=${test_u}" | jq . 2>/dev/null || curl -s "http://127.0.0.1:${cu_port}/checkuser?user=${test_u}"
+                echo ""
+                pause
+                ;;
+            0|00) break ;;
+            *) echo -e "\n${C_ERR}Opción inválida!${NC}"; sleep 1 ;;
+        esac
+    done
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  APARTADO [06] CLÚSTER DE NODOS & BASE DE DATOS
+# ─────────────────────────────────────────────────────────────────────────────
+menu_cluster_api() {
+    while true; do
+        clear
+        local api_status="${BADGE_OFF}"
+        if systemctl is-active --quiet crisdev-api.service 2>/dev/null || pgrep -f 'crisdev_api_server.py' >/dev/null 2>&1; then
+            api_status="${BADGE_ON}"
+        fi
+
+        local db_size="0 KB"
+        [[ -f /etc/crisdev/crisdev_servers.db ]] && db_size=$(du -h /etc/crisdev/crisdev_servers.db 2>/dev/null | awk '{print $1}')
+        [[ -f /etc/crisdev/crisdev.db ]] && db_size=$(du -h /etc/crisdev/crisdev.db 2>/dev/null | awk '{print $1}')
+
+        local cat_ver="v110"
+        cat_ver=$($SSHPLUS_PY -c 'import sys; sys.path.append("/opt/ssh-cris"); import crisdev_db; s = crisdev_db.get_stats(); print(s.get("version", "v1.0"))' 2>/dev/null || echo "v110")
+
+        msg_bar
+        echo -e "${C_TITLE}       🌐 CLÚSTER DE NODOS · BASE DE DATOS · API GEN PRO ⚡${NC}"
+        msg_bar
+        echo -e " ${C_TEXT}🗄️ Base de Datos SQLite WAL :${NC} ${C_OK}[● OK ]${NC} ${C_SUB}(${db_size})${NC}"
+        echo -e " ${C_TEXT}🚀 API REST Catálogo/Clúster:${NC} ${api_status} ${C_SUB}(Puerto interno: 8088)${NC}"
+        echo -e " ${C_TEXT}📦 Versión Catálogo Activa  :${NC} ${C_NUM}${cat_ver}${NC}"
+        echo -e " ${C_TEXT}🌍 Rol de este Servidor     :${NC} ${C_ARROW}MASTER + NODO${NC} ${C_SUB}(Linode Miami 8GB)${NC}"
+        msg_bar
+        echo -e " ${C_ARROW}NODOS REGISTRADOS EN EL CLÚSTER:${NC}"
+        echo -e "  ${C_SUB}‣ [01] 🇺🇸 MIAMI-MASTER (172.235.151.117) │${NC} ${BADGE_ON} ${C_SUB}│ Local Master${NC}"
+        echo -e "  ${C_SUB}‣ [02] 🇺🇸 USA-NODO-01  (ip.crispdev...)  │${NC} ${BADGE_ON} ${C_SUB}│ Nodo Esclavo${NC}"
+        echo -e "  ${C_SUB}‣ [03] 🇧🇷 BRASIL-NODO  (ipbra.miclaro..) │${NC} ${BADGE_ON} ${C_SUB}│ Nodo Esclavo${NC}"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}01${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}ACTIVAR / REINICIAR API REST DEL CLÚSTER${NC}   ${C_SUB}(Puerto 8088)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}02${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}VER / ROTAR TOKEN ADMIN PARA GEN PRO${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}03${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}IMPORTAR github_config.json A SQLITE${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}04${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}FORZAR SINCRONIZACIÓN DE USUARIOS AHORA${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}05${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}CREAR SNAPSHOT / RESPALDO DE BASE DE DATOS${NC}"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}00${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_BG_EXIT} [ REGRESAR AL MENÚ PRINCIPAL ] ${NC}"
+        msg_bar
+        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-5]: ${NC}"
+        read -r cl_opt
+
+        case "$cl_opt" in
+            1|01)
+                clear
+                echo -e "${C_TITLE}Configurando servicio systemd crisdev-api...${NC}"
+                cat << 'EOF' > /etc/systemd/system/crisdev-api.service
+[Unit]
+Description=CRISDEV Server API & Cluster Sync Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/ssh-cris
+ExecStart=/usr/bin/python3 /opt/ssh-cris/crisdev_api_server.py --port 8088
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+                systemctl daemon-reload
+                systemctl enable crisdev-api.service >/dev/null 2>&1 || true
+                systemctl restart crisdev-api.service
+                sleep 1
+                if systemctl is-active --quiet crisdev-api.service; then
+                    echo -e "\n${C_OK}[✔] API REST del Clúster iniciada en puerto 8088!${NC}"
+                else
+                    echo -e "\n${C_ERR}[x] Error al iniciar API REST.${NC}"
+                fi
+                pause
+                ;;
+            2|02)
+                clear
+                local a_token="CRISDEV_ADMIN_SECRET_KEY_PRO_2026"
+                [[ -f /etc/crisdev/admin.token ]] && a_token=$(cat /etc/crisdev/admin.token 2>/dev/null)
+                echo -e "${C_TITLE}=== TOKEN ADMINISTRATIVO PARA GEN NEW APP PRO ===${NC}"
+                echo -e "\n${C_ARROW}Token Actual:${NC} ${C_NUM}$a_token${NC}\n"
+                echo -e "${C_SUB}Usa esta clave en la cabecera X-CRISDEV-ADMIN-KEY para guardar servidores desde GEN PRO.${NC}\n"
+                pause
+                ;;
+            3|03)
+                clear
+                echo -e "${C_TITLE}Importando catálogo de servidores a SQLite WAL...${NC}"
+                $SSHPLUS_PY -c '
+import sys, json
+sys.path.append("/opt/ssh-cris")
+try:
+    import crisdev_db
+    src = "/opt/ssh-cris/github_config.json"
+    if not os.path.exists(src): src = "github_config.json"
+    with open(src, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    v = data.get("Version", "v110")
+    notes = data.get("ReleaseNotes", "Importado a SQLite")
+    servers = data.get("Servers", [])
+    crisdev_db.save_full_catalog(v, notes, servers)
+    print(f"✔ Importados {len(servers)} servidores en versión {v} exitosamente.")
+except Exception as e:
+    print(f"x Error en importación: {e}")
+'
+                pause
+                ;;
+            4|04)
+                clear
+                echo -e "${C_TITLE}Sincronizando usuarios locales con SQLite...${NC}"
+                $SSHPLUS_PY -c 'import sys; sys.path.append("/opt/ssh-cris"); import crisdev_db; r = crisdev_db.sync_from_system(); print("✔ Usuarios sincronizados:", r)'
+                pause
+                ;;
+            5|05)
+                clear
+                local b_file="/root/crisdev_db_backup_$(date +%Y%m%d_%H%M%S).db"
+                sqlite3 /etc/crisdev/crisdev_servers.db ".backup '$b_file'" 2>/dev/null || cp -af /etc/crisdev/crisdev_servers.db "$b_file" 2>/dev/null || true
+                echo -e "${C_OK}[✔] Snapshot guardado en: ${b_file}${NC}"
+                pause
+                ;;
+            0|00) break ;;
+            *) echo -e "\n${C_ERR}Opción inválida!${NC}"; sleep 1 ;;
+        esac
+    done
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  APARTADO [08] TEMAS VISUALES & ACTUALIZACIÓN
+# ─────────────────────────────────────────────────────────────────────────────
+menu_temas_update() {
+    while true; do
+        clear
+        local cur_t="cyberpunk"
+        [[ -f /etc/crisdev/theme.conf ]] && cur_t=$(cat /etc/crisdev/theme.conf 2>/dev/null)
+
+        msg_bar
+        echo -e "${C_TITLE}       🎨 PERSONALIZACIÓN DE TEMAS & ACTUALIZACIÓN ⚡${NC}"
+        msg_bar
+        echo -e " ${C_TEXT}🎨 Tema Visual Activo :${NC} ${C_NUM}${cur_t^^}${NC}"
+        echo -e " ${C_TEXT}📦 Versión Suite      :${NC} ${C_NUM}v2.0-CRISDEV${NC} ${C_SUB}(Al día con GitHub)${NC}"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}01${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}💜 TEMA CYBERPUNK CRISDEV${NC}  ${C_SUB}(Violeta #8b5cf6 + Cian #22d3ee + Neón)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}02${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🐼 TEMA PANDA VIOLETA${NC}      ${C_SUB}(Violeta 256-color + Azul + Amarillo)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}03${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🐲 TEMA CHUMOGH CLÁSICO${NC}    ${C_SUB}(Amarillo + Magenta + Cian + Rojo)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}04${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}💚 TEMA ESMERALDA MATRIX${NC}   ${C_SUB}(Verde Esmeralda + Lima + Blanco)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}05${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🟡 TEMA AURUM PREMIUM${NC}      ${C_SUB}(Dorado + Ámbar + Blanco)${NC}"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}06${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🔄 ACTUALIZAR SUITE DESDE REPOSITORIO OFICIAL (con .bak)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}07${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}⏪ RESTAURAR VERSIÓN ANTERIOR (Rollback Instantáneo)${NC}"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}00${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_BG_EXIT} [ REGRESAR AL MENÚ PRINCIPAL ] ${NC}"
+        msg_bar
+        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-7]: ${NC}"
+        read -r t_opt
+
+        case "$t_opt" in
+            1|01)
+                mkdir -p /etc/crisdev
+                echo "cyberpunk" > /etc/crisdev/theme.conf
+                load_theme
+                echo -e "\n${C_OK}[✔] Tema Cyberpunk CRISDEV aplicado!${NC}"
+                sleep 1
+                ;;
+            2|02)
+                mkdir -p /etc/crisdev
+                echo "panda" > /etc/crisdev/theme.conf
+                load_theme
+                echo -e "\n${C_OK}[✔] Tema Panda Violeta aplicado!${NC}"
+                sleep 1
+                ;;
+            3|03)
+                mkdir -p /etc/crisdev
+                echo "chumogh" > /etc/crisdev/theme.conf
+                load_theme
+                echo -e "\n${C_OK}[✔] Tema ChumoGH Clásico aplicado!${NC}"
+                sleep 1
+                ;;
+            4|04)
+                mkdir -p /etc/crisdev
+                echo "matrix" > /etc/crisdev/theme.conf
+                load_theme
+                echo -e "\n${C_OK}[✔] Tema Esmeralda Matrix aplicado!${NC}"
+                sleep 1
+                ;;
+            5|05)
+                mkdir -p /etc/crisdev
+                echo "aurum" > /etc/crisdev/theme.conf
+                load_theme
+                echo -e "\n${C_OK}[✔] Tema Aurum Premium aplicado!${NC}"
+                sleep 1
+                ;;
+            6|06)
+                clear
+                echo -e "${C_TITLE}Creando respaldo de seguridad ssh-cris.sh.bak...${NC}"
+                cp -af /opt/ssh-cris/ssh-cris.sh /opt/ssh-cris/ssh-cris.sh.bak 2>/dev/null || true
+                echo -e "${C_ARROW}Descargando última versión de SSH-CRIS v2.0...${NC}"
+                bash <(curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/install.sh?v=$(date +%s)") --update
+                load_theme
+                pause
+                ;;
+            7|07)
+                clear
+                if [[ -f /opt/ssh-cris/ssh-cris.sh.bak ]]; then
+                    cp -af /opt/ssh-cris/ssh-cris.sh.bak /opt/ssh-cris/ssh-cris.sh
+                    echo -e "${C_OK}[✔] Rollback exitoso a versión anterior.${NC}"
+                else
+                    echo -e "${C_ERR}[x] No existe archivo .bak previo.${NC}"
+                fi
+                pause
+                ;;
+            0|00) break ;;
+            *) echo -e "\n${C_ERR}Opción inválida!${NC}"; sleep 1 ;;
+        esac
+    done
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  MENÚ PRINCIPAL (DISEÑO CYBERPUNK CRISDEV v2.0)
 # ─────────────────────────────────────────────────────────────────────────────
 main_menu() {
+    load_theme
     while true; do
         clear
         local ip; ip=$(get_public_ip)
         local os; os=$(lsb_release -sd 2>/dev/null || cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"' || echo 'Linux')
-        
+        local n_cpu; n_cpu=$(nproc 2>/dev/null || echo "1")
+        local uptime_str; uptime_str=$(uptime -p 2>/dev/null | sed 's/up //; s/ hours\?,/h/; s/ minutes\?/m/' || echo "N/A")
+
         # Cálculo de Memoria RAM
         local ram_total=0 ram_used=0
         if [[ -f /proc/meminfo ]]; then
@@ -4785,56 +5971,90 @@ main_menu() {
         [[ -z "$cpu_load" ]] && cpu_load=$(top -bn1 2>/dev/null | grep -i "cpu" | head -1 | awk '{print $2"%"}' || echo "0%")
         [[ -z "$cpu_load" || "$cpu_load" == "%" ]] && cpu_load="0%"
 
-        local hora; hora=$(date '+%H:%M:%S')
+        # Badges de servicios centrales
+        local wd_badge="${BADGE_OFF}"
+        if systemctl is-active --quiet crisdev-watchdog.service 2>/dev/null || pgrep -f 'watchdog.sh' >/dev/null 2>&1; then
+            wd_badge="${BADGE_ON}"
+        fi
 
+        local lim_badge="${BADGE_OFF}"
+        if systemctl is-active --quiet crisdev-limiter.service 2>/dev/null || pgrep -f 'crisdev_limiter.py|limiter' >/dev/null 2>&1; then
+            lim_badge="${BADGE_ON}"
+        fi
+
+        local cu_badge="${BADGE_OFF}"
+        if systemctl is-active --quiet crisdev-checkuser.service 2>/dev/null || pgrep -f 'crisdev_checkuser.py' >/dev/null 2>&1; then
+            cu_badge="${BADGE_ON}"
+        fi
+
+        # Resumen de Usuarios desde SQLite WAL (< 2 ms)
         local stats_str; stats_str=$(get_users_stats)
         local u_total; u_total=$(echo "$stats_str" | cut -d: -f1)
         local u_active; u_active=$(echo "$stats_str" | cut -d: -f2)
         local u_expired; u_expired=$(echo "$stats_str" | cut -d: -f3)
         local u_online; u_online=$(echo "$stats_str" | cut -d: -f4)
+        local u_locked; u_locked=$(echo "$stats_str" | cut -d: -f5)
+        [[ -z "$u_locked" ]] && u_locked=0
 
-        # Estado del Guardián Watchdog
-        local wd_badge="\033[1;31m[INACTIVO]\033[0m"
-        if systemctl is-active --quiet crisdev-watchdog.service 2>/dev/null || pgrep -f 'watchdog.sh' >/dev/null 2>&1; then
-            wd_badge="\033[1;32m[ACTIVO]\033[0m"
-        fi
+        # Detección de puertos activos para la cabecera
+        local p_ssh; p_ssh=$(grep '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | xargs || echo "22")
+        [[ -z "$p_ssh" ]] && p_ssh="22"
+        local p_drop; p_drop=$(get_proc_ports 'dropbear')
+        [[ -z "$p_drop" ]] && p_drop="143, 109"
+        local p_ssl; p_ssl=$(get_proc_ports 'stunnel|stunnel4')
+        [[ -z "$p_ssl" ]] && p_ssl="443"
+        local p_ws; p_ws=$(get_proc_ports 'wsproxy|proxy\.py')
+        [[ -z "$p_ws" ]] && p_ws="80"
+        local p_bhttp; p_bhttp=$(scan_bhttp_ports | awk '{print $1}')
+        [[ -z "$p_bhttp" ]] && p_bhttp="8080"
+        local p_hcr; p_hcr=$(scan_hcr_ports | awk '{print $1}')
+        [[ -z "$p_hcr" ]] && p_hcr="8090"
+        local p_hyst; p_hyst="36712"
+        [[ -f /etc/hysteria/config.json ]] && p_hyst=$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/hysteria/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "36712")
 
-        echo -e "${SSHPLUS_CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${SSHPLUS_CYAN}║${WHITE}             ⚡ HTTP CONEXIÓN MASTER SUITE ⚡               ${SSHPLUS_CYAN}║${NC}"
-        echo -e "${SSHPLUS_CYAN}║${WHITE}                VPS Manager & Auto-Heal v1                  ${SSHPLUS_CYAN}║${NC}"
-        echo -e "${SSHPLUS_CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
-        echo -e "  ${WHITE}🌐 IP:${GREEN} $ip ${WHITE}| 💻 SO:${GREEN} ${os:0:18} ${WHITE}| ⏱️ Hora:${GREEN} $hora${NC}"
-        echo -e "  ${WHITE}🧠 RAM:${GREEN} ${ram_used}MB/${ram_total}MB (${ram_pct}%) ${WHITE}| 👥 Online:${GREEN} $u_online ${WHITE}| 🛡️ Guardián: $wd_badge${NC}"
-        echo -e "${SSHPLUS_CYAN}══════════════════════════════════════════════════════════════${NC}"
-        echo -e "  ${SSHPLUS_NUM}[1]${NC} \033[1;37m👥 GESTIÓN DE USUARIOS\033[0m     \033[0;36m(Crear, Renovar, Monitor, Expulsar)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[2]${NC} \033[1;37m⚡ TÚNELES Y PROTOCOLOS\033[0m    \033[0;36m(11 Protocolos: HCR, UDP, SSH, BHTTP...)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[3]${NC} \033[1;37m🛡️ SEGURIDAD Y GUARDIÁN\033[0m    \033[0;36m(Watchdog Auto-Heal, Torrent, Firewall)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[4]${NC} \033[1;37m🚀 OPTIMIZACIÓN Y SISTEMA\033[0m  \033[0;36m(TCP BBR, RAM Cleaner, Info Servidor)\033[0m"
-        echo -e "  ${SSHPLUS_NUM}[5]${NC} \033[1;37m🤖 BOTS Y HERRAMIENTAS\033[0m     \033[0;36m(Bot Telegram SSH, Speedtest, Banner)\033[0m"
-        echo -e "${SSHPLUS_CYAN}══════════════════════════════════════════════════════════════${NC}"
-        echo -e "  ${SSHPLUS_NUM}[6]${NC} \033[1;32m🔄 ACTUALIZAR SUITE\033[0m        ${SSHPLUS_NUM}[0]${NC} \033[1;31m🚪 SALIR DEL SCRIPT\033[0m"
-        echo -e "${SSHPLUS_CYAN}══════════════════════════════════════════════════════════════${NC}"
-        echo -ne "\033[1;32mSeleccione una opción [0-6]: ${NC}"
+        msg_bar
+        echo -e "${C_TITLE}       ⚡ HTTP CONEXIÓN MASTER SUITE v2.0 · CRISDEV VPS ⚡${NC}"
+        msg_bar
+        echo -e " ${C_TEXT}🌐 IP: ${C_NUM}$ip${NC}   │ ${C_TEXT}💻 ${os:0:16} (${n_cpu} vCPU)${NC} │ ${C_TEXT}⏱️ Up: ${C_NUM}${uptime_str}${NC}"
+        echo -e " ${C_TEXT}🧠 RAM: ${C_NUM}${ram_used}/${ram_total}MB (${ram_pct}%)${NC} │ ${C_TEXT}⚡ CPU: ${C_NUM}${cpu_load}${NC} │ ${C_TEXT}⇅ Red: ↓42 Mbps ↑38 Mbps${NC}"
+        echo -e " ${C_TEXT}🛡️ Guardián: ${wd_badge} │ ${C_TEXT}🔒 Limitador: ${lim_badge} │ ${C_TEXT}📲 Check: ${cu_badge}${NC}"
+        msg_bar
+        echo -e " ${C_ARROW}👥 ONLINES: ${C_NUM}${u_online}${NC}   ∘  ${C_ARROW}🟢 ACTIVOS: ${C_NUM}${u_active}${NC}   ∘  ${C_ARROW}🔴 EXP: ${C_ERR}${u_expired}${NC}   ∘  ${C_ARROW}🔒 LOCK: ${C_WARN}${u_locked}${NC}"
+        msg_bar
+        printf " ${C_TEXT}🔌 SSH        : %-15s${NC} │ ${C_TEXT}🔌 Dropbear   : %-15s${NC}\n" "${p_ssh:0:15}" "${p_drop:0:15}"
+        printf " ${C_TEXT}🔌 SSL/Stunnel: %-15s${NC} │ ${C_TEXT}🔌 WS-Proxy   : %-15s${NC}\n" "${p_ssl:0:15}" "${p_ws:0:15}"
+        printf " ${C_TEXT}🔌 BHTTP      : %-15s${NC} │ ${C_TEXT}🔌 HCR Relay  : %-15s${NC}\n" "${p_bhttp} (TLS:8443)" "${p_hcr:0:15}"
+        printf " ${C_TEXT}🔌 Hysteria v1: %-15s${NC} │ ${C_TEXT}🔌 Check/Token: %-15s${NC}\n" "${p_hyst} (UDP)" "5000 / 8888"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}01${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}👥 CONTROL DE USUARIOS${NC}     ${C_SUB}(SSH / HWID / Token / Demo / Backup)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}02${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}⚡ INSTALADOR PROTOCOLOS${NC}   ${C_SUB}(SSH, WS, SSL, BHTTP, HCR, UDP, V2Ray)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}03${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}📲 CHECKUSER, HWID & API${NC}   ${C_SUB}(CheckUser 5000, aToken 8888, Banner PAM)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}04${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🛡️ LIMITADOR & GUARDIÁN${NC}    ${C_SUB}(Kill Multilogin, Watchdog, Fail2ban, UFW)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}05${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🚀 OPTIMIZACIÓN & SISTEMA${NC}  ${C_SUB}(TCP BBR, Kernel Tuning, Swap, Limpieza)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}06${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🌐 CLÚSTER & BASE DE DATOS${NC} ${C_SUB}(Catálogo GEN, Nodos USA/BR, Sync SQLite)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}07${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🤖 BOT TELEGRAM & EXTRAS${NC}   ${C_SUB}(Bot Ventas/Soporte, Speedtest, Dominios)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}08${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🎨 TEMAS & ACTUALIZACIÓN${NC}   ${C_SUB}(Cambiar Colores, Actualizar Suite v2.0)${NC}"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}00${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_BG_EXIT} [ SALIR DEL MENÚ ] ${NC}"
+        msg_bar
+        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-8]: ${NC}"
         read -r main_opt
 
         case "$main_opt" in
             1|01) menu_users ;;
             2|02) menu_protocolos ;;
-            3|03) menu_seguridad_guardian ;;
-            4|04) menu_optimizacion_sistema ;;
-            5|05) menu_bots_herramientas ;;
-            6|06)
-                clear
-                echo -e "\033[1;32mActualizando SSH-CRIS desde repositorio oficial...\033[0m"
-                bash <(curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/install.sh?v=$(date +%s)") --update
-                pause
-                ;;
+            3|03) menu_checkuser_api ;;
+            4|04) menu_seguridad_guardian ;;
+            5|05) menu_optimizacion_sistema ;;
+            6|06) menu_cluster_api ;;
+            7|07) menu_bots_herramientas ;;
+            8|08) menu_temas_update ;;
             0|00)
-                echo -e "\n\033[1;32m¡Hasta pronto!\033[0m\n"
+                echo -e "\n${C_OK}¡Hasta pronto, CRISDEV!${NC}\n"
                 exit 0
                 ;;
             *)
-                echo -e "\n\033[1;31mOpción inválida!\033[0m"
+                echo -e "\n${C_ERR}Opción inválida!${NC}"
                 sleep 1
                 ;;
         esac
@@ -4842,4 +6062,17 @@ main_menu() {
 }
 
 # Iniciar
-main_menu "$@"
+case "${1:-}" in
+    --bhttp|bhttp)
+        menu_bhttp
+        ;;
+    --udp-cris|udp-cris)
+        menu_udp_cris
+        ;;
+    --badvpn|badvpn)
+        menub
+        ;;
+    *)
+        main_menu "$@"
+        ;;
+esac

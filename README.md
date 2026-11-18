@@ -1,6 +1,6 @@
 # SSH-CRIS MASTER SUITE v1
 
-Suite privada de administración y aprovisionamiento de túneles VPN para VPS Linux (Ubuntu / Debian). Diseñada exclusivamente para **CRISDEV / HTTP Conexión / HTTP Team**.
+Suite privada de administración y aprovisionamiento de túneles VPN para VPS Linux (Ubuntu / Debian). Diseñada exclusivamente para **CRISDEV / HTTP Conexión**.
 
 ---
 
