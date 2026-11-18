@@ -143,7 +143,7 @@ choose_timezone() {
     sleep 1
 }
 
-if [[ "${1:-}" != "--update" && "${1:-}" != "-u" ]]; then
+if [[ "$IS_UPDATE" -eq 0 && "${1:-}" != "--update" && "${1:-}" != "-u" ]]; then
     choose_language
     choose_timezone
 fi
@@ -549,12 +549,18 @@ net.ipv4.tcp_fin_timeout = 15
 EOF
 sysctl --system >/dev/null 2>&1 || true
 
-# Eliminar arranques legacy de wsproxy.py en /etc/autostart para evitar colisiones
+# Eliminar arranques legacy de wsproxy.py en /etc/autostart y liberar sockets colgados
 [[ -f /etc/autostart ]] && sed -i '/wsproxy\.py/d' /etc/autostart 2>/dev/null || true
+pkill -9 -f 'wsproxy.py' 2>/dev/null || true
+screen -wipe >/dev/null 2>&1 || true
 systemctl daemon-reload >/dev/null 2>&1 || true
 
-# Iniciar por defecto Motor Nativo en C (o Python si no hay binario)
-if [[ -x /usr/local/bin/wsproxy-c ]]; then
+# Iniciar motor WebSocket respetando la configuración previa (si existía)
+WS_ACTIVE_ENGINE="c"
+[[ -f /etc/crisdev/ws.conf ]] && source /etc/crisdev/ws.conf 2>/dev/null || true
+if [[ "$WS_ACTIVE_ENGINE" == "python" ]]; then
+    systemctl enable --now crisdev-ws-python.service >/dev/null 2>&1 || true
+elif [[ -x /usr/local/bin/wsproxy-c ]]; then
     systemctl enable --now crisdev-ws-c.service >/dev/null 2>&1 || true
 else
     systemctl enable --now crisdev-ws-python.service >/dev/null 2>&1 || true
