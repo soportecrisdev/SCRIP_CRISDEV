@@ -4224,38 +4224,42 @@ menu_hysteria2() {
 menu_protocolos() {
     while true; do
         clear
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -e "                ${BLUE}CONFIGURACION DE PROTOCOLOS${SCOLOR}"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
 
         # 1. OpenSSH
-        local ssh_p
-        ssh_p=$(grep '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | xargs || true)
-        [[ -z "$ssh_p" ]] && ssh_p="22"
-        echo -e "\033[1;32mSERVICIO: \033[1;33mOPENSSH \033[1;32mPUERTO: \033[1;37m$ssh_p\033[0m"
-
-        # 2. Proxy Socks
-        local sks_p
-        sks_p=$(get_proc_ports 'proxy\.py|wsproxy\.py|wsproxy-c')
-        if [[ -n "$sks_p" ]]; then
-            echo -e "\033[1;32mSERVICIO: \033[1;33mPROXY SOCKS \033[1;32mPUERTO: \033[1;37m$sks_p\033[0m"
+        local ssh_p=""
+        if systemctl is-active --quiet sshd 2>/dev/null || systemctl is-active --quiet ssh 2>/dev/null || pgrep -x sshd >/dev/null 2>&1; then
+            ssh_p=$(grep '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | xargs || true)
+            [[ -z "$ssh_p" ]] && ssh_p="22"
         fi
 
-        # 3. SSL Tunnel
+        # 2. Proxy Socks TCP
+        local sks_p
+        sks_p=$(get_proc_ports 'proxy\.py')
+
+        # 3. WebSocket (Motor C y Motor Python v4.5)
+        local ws_p="" ws_tag=""
+        if systemctl is-active --quiet crisdev-ws-c.service 2>/dev/null || systemctl is-active --quiet crisdev-ws-python.service 2>/dev/null || systemctl is-active --quiet sshplus-ws.service 2>/dev/null || pgrep -x wsproxy-c >/dev/null 2>&1 || pgrep -f 'wsproxy\.py' >/dev/null 2>&1; then
+            ws_p=$(get_proc_ports 'wsproxy-c|wsproxy\.py')
+            [[ -z "$ws_p" && -f /etc/crisdev/ws.conf ]] && ws_p=$(grep '^LISTEN_PORT=' /etc/crisdev/ws.conf 2>/dev/null | cut -d= -f2)
+            [[ -z "$ws_p" ]] && ws_p="80"
+            if systemctl is-active --quiet crisdev-ws-c.service 2>/dev/null || pgrep -x wsproxy-c >/dev/null 2>&1; then
+                ws_tag="Motor C epoll"
+            elif systemctl is-active --quiet crisdev-ws-python.service 2>/dev/null || pgrep -f 'wsproxy\.py' >/dev/null 2>&1; then
+                ws_tag="Motor Python v4.5"
+            else
+                ws_tag="WS Proxy"
+            fi
+        fi
+
+        # 4. SSL Tunnel
         local ssl_p
         ssl_p=$(get_proc_ports 'stunnel|stunnel4')
-        if [[ -n "$ssl_p" ]]; then
-            echo -e "\033[1;32mSERVICIO: \033[1;33mSSL TUNNEL \033[1;32mPUERTO: \033[1;37m$ssl_p\033[0m"
-        fi
 
-        # 4. Dropbear
+        # 5. Dropbear
         local drp_p
         drp_p=$(get_proc_ports 'dropbear')
-        if [[ -n "$drp_p" ]]; then
-            echo -e "\033[1;32mSERVICIO: \033[1;33mDROPBEAR \033[1;32mPUERTO: \033[1;37m$drp_p\033[0m"
-        fi
 
-        # 5. V2Ray / Xray
+        # 6. V2Ray / Xray
         local is_v2_active=0
         local v2_engine=""
         local v2_ports=""
@@ -4277,136 +4281,168 @@ menu_protocolos() {
             [[ -z "${v2_ports// }" ]] && v2_ports="$(ss -tlpn 2>/dev/null | grep -w 'v2ray' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs)"
         fi
 
-        if [[ $is_v2_active -eq 1 ]]; then
-            echo -e "\033[1;32mSERVICIO: \033[1;33m${v2_engine} \033[1;32mPUERTO: \033[1;37m${v2_ports:-N/A}\033[0m"
-        fi
-
-        # 6. UDP CRIS / HYSTERIA
-        if systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -x hysteria1 >/dev/null 2>&1 || pgrep -x hysteria >/dev/null 2>&1; then
-            local _hyst_pt=""
+        # 7. UDP CRIS / HYSTERIA v1
+        local is_hyst_active=0 _hyst_pt="" _hyst_rules=""
+        if systemctl is-active --quiet hysteria-server 2>/dev/null || systemctl is-active --quiet hysteria 2>/dev/null || pgrep -x hysteria1 >/dev/null 2>&1 || pgrep -x hysteria >/dev/null 2>&1; then
+            is_hyst_active=1
             [[ -f /etc/hysteria/sshplus.env ]] && _hyst_pt="$(grep '^HYST_PORT=' /etc/hysteria/sshplus.env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
             [[ -z "${_hyst_pt// }" && -f /etc/hysteria/config.json ]] && _hyst_pt="$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/hysteria/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
             [[ -z "${_hyst_pt// }" ]] && _hyst_pt="$(ss -ulnp 2>/dev/null | grep 'hysteria' | awk '{print $5}' | grep -oE '[0-9]+$' | head -1)"
             [[ -z "${_hyst_pt// }" ]] && _hyst_pt="36712"
-            
-            local _hyst_rules=""
             [[ -f /etc/hysteria/sshplus.env ]] && _hyst_rules="$(grep '^HYST_RULES=' /etc/hysteria/sshplus.env 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
-            if [[ -n "$_hyst_rules" && "$_hyst_rules" != "none" && "$_hyst_rules" != "0" ]]; then
-                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS (v1) \033[1;32mPUERTO: \033[1;37m$_hyst_pt \033[1;33mRANGOS: \033[1;37m$_hyst_rules\033[0m"
-            else
-                echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CRIS (v1) \033[1;32mPUERTO: \033[1;37m$_hyst_pt\033[0m"
-            fi
         fi
 
-        # 6.1 HYSTERIA V2
+        # 8. HYSTERIA V2
+        local is_hy2_active=0 _hy2_pt=""
         if systemctl is-active --quiet hysteria2 2>/dev/null || pgrep -x hysteria2 >/dev/null 2>&1; then
-            local _hy2_pt; _hy2_pt=$(scan_hysteria2_port)
-            echo -e "\033[1;32mSERVICIO: \033[1;33mHYSTERIA V2 \033[1;32mPUERTO: \033[1;37m${_hy2_pt:-443}/udp\033[0m"
+            is_hy2_active=1
+            _hy2_pt=$(scan_hysteria2_port)
+            [[ -z "$_hy2_pt" ]] && _hy2_pt="443"
         fi
 
-        # 7. BadVPN
+        # 9. BadVPN
+        local is_bad_active=0 _bad_p=""
         if systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -x badvpn-udpgw >/dev/null 2>&1 || pgrep -x udpvpn >/dev/null 2>&1; then
-            local _bad_p
+            is_bad_active=1
             _bad_p=$(ss -ulpn 2>/dev/null | grep -E 'badvpn-udpgw|udpvpn' | awk '{print $5}' | grep -oE '[0-9]+$' | sort -un | xargs || true)
             [[ -z "$_bad_p" && -f /etc/systemd/system/badvpn-udpgw.service ]] && _bad_p=$(grep -oE '\-\-listen\-addr[[:space:]]+127\.0\.0\.1:[0-9]+' /etc/systemd/system/badvpn-udpgw.service 2>/dev/null | cut -d: -f2 | xargs || true)
             [[ -z "$_bad_p" ]] && _bad_p="7300"
-            echo -e "\033[1;32mSERVICIO: \033[1;33mBADVPN \033[1;32mPUERTO: \033[1;37m$_bad_p\033[0m"
         fi
 
-        # 8. Squid
+        # 10. Squid
         local sqd_p
         sqd_p=$(get_proc_ports 'squid')
-        if [[ -n "$sqd_p" ]]; then
-            echo -e "\033[1;32mSERVICIO: \033[1;33mSQUID \033[1;32mPUERTO: \033[1;37m$sqd_p\033[0m"
-        fi
 
-        # 9. SlowDNS
+        # 11. SlowDNS
+        local is_slow_active=0 _slow_pt=""
         if systemctl is-active --quiet slowdns 2>/dev/null || pgrep -x dnstt-server >/dev/null 2>&1 || pgrep -f 'dnstt-server' >/dev/null 2>&1; then
-            local _slow_pt="53"
+            is_slow_active=1
+            _slow_pt="53"
             [[ -f /etc/slowdns/slowdns.conf ]] && _slow_pt="$(grep '^SLOW_PORT=' /etc/slowdns/slowdns.conf 2>/dev/null | head -1 | cut -d= -f2 | tr -d '"')"
             [[ -z "$_slow_pt" ]] && _slow_pt="53"
-            echo -e "\033[1;32mSERVICIO: \033[1;33mSLOWDNS \033[1;32mPUERTO: \033[1;37m$_slow_pt\033[0m"
         fi
 
-        # 10. Chisel
+        # 12. Chisel
+        local is_chisel_active=0 _ch_pt=""
         if systemctl is-active --quiet chisel 2>/dev/null || pgrep -f 'chisel' >/dev/null 2>&1; then
-            local _ch_pt="8088"
+            is_chisel_active=1
+            _ch_pt="8088"
             [[ -f /etc/chisel/port ]] && _ch_pt=$(cat /etc/chisel/port 2>/dev/null)
-            echo -e "\033[1;32mSERVICIO: \033[1;33mCHISEL \033[1;32mPUERTO: \033[1;37m$_ch_pt\033[0m"
         fi
 
-        # 11. BHTTP
+        # 13. BHTTP / XHTTP
         local _b_pts; _b_pts=$(scan_bhttp_ports)
         local _bx_pt; _bx_pt=$(scan_xhttp_port)
+
+        # 14. HCR RELAY
+        local _hcr_pts; _hcr_pts=$(scan_hcr_ports)
+
+        # 15. UDP CUSTOM
+        local is_udpc_active=0 _udpc_pt=""
+        if systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1; then
+            is_udpc_active=1
+            _udpc_pt=$(scan_udpcustom_port)
+            [[ -z "$_udpc_pt" ]] && _udpc_pt="7100"
+        fi
+
+        # 16. UDP ZIVPN
+        local is_ziv_active=0 _ziv_pt=""
+        if systemctl is-active --quiet zivpn 2>/dev/null || pgrep -f 'zivpn-core|zivpn' >/dev/null 2>&1; then
+            is_ziv_active=1
+            _ziv_pt="5667"
+            [[ -f /etc/zivpn/config.json ]] && _ziv_pt="$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/zivpn/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
+            [[ -z "$_ziv_pt" ]] && _ziv_pt="5667"
+        fi
+
+        # Recopilar servicios y puertos con servicio habilitado
+        local active_services=()
+        [[ -n "$ssh_p" ]] && active_services+=("🔌 OpenSSH Directo      ➔ Puerto(s): ${C_NUM}${ssh_p}${NC} ${C_SUB}(TCP)${NC}")
+        [[ -n "$ws_p" ]] && active_services+=("🔌 WebSocket (WS/HTTP)  ➔ Puerto(s): ${C_NUM}${ws_p}${NC} ${C_SUB}(TCP) [${ws_tag}]${NC}")
+        [[ -n "$sks_p" ]] && active_services+=("🔌 Proxy SOCKS TCP      ➔ Puerto(s): ${C_NUM}${sks_p}${NC} ${C_SUB}(TCP)${NC}")
+        [[ -n "$ssl_p" ]] && active_services+=("🔌 SSL / Stunnel        ➔ Puerto(s): ${C_NUM}${ssl_p}${NC} ${C_SUB}(TCP/TLS)${NC}")
+        [[ -n "$drp_p" ]] && active_services+=("🔌 Dropbear SSH         ➔ Puerto(s): ${C_NUM}${drp_p}${NC} ${C_SUB}(TCP)${NC}")
+        if [[ $is_v2_active -eq 1 ]]; then
+            active_services+=("🔌 ${v2_engine} Core           ➔ Puerto(s): ${C_NUM}${v2_ports:-N/A}${NC} ${C_SUB}(TCP/WS/gRPC)${NC}")
+        fi
+        if [[ $is_hyst_active -eq 1 ]]; then
+            if [[ -n "$_hyst_rules" && "$_hyst_rules" != "none" && "$_hyst_rules" != "0" ]]; then
+                active_services+=("🔌 UDP CRIS (v1)        ➔ Puerto(s): ${C_NUM}${_hyst_pt}${NC} ${C_SUB}[Rangos: ${_hyst_rules}] (UDP)${NC}")
+            else
+                active_services+=("🔌 UDP CRIS (v1)        ➔ Puerto(s): ${C_NUM}${_hyst_pt}${NC} ${C_SUB}(UDP)${NC}")
+            fi
+        fi
+        [[ $is_hy2_active -eq 1 ]] && active_services+=("🔌 Hysteria v2 (QUIC)   ➔ Puerto(s): ${C_NUM}${_hy2_pt}${NC} ${C_SUB}(UDP)${NC}")
+        [[ $is_udpc_active -eq 1 ]] && active_services+=("🔌 UDP Custom           ➔ Puerto(s): ${C_NUM}${_udpc_pt}${NC} ${C_SUB}(UDP)${NC}")
+        [[ $is_ziv_active -eq 1 ]] && active_services+=("🔌 UDP ZIVPN            ➔ Puerto(s): ${C_NUM}${_ziv_pt}${NC} ${C_SUB}(UDP 6000-19999)${NC}")
         if [[ -n "$_b_pts" || -n "$_bx_pt" ]]; then
             local _b_dsp=""
             [[ -n "$_b_pts" ]] && _b_dsp="BHTTP: ${_b_pts}"
-            [[ -n "$_bx_pt" ]] && _b_dsp="${_b_dsp:+${_b_dsp} | }TLS: ${_bx_pt}"
-            echo -e "\033[1;32mSERVICIO: \033[1;33mBHTTP \033[1;32mPUERTOS: \033[1;37m$_b_dsp\033[0m"
+            [[ -n "$_bx_pt" ]] && _b_dsp="${_b_dsp:+${_b_dsp} │ }TLS: ${_bx_pt}"
+            active_services+=("🔌 BHTTP / XHTTP        ➔ Puerto(s): ${C_NUM}${_b_dsp}${NC}")
         fi
+        [[ -n "$_hcr_pts" ]] && active_services+=("🔌 HCR Relay            ➔ Puerto(s): ${C_NUM}${_hcr_pts}${NC} ${C_SUB}(TCP)${NC}")
+        [[ $is_slow_active -eq 1 ]] && active_services+=("🔌 SlowDNS (DNSTT)      ➔ Puerto(s): ${C_NUM}${_slow_pt}${NC} ${C_SUB}(UDP:53)${NC}")
+        [[ $is_bad_active -eq 1 ]] && active_services+=("🔌 BadVPN UDPGW         ➔ Puerto(s): ${C_NUM}${_bad_p}${NC} ${C_SUB}(UDP/Calls 7300)${NC}")
+        [[ -n "$sqd_p" ]] && active_services+=("🔌 Squid Proxy          ➔ Puerto(s): ${C_NUM}${sqd_p}${NC} ${C_SUB}(TCP)${NC}")
+        [[ $is_chisel_active -eq 1 ]] && active_services+=("🔌 Chisel Tunnel        ➔ Puerto(s): ${C_NUM}${_ch_pt}${NC} ${C_SUB}(TCP)${NC}")
 
-        # 12. HCR RELAY (HTTP CUSTOM RELAY)
-        local _hcr_pts; _hcr_pts=$(scan_hcr_ports)
-        if [[ -n "$_hcr_pts" ]]; then
-            echo -e "\033[1;32mSERVICIO: \033[1;33mHCR RELAY \033[1;32mPUERTOS: \033[1;37m$_hcr_pts\033[0m"
+        msg_bar
+        echo -e "${C_TITLE}       ⚡ INSTALADOR Y GESTOR DE PROTOCOLOS · PUERTOS ⚡${NC}"
+        msg_bar
+        if [[ ${#active_services[@]} -gt 0 ]]; then
+            echo -e " ${C_ARROW}🟢 SERVICIOS CON PUERTO HABILITADO EN VIVO:${NC}"
+            for svc_line in "${active_services[@]}"; do
+                echo -e "   $svc_line"
+            done
+        else
+            echo -e " ${C_ARROW}⚪ ESTADO DE PUERTOS EN VIVO:${NC}"
+            echo -e "   ${C_SUB}○ Ningún servicio de túnel habilitado actualmente.${NC}"
+            echo -e "   ${C_SUB}○ Seleccione un protocolo abajo para activar su puerto.${NC}"
         fi
+        msg_bar
 
-        # 13. UDP CUSTOM
-        if systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1; then
-            local _udpc_pt; _udpc_pt=$(scan_udpcustom_port)
-            echo -e "\033[1;32mSERVICIO: \033[1;33mUDP CUSTOM \033[1;32mPUERTO: \033[1;37m${_udpc_pt:-7100}/udp\033[0m"
-        fi
+        local sts_ssh sts_socks sts_ssl sts_drop sts_v2ray sts_slow sts_hyst sts_hy2 sts_trojan sts_badvpn sts_ovpn sts_ws sts_sslh sts_squid sts_chisel sts_bhttp sts_hcr sts_udpc sts_ziv
+        [[ -n "$ssh_p" ]] && sts_ssh="\033[1;32m●\033[0m" || sts_ssh="\033[1;31m○\033[0m"
+        [[ -n "$sks_p" ]] && sts_socks="\033[1;32m●\033[0m" || sts_socks="\033[1;31m○\033[0m"
+        [[ -n "$ssl_p" ]] && sts_ssl="\033[1;32m●\033[0m" || sts_ssl="\033[1;31m○\033[0m"
+        [[ -n "$drp_p" ]] && sts_drop="\033[1;32m●\033[0m" || sts_drop="\033[1;31m○\033[0m"
 
-        # 14. UDP ZIVPN
-        if systemctl is-active --quiet zivpn 2>/dev/null || pgrep -f 'zivpn-core|zivpn' >/dev/null 2>&1; then
-            local _ziv_pt="5667"
-            [[ -f /etc/zivpn/config.json ]] && _ziv_pt="$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/zivpn/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1)"
-            echo -e "\033[1;32mSERVICIO: \033[1;33mUDP ZIVPN \033[1;32mPUERTO: \033[1;37m${_ziv_pt:-5667}/udp (6000-19999)\033[0m"
-        fi
-
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-
-        local sts_ssh sts_socks sts_ssl sts_drop sts_v2ray sts_slow sts_hyst sts_hy2 sts_trojan sts_badvpn sts_ovpn sts_ws sts_sslh sts_squid sts_chisel sts_bhttp sts_hcr sts_udpc
-        sts_ssh="\033[1;32mo\033[0m"
-        (pgrep -f 'proxy\.py|wsproxy\.py' >/dev/null 2>&1 || [[ -n "$sks_p" ]]) && sts_socks="\033[1;32mo\033[0m" || sts_socks="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet stunnel4 2>/dev/null || pgrep -f 'stunnel' >/dev/null 2>&1 || [[ -n "$ssl_p" ]]) && sts_ssl="\033[1;32mo\033[0m" || sts_ssl="\033[1;31mx\033[0m"
-        (pgrep -f 'dropbear' >/dev/null 2>&1 || [[ -n "$drp_p" ]]) && sts_drop="\033[1;32mo\033[0m" || sts_drop="\033[1;31mx\033[0m"
-        
         local v2_title="V2RAY"
-        local sts_v2ray="\033[1;31mx\033[0m"
+        local sts_v2ray="\033[1;31m○\033[0m"
         if [[ $is_v2_active -eq 1 ]]; then
-            sts_v2ray="\033[1;32mo\033[0m"
+            sts_v2ray="\033[1;32m●\033[0m"
             v2_title="${v2_engine}"
         fi
 
-        (systemctl is-active --quiet slowdns 2>/dev/null || pgrep -x dnstt-server >/dev/null 2>&1 || pgrep -f 'dnstt-server' >/dev/null 2>&1) && sts_slow="\033[1;32mo\033[0m" || sts_slow="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet hysteria-server 2>/dev/null || pgrep -x hysteria1 >/dev/null 2>&1 || pgrep -x hysteria >/dev/null 2>&1) && sts_hyst="\033[1;32mo\033[0m" || sts_hyst="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet hysteria2 2>/dev/null || pgrep -x hysteria2 >/dev/null 2>&1) && sts_hy2="\033[1;32mo\033[0m" || sts_hy2="\033[1;31mx\033[0m"
-        pgrep -f 'trojan' >/dev/null 2>&1 && sts_trojan="\033[1;32mo\033[0m" || sts_trojan="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet badvpn-udpgw 2>/dev/null || pgrep -x badvpn-udpgw >/dev/null 2>&1 || pgrep -x udpvpn >/dev/null 2>&1) && sts_badvpn="\033[1;32mo\033[0m" || sts_badvpn="\033[1;31mx\033[0m"
-        pgrep -f 'openvpn' >/dev/null 2>&1 && sts_ovpn="\033[1;32mo\033[0m" || sts_ovpn="\033[1;31mx\033[0m"
-        pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1 && sts_ws="\033[1;32mo\033[0m" || sts_ws="\033[1;31mx\033[0m"
-        pgrep -f 'sslh' >/dev/null 2>&1 && sts_sslh="\033[1;32mo\033[0m" || sts_sslh="\033[1;31mx\033[0m"
-        (pgrep -f 'squid' >/dev/null 2>&1 || [[ -n "$sqd_p" ]]) && sts_squid="\033[1;32mo\033[0m" || sts_squid="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet chisel 2>/dev/null || pgrep -f 'chisel' >/dev/null 2>&1) && sts_chisel="\033[1;32mo\033[0m" || sts_chisel="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet bhttp 2>/dev/null || systemctl is-active --quiet bhttp-tls 2>/dev/null || systemctl is-active --quiet bhttp-tls-raw 2>/dev/null || pgrep -f 'bhttp-server|xhttp-server|bilola' >/dev/null 2>&1 || [[ -n "$_b_pts" || -n "$_bx_pt" ]]) && sts_bhttp="\033[1;32mo\033[0m" || sts_bhttp="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet hcr-* 2>/dev/null || pgrep -f 'hcr-server' >/dev/null 2>&1 || [[ -n "$_hcr_pts" ]]) && sts_hcr="\033[1;32mo\033[0m" || sts_hcr="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet udp-custom 2>/dev/null || pgrep -x udp-custom >/dev/null 2>&1) && sts_udpc="\033[1;32mo\033[0m" || sts_udpc="\033[1;31mx\033[0m"
-        (systemctl is-active --quiet zivpn 2>/dev/null || pgrep -f 'zivpn-core|zivpn' >/dev/null 2>&1) && sts_ziv="\033[1;32mo\033[0m" || sts_ziv="\033[1;31mx\033[0m"
+        [[ $is_slow_active -eq 1 ]] && sts_slow="\033[1;32m●\033[0m" || sts_slow="\033[1;31m○\033[0m"
+        [[ $is_hyst_active -eq 1 ]] && sts_hyst="\033[1;32m●\033[0m" || sts_hyst="\033[1;31m○\033[0m"
+        [[ $is_hy2_active -eq 1 ]] && sts_hy2="\033[1;32m●\033[0m" || sts_hy2="\033[1;31m○\033[0m"
+        pgrep -f 'trojan' >/dev/null 2>&1 && sts_trojan="\033[1;32m●\033[0m" || sts_trojan="\033[1;31m○\033[0m"
+        [[ $is_bad_active -eq 1 ]] && sts_badvpn="\033[1;32m●\033[0m" || sts_badvpn="\033[1;31m○\033[0m"
+        pgrep -f 'openvpn' >/dev/null 2>&1 && sts_ovpn="\033[1;32m●\033[0m" || sts_ovpn="\033[1;31m○\033[0m"
+        [[ -n "$ws_p" ]] && sts_ws="\033[1;32m●\033[0m" || sts_ws="\033[1;31m○\033[0m"
+        pgrep -f 'sslh' >/dev/null 2>&1 && sts_sslh="\033[1;32m●\033[0m" || sts_sslh="\033[1;31m○\033[0m"
+        [[ -n "$sqd_p" ]] && sts_squid="\033[1;32m●\033[0m" || sts_squid="\033[1;31m○\033[0m"
+        [[ $is_chisel_active -eq 1 ]] && sts_chisel="\033[1;32m●\033[0m" || sts_chisel="\033[1;31m○\033[0m"
+        (systemctl is-active --quiet bhttp 2>/dev/null || systemctl is-active --quiet bhttp-tls 2>/dev/null || systemctl is-active --quiet bhttp-tls-raw 2>/dev/null || pgrep -f 'bhttp-server|xhttp-server|bilola' >/dev/null 2>&1 || [[ -n "$_b_pts" || -n "$_bx_pt" ]]) && sts_bhttp="\033[1;32m●\033[0m" || sts_bhttp="\033[1;31m○\033[0m"
+        (systemctl is-active --quiet hcr-* 2>/dev/null || pgrep -f 'hcr-server' >/dev/null 2>&1 || [[ -n "$_hcr_pts" ]]) && sts_hcr="\033[1;32m●\033[0m" || sts_hcr="\033[1;31m○\033[0m"
+        [[ $is_udpc_active -eq 1 ]] && sts_udpc="\033[1;32m●\033[0m" || sts_udpc="\033[1;31m○\033[0m"
+        [[ $is_ziv_active -eq 1 ]] && sts_ziv="\033[1;32m●\033[0m" || sts_ziv="\033[1;31m○\033[0m"
 
-        printf "  %b[1]%b  > OPENSSH         %b    %b[10]%b > BADVPN             %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssh" "$SSHPLUS_NUM" "$SCOLOR" "$sts_badvpn"
-        printf "  %b[2]%b  > PROXY SOCKS     %b    %b[11]%b > OPENVPN            %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_socks" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ovpn"
-        printf "  %b[3]%b  > SSL TUNNEL      %b    %b[12]%b > WEBSOCKET-CORRECT   %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ssl" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ws"
-        printf "  %b[4]%b  > DROPBEAR        %b    %b[13]%b > SSLH MULTIPLEX      %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_drop" "$SSHPLUS_NUM" "$SCOLOR" "$sts_sslh"
-        printf "  %b[5]%b  > %-15s %b    %b[14]%b > SQUID PROXY         %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$v2_title" "$sts_v2ray" "$SSHPLUS_NUM" "$SCOLOR" "$sts_squid"
-        printf "  %b[6]%b  > SLOWDNS         %b    %b[15]%b > CHISEL              %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_slow" "$SSHPLUS_NUM" "$SCOLOR" "$sts_chisel"
-        printf "  %b[7]%b  > UDP CRIS        %b    %b[16]%b > BHTTP (BHP1/TLS)    %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hyst" "$SSHPLUS_NUM" "$SCOLOR" "$sts_bhttp"
-        printf "  %b[8]%b  > UDP HYSTERIA v2 %b    %b[17]%b > HCR RELAY           %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hy2" "$SSHPLUS_NUM" "$SCOLOR" "$sts_hcr"
-        printf "  %b[9]%b  > UDP CUSTOM      %b    %b[18]%b > TROJAN-GO           %b\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_udpc" "$SSHPLUS_NUM" "$SCOLOR" "$sts_trojan"
-        printf "  %b[19]%b > UDP ZIVPN       %b    %b[20]%b > EXPORTAR PARA GEN\n" "$SSHPLUS_NUM" "$SCOLOR" "$sts_ziv" "$SSHPLUS_NUM" "$SCOLOR"
-        printf "  %b[0]%b  > VOLVER\n" "$SSHPLUS_NUM" "$SCOLOR"
-        echo -e "${SSHPLUS_CYAN}============================================================${SCOLOR}"
-        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
+        printf "  ${C_BRACKET}[${C_NUM}01${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}11${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "OPENSSH" "$sts_ssh" "OPENVPN" "$sts_ovpn"
+        printf "  ${C_BRACKET}[${C_NUM}02${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}12${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "PROXY SOCKS (TCP)" "$sts_socks" "WEBSOCKET (WS/CDN)" "$sts_ws"
+        printf "  ${C_BRACKET}[${C_NUM}03${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}13${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "SSL TUNNEL" "$sts_ssl" "SSLH MULTIPLEX" "$sts_sslh"
+        printf "  ${C_BRACKET}[${C_NUM}04${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}14${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "DROPBEAR" "$sts_drop" "SQUID PROXY" "$sts_squid"
+        printf "  ${C_BRACKET}[${C_NUM}05${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}15${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "$v2_title" "$sts_v2ray" "CHISEL" "$sts_chisel"
+        printf "  ${C_BRACKET}[${C_NUM}06${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}16${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "SLOWDNS (DNSTT)" "$sts_slow" "BHTTP (BHP1/TLS)" "$sts_bhttp"
+        printf "  ${C_BRACKET}[${C_NUM}07${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}17${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "UDP CRIS (v1)" "$sts_hyst" "HCR RELAY" "$sts_hcr"
+        printf "  ${C_BRACKET}[${C_NUM}08${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}18${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "UDP HYSTERIA v2" "$sts_hy2" "TROJAN-GO" "$sts_trojan"
+        printf "  ${C_BRACKET}[${C_NUM}09${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}19${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "UDP CUSTOM" "$sts_udpc" "UDP ZIVPN" "$sts_ziv"
+        printf "  ${C_BRACKET}[${C_NUM}10${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}20${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s\n" "BADVPN (UDPGW)" "$sts_badvpn" "EXPORTAR PARA GEN"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}00${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_BG_EXIT} [ VOLVER AL MENÚ PRINCIPAL ] ${NC}"
+        msg_bar
+        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-20]: ${NC}"
         read -r proto_opt
 
         case "$proto_opt" in
@@ -6066,22 +6102,6 @@ main_menu() {
         local u_locked; u_locked=$(echo "$stats_str" | cut -d: -f5)
         [[ -z "$u_locked" ]] && u_locked=0
 
-        # Detección de puertos activos para la cabecera
-        local p_ssh; p_ssh=$(grep '^Port ' /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' | xargs || echo "22")
-        [[ -z "$p_ssh" ]] && p_ssh="22"
-        local p_drop; p_drop=$(get_proc_ports 'dropbear')
-        [[ -z "$p_drop" ]] && p_drop="143, 109"
-        local p_ssl; p_ssl=$(get_proc_ports 'stunnel|stunnel4')
-        [[ -z "$p_ssl" ]] && p_ssl="443"
-        local p_ws; p_ws=$(get_proc_ports 'wsproxy|proxy\.py')
-        [[ -z "$p_ws" ]] && p_ws="80"
-        local p_bhttp; p_bhttp=$(scan_bhttp_ports | awk '{print $1}')
-        [[ -z "$p_bhttp" ]] && p_bhttp="8080"
-        local p_hcr; p_hcr=$(scan_hcr_ports | awk '{print $1}')
-        [[ -z "$p_hcr" ]] && p_hcr="8090"
-        local p_hyst; p_hyst="36712"
-        [[ -f /etc/hysteria/config.json ]] && p_hyst=$(grep -oE '"listen"[[:space:]]*:[[:space:]]*"[^"]+"' /etc/hysteria/config.json 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "36712")
-
         msg_bar
         echo -e "${C_TITLE}       ⚡ HTTP CONEXIÓN MASTER SUITE v2.0 · CRISDEV VPS ⚡${NC}"
         msg_bar
@@ -6090,11 +6110,6 @@ main_menu() {
         echo -e " ${C_TEXT}🛡️ Guardián: ${wd_badge} │ ${C_TEXT}🔒 Limitador: ${lim_badge} │ ${C_TEXT}📲 Check: ${cu_badge}${NC}"
         msg_bar
         echo -e " ${C_ARROW}👥 ONLINES: ${C_NUM}${u_online}${NC}   ∘  ${C_ARROW}🟢 ACTIVOS: ${C_NUM}${u_active}${NC}   ∘  ${C_ARROW}🔴 EXP: ${C_ERR}${u_expired}${NC}   ∘  ${C_ARROW}🔒 LOCK: ${C_WARN}${u_locked}${NC}"
-        msg_bar
-        printf " ${C_TEXT}🔌 SSH        : %-15s${NC} │ ${C_TEXT}🔌 Dropbear   : %-15s${NC}\n" "${p_ssh:0:15}" "${p_drop:0:15}"
-        printf " ${C_TEXT}🔌 SSL/Stunnel: %-15s${NC} │ ${C_TEXT}🔌 WS-Proxy   : %-15s${NC}\n" "${p_ssl:0:15}" "${p_ws:0:15}"
-        printf " ${C_TEXT}🔌 BHTTP      : %-15s${NC} │ ${C_TEXT}🔌 HCR Relay  : %-15s${NC}\n" "${p_bhttp} (TLS:8443)" "${p_hcr:0:15}"
-        printf " ${C_TEXT}🔌 Hysteria v1: %-15s${NC} │ ${C_TEXT}🔌 Check/Token: %-15s${NC}\n" "${p_hyst} (UDP)" "5000 / 8888"
         msg_bar
         echo -e "  ${C_BRACKET}[${C_NUM}01${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}👥 CONTROL DE USUARIOS${NC}     ${C_SUB}(SSH / HWID / Token / Demo / Backup)${NC}"
         echo -e "  ${C_BRACKET}[${C_NUM}02${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}⚡ INSTALADOR PROTOCOLOS${NC}   ${C_SUB}(SSH, WS, SSL, BHTTP, HCR, UDP, V2Ray)${NC}"
