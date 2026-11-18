@@ -325,15 +325,33 @@ scan_hysteria2_port() {
 get_proc_ports() {
     local pattern="$1"
     local ports=()
-    if command -v ss >/dev/null 2>&1; then
-        while read -r p; do
-            [[ -n "$p" && "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
-        done < <(ss -tlpn 2>/dev/null | grep -E "$pattern" | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u)
+    local pids
+    pids=$(pgrep -f "$pattern" 2>/dev/null | xargs || true)
+    if [[ -n "$pids" ]]; then
+        local pid_regex
+        pid_regex=$(echo "$pids" | tr ' ' '|')
+        if command -v ss >/dev/null 2>&1; then
+            while read -r p; do
+                [[ -n "$p" && "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
+            done < <(ss -tlpn 2>/dev/null | grep -E "pid=($pid_regex)," | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u)
+        fi
+        if [[ ${#ports[@]} -eq 0 ]] && command -v netstat >/dev/null 2>&1; then
+            while read -r p; do
+                [[ -n "$p" && "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
+            done < <(netstat -tlpn 2>/dev/null | grep -E "($pid_regex)/" | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u)
+        fi
     fi
-    if [[ ${#ports[@]} -eq 0 ]] && command -v netstat >/dev/null 2>&1; then
-        while read -r p; do
-            [[ -n "$p" && "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
-        done < <(netstat -tlpn 2>/dev/null | grep -E "$pattern" | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u)
+    if [[ ${#ports[@]} -eq 0 ]]; then
+        if command -v ss >/dev/null 2>&1; then
+            while read -r p; do
+                [[ -n "$p" && "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
+            done < <(ss -tlpn 2>/dev/null | grep -E "$pattern" | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u)
+        fi
+        if [[ ${#ports[@]} -eq 0 ]] && command -v netstat >/dev/null 2>&1; then
+            while read -r p; do
+                [[ -n "$p" && "$p" =~ ^[0-9]+$ ]] && ports+=("$p")
+            done < <(netstat -tlpn 2>/dev/null | grep -E "$pattern" | awk '{print $4}' | awk -F: '{print $NF}' | sort -n -u)
+        fi
     fi
     echo "${ports[*]:-}"
 }
@@ -826,21 +844,23 @@ fun_ws_config_wizard() {
 }
 
 # ==============================================================================
-# GESTOR MAESTRO DE WEBSOCKET DUAL (Nativo en C + Clásico Python v4.5)
-# Zero-Reconnections Edition: Anti-CGNAT, Keepalive 20s/5s, Cero Timeouts Mutilados
+# GESTOR MAESTRO UNIFICADO DE PROXIES SOCKS & WEBSOCKET (HTTP / WS / SOCKS)
+# Soporte Dual: Nativo C (epoll 16k) + Clásico Python v4.5 (Zero-Reconnect) + SOCKS
 # ==============================================================================
-menu_websocket() {
+menu_proxies_websocket() {
     mkdir -p /etc/crisdev /usr/local/bin /usr/local/src /etc/SSHPlus
+    ensure_proxy_scripts
     local conf="/etc/crisdev/ws.conf"
     if [[ ! -f "$conf" ]]; then
         cat > "$conf" <<'EOF_WSCONF'
-WS_ACTIVE_ENGINE=c
+WS_ACTIVE_ENGINE=python
 LISTEN_ADDR=0.0.0.0
 LISTEN_PORT=80
 TARGET_HOST=127.0.0.1
 TARGET_PORT=22
 HTTP_STATUS=101
-BANNER_MSG=HTTP CONEXION WS
+BANNER_MSG=HTTP CONEXION
+BANNER_COLOR=cyan
 IDLE_TIMEOUT=300
 MAX_CONNS=16384
 WS_C_PORT=80
@@ -855,34 +875,55 @@ EOF_WSCONF
         TARGET_HOST="${TARGET_HOST:-127.0.0.1}"
         TARGET_PORT="${TARGET_PORT:-22}"
         HTTP_STATUS="${HTTP_STATUS:-101}"
-        BANNER_MSG="${BANNER_MSG:-HTTP CONEXION WS}"
+        BANNER_MSG="${BANNER_MSG:-HTTP CONEXION}"
+        BANNER_COLOR="${BANNER_COLOR:-cyan}"
         WS_C_PORT="${WS_C_PORT:-80}"
         WS_PY_PORT="${WS_PY_PORT:-8080}"
 
-        # Detectar estado real del Motor Nativo en C
-        local ws_c_st ws_c_port=""
-        if systemctl is-active --quiet crisdev-ws-c.service 2>/dev/null || pgrep -x wsproxy-c >/dev/null 2>&1; then
-            ws_c_port=$(ss -tlnp 2>/dev/null | grep wsproxy-c | awk '{print $4}' | awk -F: '{print $NF}' | head -1)
-            [[ -z "$ws_c_port" ]] && ws_c_port="$WS_C_PORT"
-            ws_c_st="\033[1;32m● ACTIVO (:$ws_c_port)\033[0m"
+        # 1. Detección en vivo de WebSocket Nativo C
+        local ws_c_st ws_c_p=""
+        ws_c_p=$(get_proc_ports 'wsproxy-c')
+        if [[ -n "$ws_c_p" ]] || systemctl is-active --quiet crisdev-ws-c.service 2>/dev/null || pgrep -x wsproxy-c >/dev/null 2>&1; then
+            [[ -z "$ws_c_p" ]] && ws_c_p="${WS_C_PORT:-80}"
+            ws_c_st="\033[1;32m● ACTIVO (:${ws_c_p})\033[0m \033[1;36m[epoll 16k conns]\033[0m"
         else
             ws_c_st="\033[1;31m○ INACTIVO\033[0m"
         fi
 
-        # Detectar estado real del Motor Clásico Python v4.5
-        local ws_py_st ws_py_port=""
-        if systemctl is-active --quiet crisdev-ws-python.service 2>/dev/null || pgrep -f '/usr/local/bin/wsproxy.py' >/dev/null 2>&1 || pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
-            ws_py_port=$(ss -tlnp 2>/dev/null | grep -E 'python.*wsproxy|wsproxy\.py' | awk '{print $4}' | awk -F: '{print $NF}' | head -1)
-            [[ -z "$ws_py_port" ]] && ws_py_port="$WS_PY_PORT"
-            ws_py_st="\033[1;32m● ACTIVO (:$ws_py_port)\033[0m"
+        # 2. Detección en vivo de WebSocket Python v4.5
+        local ws_py_st ws_py_p=""
+        ws_py_p=$(get_proc_ports 'wsproxy\.py')
+        if [[ -n "$ws_py_p" ]] || systemctl is-active --quiet crisdev-ws-python.service 2>/dev/null || pgrep -f 'wsproxy\.py' >/dev/null 2>&1; then
+            [[ -z "$ws_py_p" ]] && ws_py_p="${WS_PY_PORT:-8080}"
+            ws_py_st="\033[1;32m● ACTIVO (:${ws_py_p})\033[0m \033[1;33m[Zero-Reconnect · Anti-CGNAT]\033[0m"
         else
             ws_py_st="\033[1;31m○ INACTIVO\033[0m"
         fi
 
-        # Calcular consumo de RAM en tiempo real
+        # 3. Detección en vivo de SOCKS SSH
+        local sks_ssh_st sks_ssh_p=""
+        if pgrep -f 'proxy\.py' >/dev/null 2>&1 && ! pgrep -f 'proxy\.py.*1194' >/dev/null 2>&1; then
+            sks_ssh_p=$(get_proc_ports 'proxy\.py')
+            [[ -z "$sks_ssh_p" ]] && sks_ssh_p="80"
+            sks_ssh_st="\033[1;32m● ACTIVO (:${sks_ssh_p})\033[0m \033[1;37m[TCP -> SSH 22]\033[0m"
+        else
+            sks_ssh_st="\033[1;31m○ INACTIVO\033[0m"
+        fi
+
+        # 4. Detección en vivo de SOCKS OpenVPN
+        local sks_ovpn_st sks_ovpn_p=""
+        if pgrep -f 'proxy\.py.*1194' >/dev/null 2>&1; then
+            sks_ovpn_p=$(get_proc_ports 'proxy\.py.*1194')
+            [[ -z "$sks_ovpn_p" ]] && sks_ovpn_p="8080"
+            sks_ovpn_st="\033[1;32m● ACTIVO (:${sks_ovpn_p})\033[0m \033[1;37m[TCP -> OVPN 1194]\033[0m"
+        else
+            sks_ovpn_st="\033[1;31m○ INACTIVO\033[0m"
+        fi
+
+        # Memoria RAM Ocupada
         local ram_c=0 ram_py=0
         ram_c=$(ps -C wsproxy-c -o rss= 2>/dev/null | awk '{s+=$1} END {print s+0}')
-        ram_py=$(ps -ef 2>/dev/null | grep '[w]sproxy\.py' | awk '{s+=$6} END {print s+0}')
+        ram_py=$(ps -ef 2>/dev/null | grep -E '[w]sproxy\.py|[p]roxy\.py' | awk '{s+=$6} END {print s+0}')
         local total_kb=$((ram_c + ram_py))
         local ws_ram="0.0 MB"
         if (( total_kb > 0 )); then
@@ -890,134 +931,133 @@ EOF_WSCONF
         fi
 
         clear
-        sshplus_line
-        echo -e "${SSHPLUS_CYAN}         ⚡ GESTOR MAESTRO DE WEBSOCKET (WS / HTTP)${SCOLOR}"
-        sshplus_line
-        echo -e "${SSHPLUS_DARK_GREEN}ESTADO DE MOTORES WEBSOCKET EN ESTE SERVIDOR:${SCOLOR}"
-        echo -e " ‣ Motor Nativo en C   (epoll) : $ws_c_st"
-        echo -e " ‣ Motor Clásico Python (v4.5) : $ws_py_st  \033[1;33m[Zero-Reconnect · Anti-CGNAT]\033[0m"
-        echo -e " ‣ Destino Backend            : \033[1;37m${TARGET_HOST}:${TARGET_PORT}\033[0m"
-        echo -e " ‣ Código HTTP Activo         : \033[1;32mHTTP ${HTTP_STATUS}\033[0m │ RAM Ocupada: \033[1;36m$ws_ram\033[0m"
-        sshplus_line
-        echo -e "${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> ACTIVAR / CONMUTAR A MOTOR NATIVO EN C   \033[1;32m(Ultra Rendimiento · 16k Conex)\033[0m"
-        echo -e "${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> ACTIVAR / CONMUTAR A MOTOR PYTHON v4.5   \033[1;33m(Clásico Corregido · Cero Desconexiones)\033[0m"
-        echo -e "${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> ACTIVAR AMBOS MOTORES EN PUERTOS SEPARADOS (Ej: C en 80 + Py en 8080)\033[0m"
-        echo -e "${SSHPLUS_NUM}[4]${SCOLOR} \033[1;31m> DETENER / APAGAR TODOS LOS SERVICIOS WEBSOCKET\033[0m"
-        sshplus_line
-        echo -e "${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> CAMBIAR PUERTO Y DESTINO (Backend OpenSSH/Dropbear)\033[0m"
-        echo -e "${SSHPLUS_NUM}[6]${SCOLOR} \033[1;37m> CAMBIAR CÓDIGO DE RESPUESTA (101 Switching Protocols / 200 OK)\033[0m"
-        echo -e "${SSHPLUS_NUM}[7]${SCOLOR} \033[1;37m> PERSONALIZAR MINIBANNER O ENCABEZADOS\033[0m"
-        echo -e "${SSHPLUS_NUM}[8]${SCOLOR} \033[1;37m> VER LOGS EN TIEMPO REAL (journalctl)\033[0m"
-        echo -e "${SSHPLUS_NUM}[9]${SCOLOR} \033[1;37m> PROBAR RESPUESTA HTTP EN VIVO (curl handshake local)\033[0m"
-        sshplus_line
-        echo -e "${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> REGRESAR AL MENÚ DE PROTOCOLOS\033[0m"
-        sshplus_line
-        echo ""
-        echo -ne "${SSHPLUS_CYAN}Seleccione una opción [0-9]:${SCOLOR} "
+        msg_bar
+        echo -e "${C_TITLE}    ⚡ GESTOR MAESTRO DE PROXIES SOCKS & WEBSOCKET (HTTP/WS) ⚡${NC}"
+        msg_bar
+        echo -e " ${C_ARROW}🟢 ESTADO DE MOTORES Y PUERTOS EN VIVO:${NC}"
+        echo -e "   ‣ WebSocket Nativo en C (epoll) : $ws_c_st"
+        echo -e "   ‣ WebSocket Python v4.5         : $ws_py_st"
+        echo -e "   ‣ SOCKS SSH Directo (TCP)       : $sks_ssh_st"
+        echo -e "   ‣ SOCKS OpenVPN (TCP 1194)      : $sks_ovpn_st"
+        echo -e "   ‣ Destino Backend Actual        : ${C_NUM}${TARGET_HOST}:${TARGET_PORT}${NC}"
+        echo -e "   ‣ Código HTTP Configurado       : ${C_NUM}HTTP ${HTTP_STATUS}${NC} │ RAM: ${C_VAL}${ws_ram}${NC}"
+        echo -e "   ‣ Minibanner / Estado           : ${C_VAL}\"${BANNER_MSG}\"${NC} (Color: ${BANNER_COLOR})"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}01${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_LABEL}ACTIVAR WEBSOCKET PYTHON v4.5${NC}    ${C_SUB}(Clásico · Zero-Reconnect · Completo)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}02${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_LABEL}ACTIVAR WEBSOCKET NATIVO EN C${NC}    ${C_SUB}(Ultra Rendimiento · 16k Conex)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}03${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_LABEL}ACTIVAR AMBOS MOTORES SIMULTÁNEOS${NC} ${C_SUB}(Ej: C en 80 + Py en 8080)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}04${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_LABEL}ACTIVAR PROXY SOCKS SSH${NC}          ${C_SUB}(TCP 80 -> SSH 22 Puro)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}05${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_LABEL}ACTIVAR PROXY SOCKS OPENVPN${NC}      ${C_SUB}(TCP 8080 -> OVPN 1194)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}06${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_LABEL}ABRIR PUERTO EXTRA${NC}               ${C_SUB}(Multi-puerto WS o SOCKS)${NC}"
+        echo -e "${C_BORDER}───────────────────────────────────────────────────────────────────${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}07${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_LABEL}PERSONALIZAR MINIBANNER Y COLOR${NC}  ${C_SUB}(Texto, HTML <font color>)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}08${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_LABEL}CAMBIAR CÓDIGO DE RESPUESTA${NC}      ${C_SUB}(HTTP 101 Switching / HTTP 200 OK)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}09${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_LABEL}CAMBIAR DESTINO LOCAL${NC}            ${C_SUB}(OpenSSH 22 / Dropbear / Manual)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}10${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_LABEL}PROBAR RESPUESTA HTTP EN VIVO${NC}    ${C_SUB}(curl handshake local 127.0.0.1)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}11${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_LABEL}VER LOGS EN TIEMPO REAL${NC}          ${C_SUB}(journalctl / salidas en vivo)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}12${C_BRACKET}]${NC} ${C_ARROW}➔${NC} \033[1;31mDETENER / APAGAR UN SERVICIO${NC}     ${C_SUB}(Python / C / SOCKS / Todos)${NC}"
+        echo -e "${C_BORDER}───────────────────────────────────────────────────────────────────${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}00${C_BRACKET}]${NC} ${C_ARROW}➔${NC} ${C_BG_EXIT} [ VOLVER AL MENÚ DE PROTOCOLOS ] ${NC}"
+        msg_bar
+        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-12]: ${NC}"
         read -r ws_opt
 
         case "$ws_opt" in
             0) return 0 ;;
             1)
                 clear
-                echo -e "\E[44;1;37m       ACTIVAR / CONMUTAR A MOTOR NATIVO EN C       \E[0m\n"
-                echo -ne "\033[1;32mPUERTO DE ESCUCHA WEBSOCKET (default 80)\033[1;37m: "
-                read -r p_c
-                [[ -z "$p_c" || ! "$p_c" =~ ^[0-9]+$ ]] && p_c=80
-
-                # Liberar puerto si Python o screens lo ocupan
-                echo -e "\033[1;33m[*] Verificando y liberando puerto $p_c...\033[0m"
-                systemctl stop crisdev-ws-python.service 2>/dev/null || true
-                pkill -9 -f 'wsproxy.py' 2>/dev/null || true
-                screen -wipe >/dev/null 2>&1 || true
-
-                # Si el binario C no existe, compilarlo
-                if [[ ! -x /usr/local/bin/wsproxy-c ]]; then
-                    if [[ -f /usr/local/src/wsproxy-c.c && -x "$(command -v gcc 2>/dev/null)" ]]; then
-                        echo -e "\033[1;33m[*] Compilando wsproxy-c nativo con gcc...\033[0m"
-                        gcc -O2 -Wall -Wextra -o /usr/local/bin/wsproxy-c /usr/local/src/wsproxy-c.c 2>/dev/null || true
-                    fi
-                fi
-
-                # Limpiar configuraciones duales
-                rm -f /etc/crisdev/ws-c.conf /etc/crisdev/ws-python.conf 2>/dev/null || true
-
-                # Guardar conf
-                cat > "$conf" <<EOF_WSC
-WS_ACTIVE_ENGINE=c
-LISTEN_ADDR=0.0.0.0
-LISTEN_PORT=$p_c
-TARGET_HOST=${TARGET_HOST:-127.0.0.1}
-TARGET_PORT=${TARGET_PORT:-22}
-HTTP_STATUS=${HTTP_STATUS:-101}
-BANNER_MSG="${BANNER_MSG:-HTTP CONEXION WS}"
-IDLE_TIMEOUT=300
-MAX_CONNS=16384
-WS_C_PORT=$p_c
-WS_PY_PORT=${WS_PY_PORT:-8080}
-EOF_WSC
-                cp -af "$conf" /etc/sshplus-ws.conf 2>/dev/null || true
-
-                # Garantizar servicio crisdev-ws-c.service
-                cat > /etc/systemd/system/crisdev-ws-c.service << 'EOF_WS_C_SVC'
-[Unit]
-Description=CRISDEV Native epoll WebSocket/HTTP Proxy (Port 80 C Core)
-After=network-online.target ssh.service
-Wants=network-online.target ssh.service
-StartLimitIntervalSec=0
-
-[Service]
-Type=simple
-User=root
-EnvironmentFile=-/etc/crisdev/ws.conf
-EnvironmentFile=-/etc/crisdev/ws-c.conf
-ExecStart=/bin/sh -c 'exec /usr/local/bin/wsproxy-c --bind "${LISTEN_ADDR:-0.0.0.0}" --port "${LISTEN_PORT:-80}" --target "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" --status "${HTTP_STATUS:-101}" --idle "${IDLE_TIMEOUT:-300}" --max-conns "${MAX_CONNS:-16384}" ${BANNER_MSG:+--msg "$BANNER_MSG"}'
-Restart=always
-RestartSec=1
-OOMScoreAdjust=-900
-LimitNOFILE=65535
-MemoryMax=256M
-TasksMax=64
-
-[Install]
-WantedBy=multi-user.target
-EOF_WS_C_SVC
-
-                # Reiniciar servicio
-                systemctl daemon-reload
-                systemctl enable --now crisdev-ws-c.service >/dev/null 2>&1 || true
-                systemctl restart crisdev-ws-c.service 2>/dev/null || true
-                ufw allow "$p_c"/tcp >/dev/null 2>&1 || true
-                iptables -C INPUT -p tcp --dport "$p_c" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$p_c" -j ACCEPT 2>/dev/null || true
-
-                sleep 1.2
-                if systemctl is-active --quiet crisdev-ws-c.service 2>/dev/null || pgrep -x wsproxy-c >/dev/null 2>&1; then
-                    echo -e "\n\033[1;32m✔ MOTOR NATIVO EN C ACTIVADO EXITOSAMENTE EN PUERTO $p_c\033[0m"
-                    echo -e "\033[1;37m  Backend destino: ${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22} (HTTP ${HTTP_STATUS:-101})\033[0m"
-                else
-                    echo -e "\n\033[1;31m✖ Error al iniciar Motor en C. Verificando log:\033[0m"
-                    journalctl -u crisdev-ws-c.service -n 10 --no-pager 2>/dev/null || true
-                fi
-                echo ""
-                read -n1 -r -p "Presione cualquier tecla para continuar..."
-                ;;
-
-            2)
-                clear
-                echo -e "\E[44;1;37m    ACTIVAR MOTOR CLÁSICO PYTHON v4.5 (ZERO-RECONNECT)    \E[0m\n"
+                echo -e "\E[44;1;37m    ACTIVAR MOTOR CLÁSICO PYTHON v4.5 (INSTALACIÓN COMPLETA GUIADA)    \E[0m\n"
                 echo -e "\033[1;33mEl motor Python v4.5 cuenta con epoll nativo, keep-alive 20s/5s y\033[0m"
                 echo -e "\033[1;33mremoción total del timeout artificial para eliminar las reconexiones.\033[0m\n"
-                echo -ne "\033[1;32mPUERTO DE ESCUCHA WEBSOCKET (default 80)\033[1;37m: "
+
+                # Paso 1: Puerto
+                echo -ne "\033[1;32m[1/5] PUERTO DE ESCUCHA WEBSOCKET (default 80)\033[1;37m: "
                 read -r p_py
                 [[ -z "$p_py" || ! "$p_py" =~ ^[0-9]+$ ]] && p_py=80
 
-                echo -e "\033[1;33m[*] Verificando y liberando puerto $p_py...\033[0m"
+                # Paso 2: Destino local
+                echo -e "\n\033[1;32m[2/5] SELECCIONE EL DESTINO LOCAL DEL TÚNEL:\033[0m"
+                echo -e "  [1] OpenSSH Directo (Puerto 22) [Recomendado]"
+                local drp_p; drp_p=$(get_proc_ports 'dropbear')
+                if [[ -n "$drp_p" ]]; then
+                    echo -e "  [2] Dropbear SSH (Puertos detectados: $drp_p)"
+                else
+                    echo -e "  [2] Dropbear SSH (Puerto 90 / 110 / 143)"
+                fi
+                echo -e "  [3] Destino Personalizado (IP:Puerto manual)"
+                echo -ne "\033[1;33mSeleccione opción [1-3] (default 1): \033[0m"
+                read -r dst_opt
+                local t_host="127.0.0.1" t_port="22"
+                case "$dst_opt" in
+                    2)
+                        if [[ -n "$drp_p" ]]; then
+                            t_port=$(echo "$drp_p" | awk '{print $1}')
+                        else
+                            t_port="90"
+                        fi
+                        ;;
+                    3)
+                        echo -ne "\033[1;37mIngrese IP destino (default 127.0.0.1): \033[0m"
+                        read -r custom_h
+                        [[ -n "$custom_h" ]] && t_host="$custom_h"
+                        echo -ne "\033[1;37mIngrese Puerto destino (ej: 22 o 90): \033[0m"
+                        read -r custom_p
+                        [[ -n "$custom_p" && "$custom_p" =~ ^[0-9]+$ ]] && t_port="$custom_p"
+                        ;;
+                    *)
+                        t_port="22"
+                        ;;
+                esac
+
+                # Paso 3: Código HTTP
+                echo -e "\n\033[1;32m[3/5] CÓDIGO DE RESPUESTA HTTP:\033[0m"
+                echo -e "  [1] HTTP/1.1 101 Switching Protocols [Recomendado VPN / Conexión]"
+                echo -e "  [2] HTTP/1.1 200 OK [Cloudflare CDN / HTTP Fronting]"
+                echo -ne "\033[1;33mSeleccione código [1-2] (default 1): \033[0m"
+                read -r cod_opt
+                local h_code="101"
+                [[ "$cod_opt" == "2" ]] && h_code="200"
+
+                # Paso 4: Minibanner
+                echo -e "\n\033[1;32m[4/5] MENSAJE DE MINIBANNER / ESTADO:\033[0m"
+                echo -ne "\033[1;37mTexto para el log de conexión (default: 'HTTP CONEXION'): \033[0m"
+                read -r raw_banner
+                [[ -z "$raw_banner" ]] && raw_banner="HTTP CONEXION"
+
+                # Paso 5: Color HTML
+                echo -e "\n\033[1;32m[5/5] COLOR HTML PARA EL MINIBANNER:\033[0m"
+                echo -e "  [1] Cyan (#00E5FF)    [2] Verde (#00E676)    [3] Amarillo (#FFD600)"
+                echo -e "  [4] Azul (#2979FF)    [5] Rojo (#FF1744)     [6] Rosa (#F535AA)"
+                echo -e "  [7] Naranja (#FF9100) [8] Púrpura (#D500F9)  [9] Sin Color (Plano)"
+                echo -ne "\033[1;33mSeleccione color [1-9] (default 1): \033[0m"
+                read -r color_opt
+                local html_color="cyan" full_banner=""
+                case "$color_opt" in
+                    1|01) html_color="cyan" ;;
+                    2|02) html_color="green" ;;
+                    3|03) html_color="yellow" ;;
+                    4|04) html_color="blue" ;;
+                    5|05) html_color="red" ;;
+                    6|06) html_color="#F535AA" ;;
+                    7|07) html_color="#FF9100" ;;
+                    8|08) html_color="#D500F9" ;;
+                    9|09) html_color="none" ;;
+                    *) html_color="cyan" ;;
+                esac
+
+                if [[ "$html_color" != "none" ]]; then
+                    full_banner="<font color=\"${html_color}\"><b>${raw_banner}</b></font>"
+                else
+                    full_banner="${raw_banner}"
+                fi
+
+                echo -e "\n\033[1;33m[*] Liberando puerto $p_py y preparando servicio...\033[0m"
                 systemctl stop crisdev-ws-c.service 2>/dev/null || true
                 pkill -9 -x wsproxy-c 2>/dev/null || true
                 pkill -9 -f 'wsproxy.py' 2>/dev/null || true
                 screen -wipe >/dev/null 2>&1 || true
 
-                # Garantizar que el script v4.5 más reciente esté en /usr/local/bin y /etc/SSHPlus
+                # Garantizar wsproxy.py v4.5 en su lugar
                 if [[ -f /opt/ssh-cris/wsproxy.py ]]; then
                     cp -af /opt/ssh-cris/wsproxy.py /usr/local/bin/wsproxy.py
                     cp -af /opt/ssh-cris/wsproxy.py /etc/SSHPlus/wsproxy.py 2>/dev/null || true
@@ -1027,18 +1067,19 @@ EOF_WS_C_SVC
                 fi
                 chmod 755 /usr/local/bin/wsproxy.py /etc/SSHPlus/wsproxy.py 2>/dev/null || true
 
-                # Limpiar configuraciones duales para no sobreescribir el puerto
+                # Limpiar confs duales
                 rm -f /etc/crisdev/ws-c.conf /etc/crisdev/ws-python.conf 2>/dev/null || true
 
-                # Guardar conf
+                # Guardar en ws.conf
                 cat > "$conf" <<EOF_WSPY
 WS_ACTIVE_ENGINE=python
 LISTEN_ADDR=0.0.0.0
 LISTEN_PORT=$p_py
-TARGET_HOST=${TARGET_HOST:-127.0.0.1}
-TARGET_PORT=${TARGET_PORT:-22}
-HTTP_STATUS=${HTTP_STATUS:-101}
-BANNER_MSG="${BANNER_MSG:-HTTP CONEXION WS}"
+TARGET_HOST=$t_host
+TARGET_PORT=$t_port
+HTTP_STATUS=$h_code
+BANNER_MSG="$full_banner"
+BANNER_COLOR="$html_color"
 IDLE_TIMEOUT=300
 MAX_CONNS=16384
 WS_C_PORT=${WS_C_PORT:-80}
@@ -1046,7 +1087,17 @@ WS_PY_PORT=$p_py
 EOF_WSPY
                 cp -af "$conf" /etc/sshplus-ws.conf 2>/dev/null || true
 
-                # Garantizar servicio crisdev-ws-python.service con wrapper seguro
+                # Sincronizar scripts legacy
+                if [[ -f /etc/SSHPlus/proxy.py ]]; then
+                    sed -i "s/MSG = .*/MSG = '$raw_banner'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
+                    [[ "$html_color" != "none" ]] && sed -i "s/COR = .*/COR = '<font color=\"$html_color\">'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
+                fi
+                if [[ -f /etc/SSHPlus/wsproxy.py ]]; then
+                    sed -i "s/MSG = .*/MSG = '$raw_banner'/g" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+                    [[ "$html_color" != "none" ]] && sed -i "s/COR = .*/COR = '<font color=\"$html_color\">'/g" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+                fi
+
+                # Generar systemd unit con shell exec a prueba de errores
                 cat > /etc/systemd/system/crisdev-ws-python.service << 'EOF_WS_PY_SVC'
 [Unit]
 Description=CRISDEV Ultra-Stable WebSocket/HTTP Proxy (Python v4.5 Zero-Reconnect)
@@ -1080,17 +1131,182 @@ EOF_WS_PY_SVC
                 sleep 1.2
                 if systemctl is-active --quiet crisdev-ws-python.service 2>/dev/null || pgrep -f 'wsproxy.py' >/dev/null 2>&1; then
                     echo -e "\n\033[1;32m✔ MOTOR CLÁSICO PYTHON v4.5 ACTIVADO EXITOSAMENTE EN PUERTO $p_py\033[0m"
-                    echo -e "\033[1;37m  Anti-CGNAT Activo · Sin timeouts artificiales · Backend: ${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}\033[0m"
+                    echo -e "\033[1;37m  Backend destino : ${t_host}:${t_port}\033[0m"
+                    echo -e "\033[1;37m  Código HTTP     : HTTP ${h_code}\033[0m"
+                    echo -e "\033[1;37m  Minibanner      : ${raw_banner} (${html_color})\033[0m"
+                    echo -e "\033[1;32m  Anti-CGNAT Activo · Sin timeouts artificiales (Zero-Reconnect)\033[0m"
+                    echo ""
+                    echo -e "\033[1;33m[*] Test local de respuesta HTTP:\033[0m"
+                    curl -i -s -N --max-time 2 "http://127.0.0.1:$p_py/" | head -5 || true
                 else
-                    # Fallback de arranque directo si systemd reporta fallo de entorno
-                    nohup /usr/bin/python3 /usr/local/bin/wsproxy.py -b "0.0.0.0" -p "$p_py" -t "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" -s "${HTTP_STATUS:-101}" >/dev/null 2>&1 &
-                    sleep 1
-                    if pgrep -f 'wsproxy.py' >/dev/null 2>&1; then
-                        echo -e "\n\033[1;32m✔ MOTOR CLÁSICO PYTHON v4.5 ACTIVADO EXITOSAMENTE (Modo Autónomo) EN PUERTO $p_py\033[0m"
-                    else
-                        echo -e "\n\033[1;31m✖ Error al iniciar Motor Python. Verificando log:\033[0m"
-                        journalctl -u crisdev-ws-python.service -n 10 --no-pager 2>/dev/null || true
+                    echo -e "\n\033[1;31m✖ Error al iniciar Motor Python. Verificando log:\033[0m"
+                    journalctl -u crisdev-ws-python.service -n 10 --no-pager 2>/dev/null || true
+                fi
+                echo ""
+                read -n1 -r -p "Presione cualquier tecla para continuar..."
+                ;;
+
+            2)
+                clear
+                echo -e "\E[44;1;37m       ACTIVAR MOTOR NATIVO EN C (INSTALACIÓN COMPLETA GUIADA)       \E[0m\n"
+                echo -e "\033[1;33mEl motor Nativo en C utiliza sockets no bloqueantes y arquitectura epoll\033[0m"
+                echo -e "\033[1;33mcapaz de manejar más de 16,000 conexiones concurrentes con menos de 10MB RAM.\033[0m\n"
+
+                # Paso 1: Puerto
+                echo -ne "\033[1;32m[1/5] PUERTO DE ESCUCHA WEBSOCKET (default 80)\033[1;37m: "
+                read -r p_c
+                [[ -z "$p_c" || ! "$p_c" =~ ^[0-9]+$ ]] && p_c=80
+
+                # Paso 2: Destino local
+                echo -e "\n\033[1;32m[2/5] SELECCIONE EL DESTINO LOCAL DEL TÚNEL:\033[0m"
+                echo -e "  [1] OpenSSH Directo (Puerto 22) [Recomendado]"
+                local drp_p; drp_p=$(get_proc_ports 'dropbear')
+                if [[ -n "$drp_p" ]]; then
+                    echo -e "  [2] Dropbear SSH (Puertos detectados: $drp_p)"
+                else
+                    echo -e "  [2] Dropbear SSH (Puerto 90 / 110 / 143)"
+                fi
+                echo -e "  [3] Destino Personalizado (IP:Puerto manual)"
+                echo -ne "\033[1;33mSeleccione opción [1-3] (default 1): \033[0m"
+                read -r dst_opt
+                local t_host="127.0.0.1" t_port="22"
+                case "$dst_opt" in
+                    2)
+                        if [[ -n "$drp_p" ]]; then
+                            t_port=$(echo "$drp_p" | awk '{print $1}')
+                        else
+                            t_port="90"
+                        fi
+                        ;;
+                    3)
+                        echo -ne "\033[1;37mIngrese IP destino (default 127.0.0.1): \033[0m"
+                        read -r custom_h
+                        [[ -n "$custom_h" ]] && t_host="$custom_h"
+                        echo -ne "\033[1;37mIngrese Puerto destino (ej: 22 o 90): \033[0m"
+                        read -r custom_p
+                        [[ -n "$custom_p" && "$custom_p" =~ ^[0-9]+$ ]] && t_port="$custom_p"
+                        ;;
+                    *)
+                        t_port="22"
+                        ;;
+                esac
+
+                # Paso 3: Código HTTP
+                echo -e "\n\033[1;32m[3/5] CÓDIGO DE RESPUESTA HTTP:\033[0m"
+                echo -e "  [1] HTTP/1.1 101 Switching Protocols [Recomendado VPN / Conexión]"
+                echo -e "  [2] HTTP/1.1 200 OK [Cloudflare CDN / HTTP Fronting]"
+                echo -ne "\033[1;33mSeleccione código [1-2] (default 1): \033[0m"
+                read -r cod_opt
+                local h_code="101"
+                [[ "$cod_opt" == "2" ]] && h_code="200"
+
+                # Paso 4: Minibanner
+                echo -e "\n\033[1;32m[4/5] MENSAJE DE MINIBANNER / ESTADO:\033[0m"
+                echo -ne "\033[1;37mTexto para el log de conexión (default: 'HTTP CONEXION'): \033[0m"
+                read -r raw_banner
+                [[ -z "$raw_banner" ]] && raw_banner="HTTP CONEXION"
+
+                # Paso 5: Color HTML
+                echo -e "\n\033[1;32m[5/5] COLOR HTML PARA EL MINIBANNER:\033[0m"
+                echo -e "  [1] Cyan (#00E5FF)    [2] Verde (#00E676)    [3] Amarillo (#FFD600)"
+                echo -e "  [4] Azul (#2979FF)    [5] Rojo (#FF1744)     [6] Rosa (#F535AA)"
+                echo -e "  [7] Naranja (#FF9100) [8] Púrpura (#D500F9)  [9] Sin Color (Plano)"
+                echo -ne "\033[1;33mSeleccione color [1-9] (default 1): \033[0m"
+                read -r color_opt
+                local html_color="cyan" full_banner=""
+                case "$color_opt" in
+                    1|01) html_color="cyan" ;;
+                    2|02) html_color="green" ;;
+                    3|03) html_color="yellow" ;;
+                    4|04) html_color="blue" ;;
+                    5|05) html_color="red" ;;
+                    6|06) html_color="#F535AA" ;;
+                    7|07) html_color="#FF9100" ;;
+                    8|08) html_color="#D500F9" ;;
+                    9|09) html_color="none" ;;
+                    *) html_color="cyan" ;;
+                esac
+
+                if [[ "$html_color" != "none" ]]; then
+                    full_banner="<font color=\"${html_color}\"><b>${raw_banner}</b></font>"
+                else
+                    full_banner="${raw_banner}"
+                fi
+
+                echo -e "\n\033[1;33m[*] Liberando puerto $p_c y preparando binario nativo...\033[0m"
+                systemctl stop crisdev-ws-python.service 2>/dev/null || true
+                pkill -9 -f 'wsproxy.py' 2>/dev/null || true
+                screen -wipe >/dev/null 2>&1 || true
+
+                # Compilar wsproxy-c si no existe
+                if [[ ! -x /usr/local/bin/wsproxy-c ]]; then
+                    if [[ -f /usr/local/src/wsproxy-c.c && -x "$(command -v gcc 2>/dev/null)" ]]; then
+                        echo -e "\033[1;33m[*] Compilando wsproxy-c nativo con gcc...\033[0m"
+                        gcc -O2 -Wall -Wextra -o /usr/local/bin/wsproxy-c /usr/local/src/wsproxy-c.c 2>/dev/null || true
                     fi
+                fi
+
+                # Limpiar configuraciones duales
+                rm -f /etc/crisdev/ws-c.conf /etc/crisdev/ws-python.conf 2>/dev/null || true
+
+                cat > "$conf" <<EOF_WSC
+WS_ACTIVE_ENGINE=c
+LISTEN_ADDR=0.0.0.0
+LISTEN_PORT=$p_c
+TARGET_HOST=$t_host
+TARGET_PORT=$t_port
+HTTP_STATUS=$h_code
+BANNER_MSG="$full_banner"
+BANNER_COLOR="$html_color"
+IDLE_TIMEOUT=300
+MAX_CONNS=16384
+WS_C_PORT=$p_c
+WS_PY_PORT=${WS_PY_PORT:-8080}
+EOF_WSC
+                cp -af "$conf" /etc/sshplus-ws.conf 2>/dev/null || true
+
+                cat > /etc/systemd/system/crisdev-ws-c.service << 'EOF_WS_C_SVC'
+[Unit]
+Description=CRISDEV Native epoll WebSocket/HTTP Proxy (Port 80 C Core)
+After=network-online.target ssh.service
+Wants=network-online.target ssh.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=-/etc/crisdev/ws.conf
+EnvironmentFile=-/etc/crisdev/ws-c.conf
+ExecStart=/bin/sh -c 'exec /usr/local/bin/wsproxy-c --bind "${LISTEN_ADDR:-0.0.0.0}" --port "${LISTEN_PORT:-80}" --target "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" --status "${HTTP_STATUS:-101}" --idle "${IDLE_TIMEOUT:-300}" --max-conns "${MAX_CONNS:-16384}" ${BANNER_MSG:+--msg "$BANNER_MSG"}'
+Restart=always
+RestartSec=1
+OOMScoreAdjust=-900
+LimitNOFILE=65535
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
+EOF_WS_C_SVC
+
+                systemctl daemon-reload
+                systemctl enable --now crisdev-ws-c.service >/dev/null 2>&1 || true
+                systemctl restart crisdev-ws-c.service 2>/dev/null || true
+                ufw allow "$p_c"/tcp >/dev/null 2>&1 || true
+                iptables -C INPUT -p tcp --dport "$p_c" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$p_c" -j ACCEPT 2>/dev/null || true
+
+                sleep 1.2
+                if systemctl is-active --quiet crisdev-ws-c.service 2>/dev/null || pgrep -x wsproxy-c >/dev/null 2>&1; then
+                    echo -e "\n\033[1;32m✔ MOTOR NATIVO EN C ACTIVADO EXITOSAMENTE EN PUERTO $p_c\033[0m"
+                    echo -e "\033[1;37m  Backend destino : ${t_host}:${t_port}\033[0m"
+                    echo -e "\033[1;37m  Código HTTP     : HTTP ${h_code}\033[0m"
+                    echo -e "\033[1;37m  Minibanner      : ${raw_banner} (${html_color})\033[0m"
+                    echo ""
+                    echo -e "\033[1;33m[*] Test local de respuesta HTTP:\033[0m"
+                    curl -i -s -N --max-time 2 "http://127.0.0.1:$p_c/" | head -5 || true
+                else
+                    echo -e "\n\033[1;31m✖ Error al iniciar Motor en C. Verificando log:\033[0m"
+                    journalctl -u crisdev-ws-c.service -n 10 --no-pager 2>/dev/null || true
                 fi
                 echo ""
                 read -n1 -r -p "Presione cualquier tecla para continuar..."
@@ -1116,13 +1332,21 @@ EOF_WS_PY_SVC
                 pkill -9 -x wsproxy-c 2>/dev/null || true
                 pkill -9 -f 'wsproxy.py' 2>/dev/null || true
 
+                # Garantizar wsproxy-c y wsproxy.py
+                if [[ ! -x /usr/local/bin/wsproxy-c && -f /usr/local/src/wsproxy-c.c && -x "$(command -v gcc 2>/dev/null)" ]]; then
+                    gcc -O2 -Wall -Wextra -o /usr/local/bin/wsproxy-c /usr/local/src/wsproxy-c.c 2>/dev/null || true
+                fi
+                if [[ -f /opt/ssh-cris/wsproxy.py ]]; then
+                    cp -af /opt/ssh-cris/wsproxy.py /usr/local/bin/wsproxy.py 2>/dev/null || true
+                fi
+
                 cat > /etc/crisdev/ws-c.conf <<EOF_C
 LISTEN_ADDR=0.0.0.0
 LISTEN_PORT=$port_c_dual
 TARGET_HOST=${TARGET_HOST:-127.0.0.1}
 TARGET_PORT=${TARGET_PORT:-22}
-HTTP_STATUS=101
-BANNER_MSG="HTTP CONEXION WS C"
+HTTP_STATUS=${HTTP_STATUS:-101}
+BANNER_MSG="${BANNER_MSG:-HTTP CONEXION}"
 IDLE_TIMEOUT=300
 MAX_CONNS=16384
 EOF_C
@@ -1132,281 +1356,100 @@ LISTEN_ADDR=0.0.0.0
 LISTEN_PORT=$port_py_dual
 TARGET_HOST=${TARGET_HOST:-127.0.0.1}
 TARGET_PORT=${TARGET_PORT:-22}
-HTTP_STATUS=200
-BANNER_MSG="HTTP CONEXION WS PY"
+HTTP_STATUS=${HTTP_STATUS:-101}
+BANNER_MSG="${BANNER_MSG:-HTTP CONEXION}"
+IDLE_TIMEOUT=300
+MAX_CONNS=16384
 EOF_PY
-
-                cat > "$conf" <<EOF_DUAL
-WS_ACTIVE_ENGINE=both
-LISTEN_ADDR=0.0.0.0
-LISTEN_PORT=$port_c_dual
-TARGET_HOST=${TARGET_HOST:-127.0.0.1}
-TARGET_PORT=${TARGET_PORT:-22}
-HTTP_STATUS=101
-BANNER_MSG="HTTP CONEXION WS"
-WS_C_PORT=$port_c_dual
-WS_PY_PORT=$port_py_dual
-EOF_DUAL
 
                 systemctl daemon-reload
                 systemctl enable --now crisdev-ws-c.service crisdev-ws-python.service >/dev/null 2>&1 || true
                 systemctl restart crisdev-ws-c.service crisdev-ws-python.service 2>/dev/null || true
-
                 ufw allow "$port_c_dual"/tcp >/dev/null 2>&1 || true
                 ufw allow "$port_py_dual"/tcp >/dev/null 2>&1 || true
+                iptables -C INPUT -p tcp --dport "$port_c_dual" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$port_c_dual" -j ACCEPT 2>/dev/null || true
+                iptables -C INPUT -p tcp --dport "$port_py_dual" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$port_py_dual" -j ACCEPT 2>/dev/null || true
 
-                sleep 1.2
-                echo -e "\n\033[1;32m✔ AMBOS MOTORES ACTIVADOS EXITOSAMENTE:\033[0m"
-                echo -e " ‣ Motor Nativo en C   : Puerto $port_c_dual"
-                echo -e " ‣ Motor Clásico Python : Puerto $port_py_dual"
+                sleep 1.5
+                echo -e "\n\033[1;32m✔ AMBOS MOTORES WEBSOCKET INICIADOS:\033[0m"
+                echo -e "  • Motor Nativo C   : Puerto $port_c_dual"
+                echo -e "  • Motor Python v4.5 : Puerto $port_py_dual"
                 echo ""
                 read -n1 -r -p "Presione cualquier tecla para continuar..."
                 ;;
 
             4)
                 clear
-                echo -e "\E[41;1;37m        APAGAR TODOS LOS SERVICIOS WEBSOCKET        \E[0m\n"
-                echo -e "\033[1;33mDeteniendo servicios systemd y liberando puertos...\033[0m"
-                systemctl stop crisdev-ws-c.service crisdev-ws-python.service sshplus-ws.service 2>/dev/null || true
-                systemctl disable crisdev-ws-c.service crisdev-ws-python.service sshplus-ws.service >/dev/null 2>&1 || true
-                pkill -9 -x wsproxy-c 2>/dev/null || true
-                pkill -9 -f 'wsproxy.py' 2>/dev/null || true
-                screen -wipe >/dev/null 2>&1 || true
-                rm -f /etc/crisdev/ws-c.conf /etc/crisdev/ws-python.conf 2>/dev/null || true
-                echo -e "\n\033[1;32m✔ TODOS LOS SERVICIOS WEBSOCKET HAN SIDO DETENIDOS.\033[0m"
+                echo -e "\E[44;1;37m             ACTIVAR PROXY SOCKS SSH (TCP PURO)             \E[0m\n"
+                echo -ne "\033[1;32mPUERTO DE ESCUCHA SOCKS SSH (ej: 80 o 8080)\033[1;37m: "
+                read -r porta
+                [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=80
+                verif_ptrs_socks "$porta" || continue
+
+                echo -ne "\033[1;32mPUERTO SSH LOCAL DESTINO (default 22)\033[1;37m: "
+                read -r dst_port
+                [[ -z "$dst_port" || ! "$dst_port" =~ ^[0-9]+$ ]] && dst_port=22
+
+                echo -ne "\033[1;32mINFORME SU MENSAJE DE ESTADO (default: HTTP CONEXION)\033[1;37m: "
+                read -r msgg
+                [[ -z "$msgg" ]] && msgg="HTTP CONEXION"
+                sed -i "s/MSG = .*/MSG = '$msgg'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
+
+                mkdir -p /var/run/screen /run/screen 2>/dev/null || true
+                chmod 777 /var/run/screen /run/screen 2>/dev/null || true
+
+                fun_inisocks() {
+                    screen -wipe >/dev/null 2>&1 || true
+                    screen -dmS proxy "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" 2>/dev/null || true
+                    sleep 1
+                    if ! pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1; then
+                        nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" >/dev/null 2>&1 &
+                    fi
+                }
+                echo -e "\n\033[1;32mINICIANDO EL PROXY SOCKS EN PUERTO $porta -> SSH $dst_port...\033[0m"
+                fun_bar 'fun_inisocks'
+                ufw allow "$porta"/tcp 2>/dev/null || true
+                iptables -C INPUT -p tcp --dport "$porta" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$porta" -j ACCEPT 2>/dev/null || true
+                echo -e "\n\033[1;32m✔ SOCKS SSH ACTIVADO CON ÉXITO EN PUERTO $porta (MSG: '$msgg')\033[0m"
                 sleep 2
                 ;;
 
             5)
                 clear
-                echo -e "\E[44;1;37m          CAMBIAR DESTINO INTERNO (BACKEND)         \E[0m\n"
-                echo -e "\033[1;37mSeleccione el puerto del servicio que recibirá el tráfico:\033[0m"
-                echo -e "  [1] OpenSSH  (:22)"
-                echo -e "  [2] Dropbear (:143 o :109)"
-                echo -e "  [3] Ingresar puerto manual\n"
-                echo -ne "\033[1;36mOpción [1-3]:\033[0m "
-                read -r b_opt
-                case "$b_opt" in
-                    1) TARGET_PORT=22 ;;
-                    2)
-                        local d_p; d_p=$(ss -tlnp 2>/dev/null | grep dropbear | awk '{print $4}' | awk -F: '{print $NF}' | head -1)
-                        TARGET_PORT="${d_p:-143}"
-                        ;;
-                    3)
-                        echo -ne "\033[1;36mPuerto destino (127.0.0.1):\033[0m "
-                        read -r m_p
-                        [[ "$m_p" =~ ^[0-9]+$ ]] && TARGET_PORT="$m_p"
-                        ;;
-                esac
-                sed -i "s/^TARGET_PORT=.*/TARGET_PORT=$TARGET_PORT/" "$conf" 2>/dev/null || true
-                systemctl restart crisdev-ws-c.service crisdev-ws-python.service 2>/dev/null || true
-                echo -e "\n\033[1;32m✔ Destino actualizado a 127.0.0.1:$TARGET_PORT\033[0m"
-                sleep 1.5
+                echo -e "\E[44;1;37m           ACTIVAR PROXY SOCKS OPENVPN (TCP)           \E[0m\n"
+                echo -ne "\033[1;32mPUERTO DE ESCUCHA SOCKS OPENVPN (ej: 8080)\033[1;37m: "
+                read -r porta
+                [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=8080
+                verif_ptrs_socks "$porta" || continue
+
+                echo -ne "\033[1;32mPUERTO OPENVPN LOCAL DESTINO (default 1194)\033[1;37m: "
+                read -r dst_port
+                [[ -z "$dst_port" || ! "$dst_port" =~ ^[0-9]+$ ]] && dst_port=1194
+
+                echo -ne "\033[1;32mINFORME SU MENSAJE DE ESTADO (default: HTTP CONEXION OPENVPN)\033[1;37m: "
+                read -r msgg
+                [[ -z "$msgg" ]] && msgg="HTTP CONEXION OPENVPN"
+
+                mkdir -p /var/run/screen /run/screen 2>/dev/null || true
+                chmod 777 /var/run/screen /run/screen 2>/dev/null || true
+
+                fun_iniovpn() {
+                    screen -wipe >/dev/null 2>&1 || true
+                    screen -dmS "ovpnproxy" "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" 2>/dev/null || true
+                    sleep 1
+                    if ! pgrep -f "proxy.py $porta 127.0.0.1:$dst_port" >/dev/null 2>&1; then
+                        nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" >/dev/null 2>&1 &
+                    fi
+                }
+                echo -e "\n\033[1;32mINICIANDO SOCKS OPENVPN EN PUERTO $porta -> OPENVPN $dst_port...\033[0m"
+                fun_bar 'fun_iniovpn'
+                ufw allow "$porta"/tcp 2>/dev/null || true
+                iptables -C INPUT -p tcp --dport "$porta" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$porta" -j ACCEPT 2>/dev/null || true
+                echo -e "\n\033[1;32m✔ SOCKS OPENVPN ACTIVADO CON ÉXITO EN PUERTO $porta!\033[0m"
+                sleep 2
                 ;;
 
             6)
-                clear
-                echo -e "\E[44;1;37m         CAMBIAR CÓDIGO DE RESPUESTA HTTP          \E[0m\n"
-                echo -e "  [1] HTTP 101 Switching Protocols (Para Cloudflare, CloudFront, CDN y WebSocket)"
-                echo -e "  [2] HTTP 200 Connection Established / OK (Para inyectores directos / payloads)\n"
-                echo -ne "\033[1;36mSeleccione [1-2]:\033[0m "
-                read -r c_opt
-                if [[ "$c_opt" == "2" ]]; then
-                    HTTP_STATUS=200
-                else
-                    HTTP_STATUS=101
-                fi
-                sed -i "s/^HTTP_STATUS=.*/HTTP_STATUS=$HTTP_STATUS/" "$conf" 2>/dev/null || true
-                systemctl restart crisdev-ws-c.service crisdev-ws-python.service 2>/dev/null || true
-                echo -e "\n\033[1;32m✔ Código HTTP cambiado a $HTTP_STATUS\033[0m"
-                sleep 1.5
-                ;;
-
-            7)
-                clear
-                echo -e "\E[44;1;37m            PERSONALIZAR MINIBANNER HTTP            \E[0m\n"
-                echo -ne "\033[1;37mIngrese el texto de cabecera / minibanner (Enter para default):\033[0m "
-                read -r new_ban
-                [[ -z "$new_ban" ]] && new_ban="HTTP CONEXION WS"
-                BANNER_MSG="$new_ban"
-                sed -i "s/^BANNER_MSG=.*/BANNER_MSG=\"$BANNER_MSG\"/" "$conf" 2>/dev/null || true
-                systemctl restart crisdev-ws-c.service crisdev-ws-python.service 2>/dev/null || true
-                echo -e "\n\033[1;32m✔ Minibanner actualizado a: '$BANNER_MSG'\033[0m"
-                sleep 1.5
-                ;;
-
-            8)
-                clear
-                echo -e "\E[44;1;37m        LOGS EN TIEMPO REAL DE WEBSOCKET (JOURNALCTL)        \E[0m\n"
-                echo -e "\033[1;33mÚltimas 25 líneas de registro de los servicios WebSocket:\033[0m\n"
-                journalctl -u crisdev-ws-c.service -u crisdev-ws-python.service -n 25 --no-pager 2>/dev/null || true
-                echo ""
-                read -n1 -r -p "Presione cualquier tecla para volver..."
-                ;;
-
-            9)
-                clear
-                echo -e "\E[44;1;37m          PROBAR RESPUESTA HTTP EN VIVO (CURL)          \E[0m\n"
-                local test_p="${LISTEN_PORT:-80}"
-                echo -e "\033[1;33mConsultando http://127.0.0.1:$test_p/ ...\033[0m\n"
-                curl -i -s -N --max-time 3 "http://127.0.0.1:$test_p/" | head -15 || true
-                echo ""
-                echo -e "\033[1;32m✔ Si observas 'HTTP/1.1 101' o 'HTTP/1.1 200', el proxy responde perfectamente.\033[0m\n"
-                read -n1 -r -p "Presione cualquier tecla para continuar..."
-                ;;
-        esac
-    done
-}
-
-fun_socks() {
-    ensure_proxy_scripts
-    while true; do
-        clear
-        sshplus_line
-        echo -e "                   ${BLUE}CONFIGURAR PROXY SOCKS${SCOLOR}"
-        sshplus_line
-        local _socks_ports
-        _socks_ports=$(get_proc_ports 'proxy\.py|wsproxy\.py|wsproxy-c')
-        echo -e "${SSHPLUS_DARK_GREEN}PUERTOS:${SCOLOR} \033[1;32m${_socks_ports:-N/A}\033[0m"
-        echo -e "\033[1;37m------------------------------------------------------------\033[0m"
-
-        local var_sks1 var_sks2="\033[1;31mx\033[0m" var_sks3
-        (pgrep -f 'proxy.py.*22' >/dev/null 2>&1 || (pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1 && ! pgrep -f '1194' >/dev/null 2>&1)) && var_sks1="\033[1;32mo\033[0m" || var_sks1="\033[1;31mx\033[0m"
-        if systemctl is-active --quiet crisdev-ws-c.service 2>/dev/null || systemctl is-active --quiet crisdev-ws-python.service 2>/dev/null || systemctl is-active --quiet sshplus-ws.service 2>/dev/null || pgrep -x wsproxy-c >/dev/null 2>&1 || pgrep -f 'wsproxy.py' >/dev/null 2>&1; then
-            var_sks2="\033[1;32mo\033[0m"
-        fi
-        pgrep -f 'proxy.py.*1194' >/dev/null 2>&1 && var_sks3="\033[1;32mo\033[0m" || var_sks3="\033[1;31mx\033[0m"
-
-        echo -e "${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> SOCKS SSH\033[0m                 $var_sks1"
-        echo -e "${SSHPLUS_NUM}[2]${SCOLOR} \033[1;37m> WEBSOCKET\033[0m                 $var_sks2"
-        echo -e "${SSHPLUS_NUM}[3]${SCOLOR} \033[1;37m> SOCKS OPENVPN\033[0m             $var_sks3"
-        echo -e "${SSHPLUS_NUM}[4]${SCOLOR} \033[1;37m> ABRIR PUERTO\033[0m"
-        echo -e "${SSHPLUS_NUM}[5]${SCOLOR} \033[1;37m> MODIFICAR ESTADO SOCKS SSH\033[0m"
-        echo -e "${SSHPLUS_NUM}[6]${SCOLOR} \033[1;37m> MODIFICAR ESTADO DEL WEBSOCKET\033[0m"
-        echo -e "${SSHPLUS_NUM}[0]${SCOLOR} \033[1;37m> VOLVER\033[0m"
-        sshplus_line
-        echo -ne "${SSHPLUS_CYAN}Opcion:${SCOLOR} "
-        read -r resposta
-
-        case "$resposta" in
-            1)
-                if pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1 && ! pgrep -f 'proxy.py.*1194' >/dev/null 2>&1; then
-                    clear
-                    echo -e "\E[44;1;37m          SOCKS SSH — YA ESTÁ ACTIVO           \E[0m\n"
-                    echo -e "\033[1;32mEl proxy SOCKS SSH sigue en marcha.\033[0m"
-                    echo ""
-                    local _cur_pts; _cur_pts=$(ps x 2>/dev/null | grep '[S]SHPlus/proxy.py' | head -1 | awk '{print $NF}')
-                    [[ "$_cur_pts" =~ ^[0-9]+$ ]] && echo -e "\033[1;33mPuerto SOCKS SSH: \033[1;32m$_cur_pts\033[0m\n" || echo -e "\033[1;33mSOCKS SSH en ejecución\033[0m\n"
-                    echo -e "\033[1;31m[\033[1;36m1\033[1;31m] \033[1;33mDESACTIVAR SOCKS SSH\033[0m"
-                    echo -e "\033[1;31m[\033[1;36m0\033[1;31m] \033[1;33mVOLVER (mantener activo)\033[0m\n"
-                    echo -ne "\033[1;32m¿QUÉ DESEA HACER ? \033[1;37m"
-                    read -r _socks_on_choice
-                    if [[ "$_socks_on_choice" == "1" ]]; then
-                        clear
-                        echo -e "\E[41;1;37m             DESACTIVAR SOCKS SSH             \E[0m\n"
-                        fun_socksoff() {
-                            for pidproxy in $(screen -ls 2>/dev/null | grep '\.proxy' | awk '{print $1}'); do
-                                screen -r -S "$pidproxy" -X quit 2>/dev/null || true
-                            done
-                            for _k in $(pgrep -f '/etc/SSHPlus/proxy.py' 2>/dev/null); do
-                                kill -9 "$_k" 2>/dev/null || true
-                            done
-                            screen -wipe >/dev/null 2>&1 || true
-                        }
-                        echo -e "\033[1;32mDESACTIVANDO EL PROXY SOCKS SSH...\033[0m"
-                        fun_bar 'fun_socksoff'
-                        echo -e "\n\033[1;32mSOCKS SSH DESACTIVADO CON ÉXITO!\033[0m"
-                        sleep 2
-                    fi
-                else
-                    clear
-                    fun_socks_prepare_activate
-                    echo -e "\E[44;1;37m             INICIAR SOCKS SSH             \E[0m\n"
-                    echo -ne "\033[1;32m¿QUÉ PUERTO DESEA UTILIZAR ? (ej: 80 o 8080)\033[1;37m: "
-                    read -r porta
-                    [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=80
-                    verif_ptrs_socks "$porta" || continue
-
-                    echo -ne "\033[1;32mPUERTO SSH LOCAL DESTINO (default 22)\033[1;37m: "
-                    read -r dst_port
-                    [[ -z "$dst_port" || ! "$dst_port" =~ ^[0-9]+$ ]] && dst_port=22
-
-                    echo -ne "\033[1;32mINFORME SU MENSAJE DE ESTADO (ej: HTTP CONEXION)\033[1;37m: "
-                    read -r msgg
-                    [[ -z "$msgg" ]] && msgg="HTTP CONEXION"
-                    sed -i "s/MSG = .*/MSG = '$msgg'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
-
-                    mkdir -p /var/run/screen /run/screen 2>/dev/null || true
-                    chmod 777 /var/run/screen /run/screen 2>/dev/null || true
-                    fun_inisocks() {
-                        screen -wipe >/dev/null 2>&1 || true
-                        screen -dmS proxy "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" 2>/dev/null || true
-                        sleep 1
-                        if ! pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1; then
-                            nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" >/dev/null 2>&1 &
-                        fi
-                    }
-                    echo -e "\n\033[1;32mINICIANDO EL PROXY SOCKS EN PUERTO $porta -> SSH $dst_port...\033[0m"
-                    fun_bar 'fun_inisocks'
-                    ufw allow "$porta"/tcp 2>/dev/null || true
-                    echo -e "\n\033[1;32mSOCKS SSH ACTIVADO CON ÉXITO EN PUERTO $porta (MSG: '$msgg')\033[0m"
-                    sleep 2
-                fi
-                ;;
-            2)
-                menu_websocket
-                ;;
-            3)
-                if pgrep -f 'proxy.py.*1194' >/dev/null 2>&1; then
-                    clear
-                    echo -e "\E[41;1;37m             DESACTIVAR SOCKS OPENVPN             \E[0m\n"
-                    fun_ovpnoff() {
-                        for pidproxy in $(screen -ls 2>/dev/null | grep '\.ovpnproxy' | awk '{print $1}'); do
-                            screen -r -S "$pidproxy" -X quit 2>/dev/null || true
-                        done
-                        for _k in $(pgrep -f 'proxy.py.*1194' 2>/dev/null); do
-                            kill -9 "$_k" 2>/dev/null || true
-                        done
-                        screen -wipe >/dev/null 2>&1 || true
-                    }
-                    echo -e "\033[1;32mDESACTIVANDO SOCKS OPENVPN...\033[0m"
-                    fun_bar 'fun_ovpnoff'
-                    echo -e "\n\033[1;32mSOCKS OPENVPN DESACTIVADO CON ÉXITO!\033[0m"
-                    sleep 2
-                else
-                    clear
-                    echo -e "\E[44;1;37m             INICIAR SOCKS OPENVPN             \E[0m\n"
-                    echo -ne "\033[1;32m¿QUÉ PUERTO DESEA UTILIZAR PARA OPENVPN ? (ej: 8080)\033[1;37m: "
-                    read -r porta
-                    [[ -z "$porta" || ! "$porta" =~ ^[0-9]+$ ]] && porta=8080
-                    verif_ptrs_socks "$porta" || continue
-
-                    echo -ne "\033[1;32mPUERTO OPENVPN LOCAL DESTINO (default 1194)\033[1;37m: "
-                    read -r dst_port
-                    [[ -z "$dst_port" || ! "$dst_port" =~ ^[0-9]+$ ]] && dst_port=1194
-
-                    echo -ne "\033[1;32mINFORME SU MENSAJE DE ESTADO (ej: HTTP CONEXION OPENVPN)\033[1;37m: "
-                    read -r msgg
-                    [[ -z "$msgg" ]] && msgg="HTTP CONEXION OPENVPN"
-
-                    mkdir -p /var/run/screen /run/screen 2>/dev/null || true
-                    chmod 777 /var/run/screen /run/screen 2>/dev/null || true
-                    fun_iniovpn() {
-                        screen -wipe >/dev/null 2>&1 || true
-                        screen -dmS "ovpnproxy" "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" 2>/dev/null || true
-                        sleep 1
-                        if ! pgrep -f "proxy.py $porta 127.0.0.1:$dst_port" >/dev/null 2>&1; then
-                            nohup "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$porta" "127.0.0.1:$dst_port" >/dev/null 2>&1 &
-                        fi
-                    }
-                    echo -e "\n\033[1;32mINICIANDO SOCKS OPENVPN EN PUERTO $porta -> OPENVPN $dst_port...\033[0m"
-                    fun_bar 'fun_iniovpn'
-                    ufw allow "$porta"/tcp 2>/dev/null || true
-                    echo -e "\n\033[1;32mSOCKS OPENVPN ACTIVADO CON ÉXITO EN PUERTO $porta!\033[0m"
-                    sleep 2
-                fi
-                ;;
-            4)
                 clear
                 echo -e "\E[44;1;37m               ABRIR PUERTO EXTRA               \E[0m\n"
                 echo -e "${SSHPLUS_NUM}[1]${SCOLOR} \033[1;37m> SOCKS SSH (Destino 22)\033[0m"
@@ -1442,22 +1485,24 @@ fun_socks() {
                         echo -e "\n\033[1;32mINICIANDO PUERTO EXTRA SOCKS $porta...\033[0m"
                         fun_bar 'fun_extra_sks'
                         ufw allow "$porta"/tcp 2>/dev/null || true
-                        echo -e "\n\033[1;32mPUERTO EXTRA SOCKS $porta ACTIVADO!\033[0m"
+                        iptables -C INPUT -p tcp --dport "$porta" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$porta" -j ACCEPT 2>/dev/null || true
+                        echo -e "\n\033[1;32m✔ PUERTO EXTRA SOCKS $porta ACTIVADO!\033[0m"
                         sleep 2
                         ;;
                     2)
                         fun_extra_ws() {
                             screen -wipe >/dev/null 2>&1 || true
-                            screen -dmS "ws_$porta" "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:22" 2>/dev/null || true
+                            screen -dmS "ws_$porta" "${SSHPLUS_PY}" /usr/local/bin/wsproxy.py -b "0.0.0.0" -p "$porta" -t "127.0.0.1:22" -s "${HTTP_STATUS:-101}" 2>/dev/null || true
                             sleep 1
-                            if ! pgrep -f "/etc/SSHPlus/wsproxy.py $porta" >/dev/null 2>&1; then
-                                nohup "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$porta" "127.0.0.1:22" >/dev/null 2>&1 &
+                            if ! pgrep -f "wsproxy.py.*$porta" >/dev/null 2>&1; then
+                                nohup "${SSHPLUS_PY}" /usr/local/bin/wsproxy.py -b "0.0.0.0" -p "$porta" -t "127.0.0.1:22" -s "${HTTP_STATUS:-101}" >/dev/null 2>&1 &
                             fi
                         }
                         echo -e "\n\033[1;32mINICIANDO PUERTO EXTRA WEBSOCKET $porta...\033[0m"
                         fun_bar 'fun_extra_ws'
                         ufw allow "$porta"/tcp 2>/dev/null || true
-                        echo -e "\n\033[1;32mPUERTO EXTRA WEBSOCKET $porta ACTIVADO!\033[0m"
+                        iptables -C INPUT -p tcp --dport "$porta" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$porta" -j ACCEPT 2>/dev/null || true
+                        echo -e "\n\033[1;32m✔ PUERTO EXTRA WEBSOCKET $porta ACTIVADO!\033[0m"
                         sleep 2
                         ;;
                     3)
@@ -1472,137 +1517,253 @@ fun_socks() {
                         echo -e "\n\033[1;32mINICIANDO PUERTO EXTRA OPENVPN $porta...\033[0m"
                         fun_bar 'fun_extra_ovpn'
                         ufw allow "$porta"/tcp 2>/dev/null || true
-                        echo -e "\n\033[1;32mPUERTO EXTRA OPENVPN $porta ACTIVADO!\033[0m"
+                        iptables -C INPUT -p tcp --dport "$porta" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$porta" -j ACCEPT 2>/dev/null || true
+                        echo -e "\n\033[1;32m✔ PUERTO EXTRA OPENVPN $porta ACTIVADO!\033[0m"
                         sleep 2
                         ;;
                 esac
                 ;;
-            5)
-                if pgrep -f '/etc/SSHPlus/proxy.py' >/dev/null 2>&1; then
-                    clear
-                    local msgsocks; msgsocks=$(cat /etc/SSHPlus/proxy.py 2>/dev/null | grep -E "MSG =" | awk -F = '{print $2}' | tr -d " '\"")
-                    echo -e "\E[44;1;37m             PROXY SOCKS              \E[0m\n"
-                    echo -e "\033[1;33mSTATUS ACTUAL: \033[1;32m${msgsocks:-HTTP CONEXION}\033[0m\n"
-                    echo -ne "\033[1;32mINFORME SU NUEVO MENSAJE DE ESTADO\033[1;31m:\033[1;37m "
-                    read -r msgg
-                    [[ -z "$msgg" ]] && msgg="HTTP CONEXION"
 
-                    echo -e "\n\033[1;31m[\033[1;36m01\033[1;31m]\033[1;33m AZUL"
-                    echo -e "\033[1;31m[\033[1;36m02\033[1;31m]\033[1;33m VERDE"
-                    echo -e "\033[1;31m[\033[1;36m03\033[1;31m]\033[1;33m ROJO"
-                    echo -e "\033[1;31m[\033[1;36m04\033[1;31m]\033[1;33m AMARILLO"
-                    echo -e "\033[1;31m[\033[1;36m05\033[1;31m]\033[1;33m ROSA"
-                    echo -e "\033[1;31m[\033[1;36m06\033[1;31m]\033[1;33m CYAN"
-                    echo -e "\033[1;31m[\033[1;36m07\033[1;31m]\033[1;33m NARANJA"
-                    echo -e "\033[1;31m[\033[1;36m08\033[1;31m]\033[1;33m PÚRPURA"
-                    echo -e "\033[1;31m[\033[1;36m09\033[1;31m]\033[1;33m NEGRO"
-                    echo -e "\033[1;31m[\033[1;36m10\033[1;31m]\033[1;33m SIN COLOR"
-                    echo ""
-                    echo -ne "\033[1;32m¿QUÉ COLOR DESEA ?\033[1;37m: "
-                    read -r sts_cor
-                    local cor_sts
-                    case "$sts_cor" in
-                        1|01) cor_sts="blue" ;;
-                        2|02) cor_sts="green" ;;
-                        3|03) cor_sts="red" ;;
-                        4|04) cor_sts="yellow" ;;
-                        5|05) cor_sts="#F535AA" ;;
-                        6|06) cor_sts="cyan" ;;
-                        7|07) cor_sts="#FF7F00" ;;
-                        8|08) cor_sts="#9932CD" ;;
-                        9|09) cor_sts="black" ;;
-                        10) cor_sts="null" ;;
-                        *) cor_sts="green" ;;
-                    esac
+            7)
+                clear
+                echo -e "\E[44;1;37m        PERSONALIZAR MINIBANNER Y COLOR HTML        \E[0m\n"
+                echo -e "\033[1;33mMinibanner actual: \033[1;32m${BANNER_MSG}\033[0m\n"
+                echo -ne "\033[1;32mNuevo texto para minibanner\033[1;37m: "
+                read -r new_msg
+                [[ -z "$new_msg" ]] && new_msg="${BANNER_MSG:-HTTP CONEXION}"
 
-                    sed -i "s/MSG = .*/MSG = '$msgg'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
-                    sed -i "s/COR = .*/COR = '<font color=\"$cor_sts\">'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
+                echo -e "\n\033[1;32mSELECCIONE EL COLOR HTML:\033[0m"
+                echo -e "  [1] Cyan (#00E5FF)    [2] Verde (#00E676)    [3] Amarillo (#FFD600)"
+                echo -e "  [4] Azul (#2979FF)    [5] Rojo (#FF1744)     [6] Rosa (#F535AA)"
+                echo -e "  [7] Naranja (#FF9100) [8] Púrpura (#D500F9)  [9] Sin Color (Plano)"
+                echo -ne "\033[1;33mSeleccione opción [1-9] (default 1): \033[0m"
+                read -r c_pick
+                local c_name="cyan"
+                case "$c_pick" in
+                    1|01) c_name="cyan" ;;
+                    2|02) c_name="green" ;;
+                    3|03) c_name="yellow" ;;
+                    4|04) c_name="blue" ;;
+                    5|05) c_name="red" ;;
+                    6|06) c_name="#F535AA" ;;
+                    7|07) c_name="#FF9100" ;;
+                    8|08) c_name="#D500F9" ;;
+                    9|09) c_name="none" ;;
+                    *) c_name="cyan" ;;
+                esac
 
-                    fun_restart_sks() {
-                        local _old_p; _old_p=$(get_proc_ports 'proxy\.py')
+                local fmt_b=""
+                if [[ "$c_name" != "none" ]]; then
+                    fmt_b="<font color=\"${c_name}\"><b>${new_msg}</b></font>"
+                else
+                    fmt_b="${new_msg}"
+                fi
+
+                sed -i "s|^BANNER_MSG=.*|BANNER_MSG=\"$fmt_b\"|g" "$conf" 2>/dev/null || true
+                sed -i "s|^BANNER_COLOR=.*|BANNER_COLOR=\"$c_name\"|g" "$conf" 2>/dev/null || true
+                [[ -f /etc/crisdev/ws-c.conf ]] && sed -i "s|^BANNER_MSG=.*|BANNER_MSG=\"$fmt_b\"|g" /etc/crisdev/ws-c.conf 2>/dev/null || true
+                [[ -f /etc/crisdev/ws-python.conf ]] && sed -i "s|^BANNER_MSG=.*|BANNER_MSG=\"$fmt_b\"|g" /etc/crisdev/ws-python.conf 2>/dev/null || true
+
+                # Sincronizar scripts legacy
+                if [[ -f /etc/SSHPlus/proxy.py ]]; then
+                    sed -i "s/MSG = .*/MSG = '$new_msg'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
+                    [[ "$c_name" != "none" ]] && sed -i "s/COR = .*/COR = '<font color=\"$c_name\">'/g" /etc/SSHPlus/proxy.py 2>/dev/null || true
+                fi
+                if [[ -f /etc/SSHPlus/wsproxy.py ]]; then
+                    sed -i "s/MSG = .*/MSG = '$new_msg'/g" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+                    [[ "$c_name" != "none" ]] && sed -i "s/COR = .*/COR = '<font color=\"$c_name\">'/g" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+                fi
+
+                # Recargar servicios activos si están corriendo
+                systemctl restart crisdev-ws-c.service 2>/dev/null || true
+                systemctl restart crisdev-ws-python.service 2>/dev/null || true
+
+                echo -e "\n\033[1;32m✔ Minibanner actualizado exitosamente a: '$new_msg' (Color: $c_name)\033[0m"
+                sleep 2
+                ;;
+
+            8)
+                clear
+                echo -e "\E[44;1;37m        CAMBIAR CÓDIGO DE RESPUESTA HTTP        \E[0m\n"
+                echo -e "\033[1;33mCódigo HTTP actual: \033[1;32mHTTP ${HTTP_STATUS}\033[0m\n"
+                echo -e "  [1] HTTP/1.1 101 Switching Protocols [Estándar Apps VPN / Conexión]"
+                echo -e "  [2] HTTP/1.1 200 OK [Cloudflare CDN / HTTP Fronting]"
+                echo -ne "\n\033[1;33mSeleccione código [1-2] (default 1): \033[0m"
+                read -r sc_opt
+                local n_code="101"
+                [[ "$sc_opt" == "2" ]] && n_code="200"
+
+                sed -i "s/^HTTP_STATUS=.*/HTTP_STATUS=$n_code/g" "$conf" 2>/dev/null || true
+                [[ -f /etc/crisdev/ws-c.conf ]] && sed -i "s/^HTTP_STATUS=.*/HTTP_STATUS=$n_code/g" /etc/crisdev/ws-c.conf 2>/dev/null || true
+                [[ -f /etc/crisdev/ws-python.conf ]] && sed -i "s/^HTTP_STATUS=.*/HTTP_STATUS=$n_code/g" /etc/crisdev/ws-python.conf 2>/dev/null || true
+
+                systemctl restart crisdev-ws-c.service 2>/dev/null || true
+                systemctl restart crisdev-ws-python.service 2>/dev/null || true
+
+                echo -e "\n\033[1;32m✔ Código de respuesta actualizado a HTTP $n_code\033[0m"
+                sleep 2
+                ;;
+
+            9)
+                clear
+                echo -e "\E[44;1;37m        CAMBIAR DESTINO LOCAL DEL BACKEND       \E[0m\n"
+                echo -e "\033[1;33mDestino actual: \033[1;32m${TARGET_HOST}:${TARGET_PORT}\033[0m\n"
+                echo -e "  [1] OpenSSH Directo (Puerto 22)"
+                local drp_p; drp_p=$(get_proc_ports 'dropbear')
+                if [[ -n "$drp_p" ]]; then
+                    echo -e "  [2] Dropbear SSH (Puertos detectados: $drp_p)"
+                else
+                    echo -e "  [2] Dropbear SSH (Puerto 90 / 110 / 143)"
+                fi
+                echo -e "  [3] Destino Personalizado (IP:Puerto manual)"
+                echo -ne "\n\033[1;33mSeleccione opción [1-3]: \033[0m"
+                read -r dst_c
+                local new_th="127.0.0.1" new_tp="22"
+                case "$dst_c" in
+                    2)
+                        [[ -n "$drp_p" ]] && new_tp=$(echo "$drp_p" | awk '{print $1}') || new_tp="90"
+                        ;;
+                    3)
+                        echo -ne "\033[1;37mIngrese IP destino: \033[0m"
+                        read -r manual_h
+                        [[ -n "$manual_h" ]] && new_th="$manual_h"
+                        echo -ne "\033[1;37mIngrese Puerto destino: \033[0m"
+                        read -r manual_p
+                        [[ -n "$manual_p" && "$manual_p" =~ ^[0-9]+$ ]] && new_tp="$manual_p"
+                        ;;
+                    *)
+                        new_tp="22"
+                        ;;
+                esac
+
+                sed -i "s/^TARGET_HOST=.*/TARGET_HOST=$new_th/g" "$conf" 2>/dev/null || true
+                sed -i "s/^TARGET_PORT=.*/TARGET_PORT=$new_tp/g" "$conf" 2>/dev/null || true
+                [[ -f /etc/crisdev/ws-c.conf ]] && {
+                    sed -i "s/^TARGET_HOST=.*/TARGET_HOST=$new_th/g" /etc/crisdev/ws-c.conf 2>/dev/null || true
+                    sed -i "s/^TARGET_PORT=.*/TARGET_PORT=$new_tp/g" /etc/crisdev/ws-c.conf 2>/dev/null || true
+                }
+                [[ -f /etc/crisdev/ws-python.conf ]] && {
+                    sed -i "s/^TARGET_HOST=.*/TARGET_HOST=$new_th/g" /etc/crisdev/ws-python.conf 2>/dev/null || true
+                    sed -i "s/^TARGET_PORT=.*/TARGET_PORT=$new_tp/g" /etc/crisdev/ws-python.conf 2>/dev/null || true
+                }
+
+                systemctl restart crisdev-ws-c.service 2>/dev/null || true
+                systemctl restart crisdev-ws-python.service 2>/dev/null || true
+
+                echo -e "\n\033[1;32m✔ Destino local actualizado a ${new_th}:${new_tp}\033[0m"
+                sleep 2
+                ;;
+
+            10)
+                clear
+                echo -e "\E[44;1;37m          PROBAR RESPUESTA HTTP EN VIVO (CURL)          \E[0m\n"
+                local all_ws_ports=()
+                local c_pts; c_pts=$(get_proc_ports 'wsproxy-c')
+                local py_pts; py_pts=$(get_proc_ports 'wsproxy\.py')
+                local sk_pts; sk_pts=$(get_proc_ports 'proxy\.py')
+
+                for _p in $c_pts $py_pts $sk_pts; do
+                    [[ "$_p" =~ ^[0-9]+$ ]] && all_ws_ports+=("$_p")
+                done
+
+                if [[ ${#all_ws_ports[@]} -eq 0 ]]; then
+                    echo -e "\033[1;31m✖ No se detectaron servicios WebSocket o SOCKS escuchando actualmente.\033[0m"
+                else
+                    for p in "${all_ws_ports[@]}"; do
+                        echo -e "\033[1;33m[TEST] Consultando http://127.0.0.1:$p/ ...\033[0m"
+                        curl -i -s -N --max-time 3 "http://127.0.0.1:$p/" | head -10 || true
+                        echo -e "\033[1;37m------------------------------------------------------------\033[0m"
+                    done
+                    echo -e "\033[1;32m✔ Si observas 'HTTP/1.1 101' o 'HTTP/1.1 200', el proxy responde perfectamente.\033[0m"
+                fi
+                echo ""
+                read -n1 -r -p "Presione cualquier tecla para continuar..."
+                ;;
+
+            11)
+                clear
+                echo -e "\E[44;1;37m         LOGS EN TIEMPO REAL (WEBSOCKET / SOCKS)         \E[0m\n"
+                journalctl -u crisdev-ws-c.service -u crisdev-ws-python.service -n 35 --no-pager 2>/dev/null || true
+                echo ""
+                read -n1 -r -p "Presione cualquier tecla para volver..."
+                ;;
+
+            12)
+                clear
+                echo -e "\E[41;1;37m             DETENER / APAGAR UN SERVICIO             \E[0m\n"
+                echo -e "  [1] Apagar WebSocket Python v4.5"
+                echo -e "  [2] Apagar WebSocket Nativo C"
+                echo -e "  [3] Apagar SOCKS SSH (TCP 22)"
+                echo -e "  [4] Apagar SOCKS OpenVPN (TCP 1194)"
+                echo -e "  [5] Apagar TODOS los Proxies y WebSockets"
+                echo -e "  [0] Volver (sin cambios)"
+                echo -ne "\n\033[1;33mSeleccione opción [0-5]: \033[0m"
+                read -r stop_opt
+                case "$stop_opt" in
+                    1)
+                        systemctl stop crisdev-ws-python.service 2>/dev/null || true
+                        systemctl disable crisdev-ws-python.service 2>/dev/null || true
+                        pkill -9 -f 'wsproxy.py' 2>/dev/null || true
+                        echo -e "\n\033[1;32m✔ WebSocket Python detenido y deshabilitado.\033[0m"
+                        sleep 1.5
+                        ;;
+                    2)
+                        systemctl stop crisdev-ws-c.service 2>/dev/null || true
+                        systemctl disable crisdev-ws-c.service 2>/dev/null || true
+                        pkill -9 -x wsproxy-c 2>/dev/null || true
+                        echo -e "\n\033[1;32m✔ WebSocket Nativo C detenido y deshabilitado.\033[0m"
+                        sleep 1.5
+                        ;;
+                    3)
                         for pidproxy in $(screen -ls 2>/dev/null | grep '\.proxy' | awk '{print $1}'); do
                             screen -r -S "$pidproxy" -X quit 2>/dev/null || true
                         done
-                        screen -wipe >/dev/null 2>&1 || true
-                        sleep 1
-                        for p in $_old_p; do
-                            [[ "$p" =~ ^[0-9]+$ ]] && screen -dmS "proxy" "${SSHPLUS_PY}" /etc/SSHPlus/proxy.py "$p" 2>/dev/null || true
+                        for _k in $(pgrep -f '/etc/SSHPlus/proxy.py' 2>/dev/null); do
+                            kill -9 "$_k" 2>/dev/null || true
                         done
-                    }
-                    echo -e "\n\033[1;32mAPLICANDO NUEVO ESTADO AL PROXY SOCKS...\033[0m"
-                    fun_bar 'fun_restart_sks'
-                    echo -e "\n\033[1;32mMENSAJE ACTUALIZADO A: '$msgg' (Color: $cor_sts)\033[0m"
-                    sleep 2
-                else
-                    echo -e "\n\033[1;31mActive SOCKS SSH primero."
-                    sleep 2
-                fi
-                ;;
-            6)
-                if pgrep -f '/etc/SSHPlus/wsproxy.py' >/dev/null 2>&1; then
-                    clear
-                    local msgws; msgws=$(cat /etc/SSHPlus/wsproxy.py 2>/dev/null | grep -E "MSG =" | awk -F = '{print $2}' | tr -d " '\"")
-                    echo -e "\E[44;1;37m         MODIFICAR ESTADO DEL WEBSOCKET     \E[0m\n"
-                    echo -e "\033[1;33mSTATUS ACTUAL: \033[1;32m${msgws:-HTTP CONEXION WS}\033[0m\n"
-                    echo -ne "\033[1;32mINFORME SU NUEVO MENSAJE WEBSOCKET\033[1;31m:\033[1;37m "
-                    read -r msgg
-                    [[ -z "$msgg" ]] && msgg="HTTP CONEXION WS"
-
-                    echo -e "\n\033[1;31m[\033[1;36m01\033[1;31m]\033[1;33m AZUL"
-                    echo -e "\033[1;31m[\033[1;36m02\033[1;31m]\033[1;33m VERDE"
-                    echo -e "\033[1;31m[\033[1;36m03\033[1;31m]\033[1;33m ROJO"
-                    echo -e "\033[1;31m[\033[1;36m04\033[1;31m]\033[1;33m AMARILLO"
-                    echo -e "\033[1;31m[\033[1;36m05\033[1;31m]\033[1;33m ROSA"
-                    echo -e "\033[1;31m[\033[1;36m06\033[1;31m]\033[1;33m CYAN"
-                    echo -e "\033[1;31m[\033[1;36m07\033[1;31m]\033[1;33m NARANJA"
-                    echo -e "\033[1;31m[\033[1;36m08\033[1;31m]\033[1;33m PÚRPURA"
-                    echo -e "\033[1;31m[\033[1;36m09\033[1;31m]\033[1;33m NEGRO"
-                    echo -e "\033[1;31m[\033[1;36m10\033[1;31m]\033[1;33m SIN COLOR"
-                    echo ""
-                    echo -ne "\033[1;32m¿QUÉ COLOR DESEA ?\033[1;37m: "
-                    read -r sts_cor
-                    local cor_sts
-                    case "$sts_cor" in
-                        1|01) cor_sts="blue" ;;
-                        2|02) cor_sts="green" ;;
-                        3|03) cor_sts="red" ;;
-                        4|04) cor_sts="yellow" ;;
-                        5|05) cor_sts="#F535AA" ;;
-                        6|06) cor_sts="cyan" ;;
-                        7|07) cor_sts="#FF7F00" ;;
-                        8|08) cor_sts="#9932CD" ;;
-                        9|09) cor_sts="black" ;;
-                        10) cor_sts="null" ;;
-                        *) cor_sts="green" ;;
-                    esac
-
-                    sed -i "s/MSG = .*/MSG = '$msgg'/g" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
-                    sed -i "s/COR = .*/COR = '<font color=\"$cor_sts\">'/g" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
-
-                    fun_restart_ws() {
-                        local _old_p; _old_p=$(get_proc_ports 'wsproxy\.py')
-                        for pidproxy in $(screen -ls 2>/dev/null | grep '\.ws' | awk '{print $1}'); do
+                        screen -wipe >/dev/null 2>&1 || true
+                        echo -e "\n\033[1;32m✔ SOCKS SSH detenido.\033[0m"
+                        sleep 1.5
+                        ;;
+                    4)
+                        for pidproxy in $(screen -ls 2>/dev/null | grep '\.ovpnproxy' | awk '{print $1}'); do
                             screen -r -S "$pidproxy" -X quit 2>/dev/null || true
                         done
-                        screen -wipe >/dev/null 2>&1 || true
-                        sleep 1
-                        for p in $_old_p; do
-                            [[ "$p" =~ ^[0-9]+$ ]] && screen -dmS "ws" "${SSHPLUS_PY}" /etc/SSHPlus/wsproxy.py "$p" 2>/dev/null || true
+                        for _k in $(pgrep -f 'proxy.py.*1194' 2>/dev/null); do
+                            kill -9 "$_k" 2>/dev/null || true
                         done
-                    }
-                    echo -e "\n\033[1;32mAPLICANDO NUEVO ESTADO AL WEBSOCKET...\033[0m"
-                    fun_bar 'fun_restart_ws'
-                    echo -e "\n\033[1;32mMENSAJE ACTUALIZADO A: '$msgg' (Color: $cor_sts)\033[0m"
-                    sleep 2
-                else
-                    echo -e "\n\033[1;31mActive WebSocket primero."
-                    sleep 2
-                fi
+                        screen -wipe >/dev/null 2>&1 || true
+                        echo -e "\n\033[1;32m✔ SOCKS OpenVPN detenido.\033[0m"
+                        sleep 1.5
+                        ;;
+                    5)
+                        systemctl stop crisdev-ws-c.service crisdev-ws-python.service sshplus-ws.service 2>/dev/null || true
+                        systemctl disable crisdev-ws-c.service crisdev-ws-python.service 2>/dev/null || true
+                        pkill -9 -x wsproxy-c 2>/dev/null || true
+                        pkill -9 -f 'wsproxy.py' 2>/dev/null || true
+                        pkill -9 -f '/etc/SSHPlus/proxy.py' 2>/dev/null || true
+                        for _s in $(screen -ls 2>/dev/null | grep -E '\.proxy|\.ws|\.ovpnproxy' | awk '{print $1}'); do
+                            screen -r -S "$_s" -X quit 2>/dev/null || true
+                        done
+                        screen -wipe >/dev/null 2>&1 || true
+                        echo -e "\n\033[1;32m✔ Todos los servicios WebSocket y SOCKS han sido apagados.\033[0m"
+                        sleep 1.5
+                        ;;
+                esac
                 ;;
-            0) return ;;
         esac
     done
 }
+
+# Aliases de compatibilidad total
+menu_websocket() {
+    menu_proxies_websocket "$@"
+}
+
+fun_socks() {
+    menu_proxies_websocket "$@"
+}
+
 
 # 3. SSL TUNNEL (STUNNEL4)
 inst_ssl() {
@@ -4357,7 +4518,10 @@ menu_protocolos() {
         # Recopilar servicios y puertos con servicio habilitado
         local active_services=()
         [[ -n "$ssh_p" ]] && active_services+=("🔌 OpenSSH Directo      ➔ Puerto(s): ${C_NUM}${ssh_p}${NC} ${C_SUB}(TCP)${NC}")
-        [[ -n "$ws_p" ]] && active_services+=("🔌 WebSocket (WS/HTTP)  ➔ Puerto(s): ${C_NUM}${ws_p}${NC} ${C_SUB}(TCP) [${ws_tag}]${NC}")
+        local _ws_c_dsp; _ws_c_dsp=$(get_proc_ports 'wsproxy-c')
+        local _ws_py_dsp; _ws_py_dsp=$(get_proc_ports 'wsproxy\.py')
+        [[ -n "$_ws_c_dsp" ]] && active_services+=("🔌 WebSocket Nativo C   ➔ Puerto(s): ${C_NUM}${_ws_c_dsp}${NC} ${C_SUB}(TCP) [epoll 16k conns]${NC}")
+        [[ -n "$_ws_py_dsp" ]] && active_services+=("🔌 WebSocket Python v4.5 ➔ Puerto(s): ${C_NUM}${_ws_py_dsp}${NC} ${C_SUB}(TCP) [Zero-Reconnect]${NC}")
         [[ -n "$sks_p" ]] && active_services+=("🔌 Proxy SOCKS TCP      ➔ Puerto(s): ${C_NUM}${sks_p}${NC} ${C_SUB}(TCP)${NC}")
         [[ -n "$ssl_p" ]] && active_services+=("🔌 SSL / Stunnel        ➔ Puerto(s): ${C_NUM}${ssl_p}${NC} ${C_SUB}(TCP/TLS)${NC}")
         [[ -n "$drp_p" ]] && active_services+=("🔌 Dropbear SSH         ➔ Puerto(s): ${C_NUM}${drp_p}${NC} ${C_SUB}(TCP)${NC}")
@@ -4429,8 +4593,11 @@ menu_protocolos() {
         [[ $is_udpc_active -eq 1 ]] && sts_udpc="\033[1;32m●\033[0m" || sts_udpc="\033[1;31m○\033[0m"
         [[ $is_ziv_active -eq 1 ]] && sts_ziv="\033[1;32m●\033[0m" || sts_ziv="\033[1;31m○\033[0m"
 
+        local sts_ws_any="\033[1;31m○\033[0m"
+        [[ -n "$_ws_c_dsp" || -n "$_ws_py_dsp" || -n "$ws_p" || -n "$sks_p" ]] && sts_ws_any="\033[1;32m●\033[0m"
+
         printf "  ${C_BRACKET}[${C_NUM}01${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}11${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "OPENSSH" "$sts_ssh" "OPENVPN" "$sts_ovpn"
-        printf "  ${C_BRACKET}[${C_NUM}02${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}12${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "PROXY SOCKS (TCP)" "$sts_socks" "WEBSOCKET (WS/CDN)" "$sts_ws"
+        printf "  ${C_BRACKET}[${C_NUM}02${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}12${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "SOCKS & WEBSOCKET" "$sts_ws_any" "GESTIÓN PUERTOS WS" "$sts_ws_any"
         printf "  ${C_BRACKET}[${C_NUM}03${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}13${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "SSL TUNNEL" "$sts_ssl" "SSLH MULTIPLEX" "$sts_sslh"
         printf "  ${C_BRACKET}[${C_NUM}04${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}14${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "DROPBEAR" "$sts_drop" "SQUID PROXY" "$sts_squid"
         printf "  ${C_BRACKET}[${C_NUM}05${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}15${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "$v2_title" "$sts_v2ray" "CHISEL" "$sts_chisel"
@@ -4447,7 +4614,7 @@ menu_protocolos() {
 
         case "$proto_opt" in
             1|01) fun_openssh ;;
-            2|02) fun_socks ;;
+            2|02) menu_proxies_websocket ;;
             3|03) inst_ssl ;;
             4|04) fun_drop ;;
             5|05)
@@ -4474,7 +4641,7 @@ menu_protocolos() {
                 apt-get install -y openvpn 2>/dev/null || true
                 pause
                 ;;
-            12) menu_websocket ;;
+            12) menu_proxies_websocket ;;
             13)
                 clear
                 echo -e "\033[1;32mSSLH Multiplex\033[0m"
