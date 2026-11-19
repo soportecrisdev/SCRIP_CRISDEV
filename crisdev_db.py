@@ -981,27 +981,74 @@ def get_user_stats(db_file=DB_PATH):
 # DEMONIO CHECKUSER & VALIDADOR ATOKEN (COMPATIBLE CON HTTP CONEXIÓN)
 # ═════════════════════════════════════════════════════════════════════
 
-def register_device_token(token, days=30, limit=1, hwid_full=None, username=None, db_file=DB_PATH):
-    """Registra o renueva un token de teléfono de 16 caracteres (aToken)."""
-    clean_token = token.replace("TK-", "").replace("-", "").strip().upper()
-    user_name = username or f"Token_{clean_token}"
+def _sanitize_token_username(raw_name, clean_token):
+    """Convierte cualquier nombre libre en un username Linux/SQLite seguro sin romper el token."""
+    import re
+    import unicodedata
+    if not raw_name or not str(raw_name).strip():
+        return f"Token_{clean_token}"
+    # Quitar acentos / diacríticos
+    norm = unicodedata.normalize("NFKD", str(raw_name).strip())
+    ascii_only = norm.encode("ascii", "ignore").decode("ascii")
+    # Reemplazar espacios y caracteres no válidos por '_'
+    safe = re.sub(r"[^A-Za-z0-9_]+", "_", ascii_only).strip("_")
+    if not safe:
+        return f"Token_{clean_token}"
+    # Linux useradd requiere iniciar con letra o '_'
+    if not safe[0].isalpha():
+        safe = f"tk_{safe}"
+    return safe[:24]
+
+
+def register_device_token(token, days=30, limit=1, hwid_full=None, username=None, notes=None, db_file=DB_PATH):
+    """Registra o renueva un token de teléfono de 16 caracteres (aToken) con nombre opcional seguro."""
+    clean_token = token.replace("TK-", "").replace("-", "").replace(" ", "").strip().upper()
+    raw_label = (username or "").strip()
+    note_text = notes if notes is not None else (raw_label if raw_label else None)
     date_formatted, expires_at_ms = _calc_expiration(days)
-    
+
     with db_lock:
         conn = get_db_connection(db_file)
         cur = conn.cursor()
+
+        # Si el token ya existía y el admin dejó el nombre vacío, conservar el username previo
+        existing_tk = cur.execute(
+            "SELECT username FROM device_tokens WHERE token = ?", (clean_token,)
+        ).fetchone()
+
+        if raw_label:
+            candidate = _sanitize_token_username(raw_label, clean_token)
+        elif existing_tk and existing_tk["username"]:
+            candidate = existing_tk["username"]
+        else:
+            candidate = f"Token_{clean_token}"
+
+        # Evitar colisión si el username ya pertenece a otro usuario/token distinto
+        owner = cur.execute(
+            "SELECT username, user_type, hwid FROM users WHERE username = ?", (candidate,)
+        ).fetchone()
+        if owner and (owner["hwid"] or "").upper() != clean_token:
+            suffix = clean_token[-4:] if len(clean_token) >= 4 else clean_token
+            candidate = f"{candidate[:19]}_{suffix}"
+
+        user_name = candidate
+
         # 1. Crear / actualizar en users
         cur.execute("""
-            INSERT INTO users (username, password_plain, user_type, hwid, limit_connections, expiration_date, expires_at, status)
-            VALUES (?, ?, 'TOKEN', ?, ?, ?, ?, 'active')
+            INSERT INTO users (username, password_plain, user_type, hwid, limit_connections, expiration_date, expires_at, status, notes)
+            VALUES (?, ?, 'TOKEN', ?, ?, ?, ?, 'active', ?)
             ON CONFLICT(username) DO UPDATE SET
+                password_plain=excluded.password_plain,
+                hwid=excluded.hwid,
+                limit_connections=excluded.limit_connections,
                 expiration_date=excluded.expiration_date,
                 expires_at=excluded.expires_at,
                 status='active',
+                notes=COALESCE(excluded.notes, users.notes),
                 updated_at=CURRENT_TIMESTAMP;
-        """, (user_name, clean_token, clean_token, int(limit), date_formatted, expires_at_ms))
-        
-        # 2. Registrar en device_tokens
+        """, (user_name, clean_token, clean_token, int(limit), date_formatted, expires_at_ms, note_text))
+
+        # 2. Registrar en device_tokens (la llave de autenticación siempre es 'token')
         cur.execute("""
             INSERT INTO device_tokens (token, hwid_full, username, expiration_date, expires_at, limit_connections, status)
             VALUES (?, ?, ?, ?, ?, ?, 'active')
@@ -1015,12 +1062,13 @@ def register_device_token(token, days=30, limit=1, hwid_full=None, username=None
         """, (clean_token, hwid_full, user_name, date_formatted, expires_at_ms, int(limit)))
         conn.commit()
         conn.close()
-        
+
     return {
         "success": True,
         "token": clean_token,
         "formatted_token": f"TK-{clean_token[:4]}-{clean_token[4:8]}-{clean_token[8:12]}-{clean_token[12:16]}" if len(clean_token) == 16 else f"TK-{clean_token}",
         "username": user_name,
+        "label": raw_label or user_name,
         "days": days,
         "expiration_date": date_formatted,
         "expires_at": expires_at_ms

@@ -4298,17 +4298,28 @@ crear_usuario() {
             [[ -z "$raw_token" ]] && return
 
             local clean_tk; clean_tk=$(echo "$raw_token" | sed 's/TK-//g; s/-//g; s/ //g' | tr 'a-z' 'A-Z')
-            local u_token="Token_${clean_tk}"
+            [[ -z "$clean_tk" ]] && return
+
+            echo -ne "${C_TEXT}Nombre / Etiqueta del cliente (opcional, Enter = automático): ${C_NUM}"
+            read -r raw_label
 
             echo -ne "${C_TEXT}Días de duración (default 30): ${C_NUM}"
             read -r days
             [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
 
-            # Registrar en SQLite
-            $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.register_device_token('$clean_tk', days=$days, limit=1)" 2>/dev/null || true
+            # Registrar en SQLite (sanitiza el nombre y resuelve colisiones sin afectar el token)
+            local u_token
+            u_token=$(TK_VAL="$clean_tk" TK_NAME="$raw_label" TK_DAYS="$days" $SSHPLUS_PY -c "import os, sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; r = crisdev_db.register_device_token(os.environ['TK_VAL'], days=int(os.environ['TK_DAYS']), limit=1, username=os.environ.get('TK_NAME') or None); print(r.get('username', ''))" 2>/dev/null || true)
+            if [[ -z "$u_token" ]]; then
+                u_token="Token_${clean_tk}"
+            fi
 
             local exp_date; exp_date=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
-            useradd -M -s /bin/false -e "$exp_date" "$u_token" >/dev/null 2>&1 || true
+            if id "$u_token" >/dev/null 2>&1; then
+                chage -E "$exp_date" "$u_token" >/dev/null 2>&1 || true
+            else
+                useradd -M -s /bin/false -e "$exp_date" "$u_token" >/dev/null 2>&1 || useradd -M -s /bin/false "$u_token" >/dev/null 2>&1 || true
+            fi
             echo "$u_token:$clean_tk" | chpasswd 2>/dev/null || true
 
             mkdir -p /etc/SSHPlus/senha /root
@@ -4317,6 +4328,8 @@ crear_usuario() {
             echo "$u_token 1" >> /root/usuarios.db
             sed -i "/^$u_token:/d" "$USER_DATABASE" 2>/dev/null || true
             echo "$u_token:1:$exp_date:$clean_tk" >> "$USER_DATABASE"
+
+            hyst_sync_users >/dev/null 2>&1 || true
 
             mostrar_ficha_usuario "$u_token" "$clean_tk" "$days" "1" "Token Celular (aToken)"
             pause
