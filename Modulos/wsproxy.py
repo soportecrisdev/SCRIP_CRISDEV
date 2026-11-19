@@ -232,16 +232,19 @@ class EpollWsProxy:
             session.state = TunnelSession.STATE_STREAMING
             return
 
-        # 2. Acumular payloads HTTP estándar fragmentados hasta ver \r\n\r\n o \n\n
+        # 2. Acumular solo si el primer paquete llegó partido sin siquiera un salto de línea
+        #    o si es un handshake RFC 6455 (Upgrade: websocket) incompleto sin \r\n\r\n.
+        #    Payloads ofuscados o sin doble [crlf] responden 101 al instante sin quedarse esperando.
         session.hs_buf.extend(raw_bytes)
         if len(session.hs_buf) > MAX_HANDSHAKE_BYTES:
             self._close_session(session)
             return
 
         if b"\r\n\r\n" not in session.hs_buf and b"\n\n" not in session.hs_buf:
-            first_word = session.hs_buf[:12].upper()
-            http_methods = (b"GET ", b"POST ", b"HEAD ", b"PUT ", b"CONNECT ", b"OPTIONS ", b"PATCH ", b"DELETE ")
-            if any(first_word.startswith(m) for m in http_methods):
+            if b"\n" not in session.hs_buf:
+                return
+            lower_peek = session.hs_buf.lower()
+            if b"upgrade: websocket" in lower_peek and b"sec-websocket-key" not in lower_peek:
                 return
 
         full_raw = bytes(session.hs_buf)

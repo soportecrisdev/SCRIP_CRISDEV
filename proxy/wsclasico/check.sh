@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# DIAGNÓSTICO EN VIVO — WEBSOCKET CLÁSICO PYTHON v4.6
+# DIAGNÓSTICO EN VIVO — WEBSOCKET CLÁSICO PYTHON v4.7
 # Ubicación: proxy/wsclasico/check.sh
 # ==============================================================================
 
@@ -15,7 +15,7 @@ NC='\033[0m'
 
 clear
 echo -e "${C_CYAN}============================================================${NC}"
-echo -e "${C_CYAN}     DIAGNÓSTICO EN VIVO — WEBSOCKET PYTHON v4.6${NC}"
+echo -e "${C_CYAN}     DIAGNÓSTICO EN VIVO — WEBSOCKET PYTHON v4.7${NC}"
 echo -e "${C_CYAN}============================================================${NC}"
 
 PIDS=$(pgrep -f 'wsproxy\.py' 2>/dev/null | tr '\n' '|' | sed 's/|$//')

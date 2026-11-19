@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# DESINSTALADOR LIMPIO — WEBSOCKET CLÁSICO PYTHON v4.6
+# DESINSTALADOR LIMPIO — WEBSOCKET CLÁSICO PYTHON v4.7
 # Ubicación: proxy/wsclasico/desinstalar.sh
 # ==============================================================================
 
@@ -15,7 +15,7 @@ C_YELLOW='\033[1;33m'
 C_RED='\033[1;31m'
 NC='\033[0m'
 
-echo -e "${C_YELLOW}[*] Deteniendo WebSocket Clásico Python v4.6...${NC}"
+echo -e "${C_YELLOW}[*] Deteniendo WebSocket Clásico Python v4.7...${NC}"
 
 # 1. Detener y deshabilitar systemd
 systemctl stop "$SERVICE_NAME" 2>/dev/null || true

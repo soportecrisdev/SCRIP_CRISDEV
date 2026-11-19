@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# INSTALADOR COMPLETO — WEBSOCKET CLÁSICO PYTHON v4.6 (GAMING / VOIP / ANTI-MTU)
+# INSTALADOR COMPLETO — WEBSOCKET CLÁSICO PYTHON v4.7 (GAMING / VOIP / ANTI-MTU)
 # Ubicación: proxy/wsclasico/instalar.sh
 # ==============================================================================
 
@@ -92,7 +92,7 @@ EOF_SSH
 }
 
 clear
-echo -e "${C_BLUE_BG}   ACTIVAR WEBSOCKET CLÁSICO PYTHON v4.6 (INSTALACIÓN COMPLETA)   ${NC}\n"
+echo -e "${C_BLUE_BG}   ACTIVAR WEBSOCKET CLÁSICO PYTHON v4.7 (INSTALACIÓN COMPLETA)   ${NC}\n"
 echo -e "${C_YELLOW}• Motor epoll puro + Anti-CGNAT Keep-Alive (20s/5s) + Cero Timeouts${NC}"
 echo -e "${C_YELLOW}• Optimizado para Juegos (TCP_NODELAY + LowDelay) y Llamadas VoIP${NC}"
 echo -e "${C_YELLOW}• Protección Anti-Bloqueo MTU (MSS Clamping + MTU Probing)${NC}\n"
@@ -272,12 +272,12 @@ fi
 # ------------------------------------------------------------------------------
 clear
 line_bar
-echo -e "${C_CYAN}     INSTALANDO Y OPTIMIZANDO WEBSOCKET PYTHON v4.6...${NC}"
+echo -e "${C_CYAN}     INSTALANDO Y OPTIMIZANDO WEBSOCKET PYTHON v4.7...${NC}"
 line_bar
 
 mkdir -p "$CONF_DIR" /usr/local/bin /etc/SSHPlus
 
-# Copiar el núcleo v4.6 a /usr/local/bin y /etc/SSHPlus
+# Copiar el núcleo v4.7 a /usr/local/bin y /etc/SSHPlus
 if [[ -f "${SCRIPT_DIR}/wsproxy.py" ]]; then
     cp -af "${SCRIPT_DIR}/wsproxy.py" "$BIN_DEST"
     cp -af "${SCRIPT_DIR}/wsproxy.py" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
@@ -319,7 +319,7 @@ apply_gaming_voip_mtu_tuning
 # Crear servicio systemd limpio con valores resueltos (inmune a errores de expansión)
 cat > "$SERVICE_FILE" <<EOF_SVC
 [Unit]
-Description=CRISDEV Ultra-Stable WebSocket Proxy (Python v4.6 Gaming/VoIP Zero-Reconnect)
+Description=CRISDEV Ultra-Stable WebSocket Proxy (Python v4.7 Gaming/VoIP Zero-Reconnect)
 After=network-online.target ssh.service
 Wants=network-online.target ssh.service
 StartLimitIntervalSec=0
@@ -358,7 +358,7 @@ LIVE_PORT=$(get_service_ports 'wsproxy\.py')
 
 echo ""
 if [[ -n "$LIVE_PORT" ]]; then
-    echo -e "${C_GREEN}✔ WEBSOCKET CLÁSICO PYTHON v4.6 ACTIVADO EXITOSAMENTE${NC}"
+    echo -e "${C_GREEN}✔ WEBSOCKET CLÁSICO PYTHON v4.7 ACTIVADO EXITOSAMENTE${NC}"
     echo -e "${C_WHITE}  • Puerto Activo  : ${C_GREEN}${LIVE_PORT} (TCP)${NC}"
     echo -e "${C_WHITE}  • Destino Local  : ${C_CYAN}${TARGET_HOST}:${TARGET_PORT}${NC}"
     echo -e "${C_WHITE}  • Respuesta HTTP : ${C_GREEN}HTTP ${HTTP_CODE}${NC}"
@@ -376,7 +376,7 @@ if [[ -n "$LIVE_PORT" ]]; then
     echo -e "${C_YELLOW}[*] Prueba en vivo de respuesta HTTP (127.0.0.1:${WS_PORT}):${NC}"
     curl -i -s -N --max-time 2 "http://127.0.0.1:${WS_PORT}/" | head -6 || true
 else
-    echo -e "${C_RED}✖ Error al iniciar WebSocket Python v4.6. Últimos logs:${NC}"
+    echo -e "${C_RED}✖ Error al iniciar WebSocket Python v4.7. Últimos logs:${NC}"
     journalctl -u "$SERVICE_NAME" -n 12 --no-pager 2>/dev/null || true
     exit 1
 fi
