@@ -981,64 +981,161 @@ def get_user_stats(db_file=DB_PATH):
 # DEMONIO CHECKUSER & VALIDADOR ATOKEN (COMPATIBLE CON HTTP CONEXIÓN)
 # ═════════════════════════════════════════════════════════════════════
 
-def _sanitize_token_username(raw_name, clean_token):
-    """Convierte cualquier nombre libre en un username Linux/SQLite seguro sin romper el token."""
-    import re
-    import unicodedata
-    if not raw_name or not str(raw_name).strip():
-        return f"Token_{clean_token}"
-    # Quitar acentos / diacríticos
-    norm = unicodedata.normalize("NFKD", str(raw_name).strip())
-    ascii_only = norm.encode("ascii", "ignore").decode("ascii")
-    # Reemplazar espacios y caracteres no válidos por '_'
-    safe = re.sub(r"[^A-Za-z0-9_]+", "_", ascii_only).strip("_")
-    if not safe:
-        return f"Token_{clean_token}"
-    # Linux useradd requiere iniciar con letra o '_'
-    if not safe[0].isalpha():
-        safe = f"tk_{safe}"
-    return safe[:24]
+# ═════════════════════════════════════════════════════════════════════
+# CERTIFICADO / LICENCIA MAESTRA ENCRIPTADA PARA USUARIOS TOKEN (ATOKEN)
+# ═════════════════════════════════════════════════════════════════════
+
+LICENSE_FILE = "/etc/crisdev/httpconexion.lic"
+_HC_LICENSE_SEED = b"HTTP_CONEXION::CRISDEV::ATOKEN::MASTER_CERT_V1"
+_HC_CERT_ENC_KEY = hashlib.sha256(b"CRISDEV::CERT_WRAPPER::HTTP_CONEXION::2026").digest()
+_HC_CERT_MAC_KEY = hashlib.sha256(b"CRISDEV::CERT_HMAC::HTTP_CONEXION::2026").digest()
 
 
-def register_device_token(token, days=30, limit=1, hwid_full=None, username=None, notes=None, db_file=DB_PATH):
-    """Registra o renueva un token de teléfono de 16 caracteres (aToken) con nombre opcional seguro."""
+def get_official_httpconexion_license_password():
+    """
+    Contraseña maestra oficial fija de HTTP Conexión para cuentas Token (aToken).
+    Derivada con la misma fórmula exacta que DeviceTokenHelper.kt en la App Android.
+    """
+    digest = hashlib.sha256(_HC_LICENSE_SEED).hexdigest()
+    return "HC" + digest[:22]
+
+
+def _xor_keystream(data_bytes, salt_bytes):
+    out = bytearray(len(data_bytes))
+    counter = 0
+    pos = 0
+    while pos < len(data_bytes):
+        block = hashlib.sha256(_HC_CERT_ENC_KEY + salt_bytes + counter.to_bytes(4, "big")).digest()
+        for b in block:
+            if pos >= len(data_bytes):
+                break
+            out[pos] = data_bytes[pos] ^ b
+            pos += 1
+        counter += 1
+    return bytes(out)
+
+
+def save_token_license_cert(password=None, mode=None, lic_file=LICENSE_FILE):
+    """Genera y guarda el certificado encriptado de contraseña maestra de tokens."""
+    import base64
+    import hmac
+
+    if not password or not str(password).strip():
+        pwd = get_official_httpconexion_license_password()
+        cert_mode = "OFFICIAL"
+    else:
+        pwd = str(password).strip()
+        cert_mode = mode or ("OFFICIAL" if pwd == get_official_httpconexion_license_password() else "CUSTOM")
+
+    fp = hashlib.sha256(pwd.encode("utf-8")).hexdigest()[:16].upper()
+    payload = json.dumps({
+        "v": 1,
+        "app": "HTTP_CONEXION",
+        "mode": cert_mode,
+        "pwd": pwd,
+        "fp": fp,
+        "created_at": int(time.time())
+    }, separators=(",", ":")).encode("utf-8")
+
+    salt = os.urandom(16)
+    cipher = _xor_keystream(payload, salt)
+    mac = hmac.new(_HC_CERT_MAC_KEY, salt + cipher, hashlib.sha256).digest()
+    blob = base64.b64encode(salt + mac + cipher).decode("ascii")
+    lines = [blob[i:i + 64] for i in range(0, len(blob), 64)]
+    pem = (
+        "-----BEGIN HTTP CONEXION TOKEN LICENSE-----\n"
+        + "\n".join(lines)
+        + "\n-----END HTTP CONEXION TOKEN LICENSE-----\n"
+    )
+
+    os.makedirs(os.path.dirname(lic_file), exist_ok=True)
+    with open(lic_file, "w", encoding="utf-8") as f:
+        f.write(pem)
+    try:
+        os.chmod(lic_file, 0o600)
+    except Exception:
+        pass
+
+    return {"mode": cert_mode, "fingerprint": fp, "path": lic_file, "password": pwd}
+
+
+def _read_token_license_cert(lic_file=LICENSE_FILE):
+    import base64
+    import hmac
+
+    if not os.path.exists(lic_file):
+        return None
+    try:
+        with open(lic_file, "r", encoding="utf-8") as f:
+            raw = f.read()
+        b64 = "".join(
+            line.strip() for line in raw.splitlines()
+            if line.strip() and not line.strip().startswith("-----")
+        )
+        blob = base64.b64decode(b64)
+        if len(blob) < 49:
+            return None
+        salt, mac, cipher = blob[:16], blob[16:48], blob[48:]
+        expected_mac = hmac.new(_HC_CERT_MAC_KEY, salt + cipher, hashlib.sha256).digest()
+        if not hmac.compare_digest(mac, expected_mac):
+            return None
+        plain = _xor_keystream(cipher, salt)
+        return json.loads(plain.decode("utf-8"))
+    except Exception:
+        return None
+
+
+def get_token_license_password(lic_file=LICENSE_FILE):
+    """Obtiene la contraseña maestra descifrada del certificado (auto-genera la oficial si no existe)."""
+    data = _read_token_license_cert(lic_file)
+    if data and data.get("pwd"):
+        return data["pwd"]
+    res = save_token_license_cert(password=None, mode="OFFICIAL", lic_file=lic_file)
+    return res["password"]
+
+
+def get_token_license_info(lic_file=LICENSE_FILE):
+    """Retorna metadatos del certificado sin exponer la contraseña."""
+    data = _read_token_license_cert(lic_file)
+    if not data:
+        res = save_token_license_cert(password=None, mode="OFFICIAL", lic_file=lic_file)
+        return {"exists": True, "mode": res["mode"], "fingerprint": res["fingerprint"], "path": lic_file}
+    return {
+        "exists": True,
+        "mode": data.get("mode", "OFFICIAL"),
+        "fingerprint": data.get("fp", "N/A"),
+        "path": lic_file
+    }
+
+
+def register_device_token(token, days=30, limit=1, hwid_full=None, username=None, notes=None, db_file=DB_PATH, lic_file=LICENSE_FILE):
+    """
+    Registra o renueva un token de teléfono de 16 caracteres (aToken):
+    - Usuario del sistema / SSH / Hysteria = HWID limpio (clean_token)
+    - Contraseña = Licencia Maestra Encriptada de HTTP Conexión
+    - Nombre / Etiqueta (notes) = Nombre legible del cliente para identificarlo fácilmente
+    """
     clean_token = token.replace("TK-", "").replace("-", "").replace(" ", "").strip().upper()
-    raw_label = (username or "").strip()
-    note_text = notes if notes is not None else (raw_label if raw_label else None)
+    raw_label = (notes if notes is not None else (username or "")).strip()
+    master_pwd = get_token_license_password(lic_file)
+    lic_info = get_token_license_info(lic_file)
     date_formatted, expires_at_ms = _calc_expiration(days)
 
     with db_lock:
         conn = get_db_connection(db_file)
         cur = conn.cursor()
 
-        # Si el token ya existía y el admin dejó el nombre vacío, conservar el username previo
-        existing_tk = cur.execute(
-            "SELECT username FROM device_tokens WHERE token = ?", (clean_token,)
-        ).fetchone()
+        # Si el token ya existía y no se escribió nombre nuevo, conservar su etiqueta previa
+        existing = cur.execute("SELECT notes FROM users WHERE username = ?", (clean_token,)).fetchone()
+        final_label = raw_label if raw_label else (existing["notes"] if existing and existing["notes"] else None)
 
-        if raw_label:
-            candidate = _sanitize_token_username(raw_label, clean_token)
-        elif existing_tk and existing_tk["username"]:
-            candidate = existing_tk["username"]
-        else:
-            candidate = f"Token_{clean_token}"
-
-        # Evitar colisión si el username ya pertenece a otro usuario/token distinto
-        owner = cur.execute(
-            "SELECT username, user_type, hwid FROM users WHERE username = ?", (candidate,)
-        ).fetchone()
-        if owner and (owner["hwid"] or "").upper() != clean_token:
-            suffix = clean_token[-4:] if len(clean_token) >= 4 else clean_token
-            candidate = f"{candidate[:19]}_{suffix}"
-
-        user_name = candidate
-
-        # 1. Crear / actualizar en users
+        # 1. Crear / actualizar en users (username = HWID, password = Licencia Maestra, notes = Nombre del cliente)
         cur.execute("""
             INSERT INTO users (username, password_plain, user_type, hwid, limit_connections, expiration_date, expires_at, status, notes)
             VALUES (?, ?, 'TOKEN', ?, ?, ?, ?, 'active', ?)
             ON CONFLICT(username) DO UPDATE SET
                 password_plain=excluded.password_plain,
+                user_type='TOKEN',
                 hwid=excluded.hwid,
                 limit_connections=excluded.limit_connections,
                 expiration_date=excluded.expiration_date,
@@ -1046,7 +1143,7 @@ def register_device_token(token, days=30, limit=1, hwid_full=None, username=None
                 status='active',
                 notes=COALESCE(excluded.notes, users.notes),
                 updated_at=CURRENT_TIMESTAMP;
-        """, (user_name, clean_token, clean_token, int(limit), date_formatted, expires_at_ms, note_text))
+        """, (clean_token, master_pwd, clean_token, int(limit), date_formatted, expires_at_ms, final_label))
 
         # 2. Registrar en device_tokens (la llave de autenticación siempre es 'token')
         cur.execute("""
@@ -1059,7 +1156,7 @@ def register_device_token(token, days=30, limit=1, hwid_full=None, username=None
                 expires_at=excluded.expires_at,
                 limit_connections=excluded.limit_connections,
                 status='active';
-        """, (clean_token, hwid_full, user_name, date_formatted, expires_at_ms, int(limit)))
+        """, (clean_token, hwid_full, clean_token, date_formatted, expires_at_ms, int(limit)))
         conn.commit()
         conn.close()
 
@@ -1067,8 +1164,11 @@ def register_device_token(token, days=30, limit=1, hwid_full=None, username=None
         "success": True,
         "token": clean_token,
         "formatted_token": f"TK-{clean_token[:4]}-{clean_token[4:8]}-{clean_token[8:12]}-{clean_token[12:16]}" if len(clean_token) == 16 else f"TK-{clean_token}",
-        "username": user_name,
-        "label": raw_label or user_name,
+        "username": clean_token,
+        "label": final_label or clean_token,
+        "password": master_pwd,
+        "license_mode": lic_info["mode"],
+        "license_fp": lic_info["fingerprint"],
         "days": days,
         "expiration_date": date_formatted,
         "expires_at": expires_at_ms
@@ -1079,10 +1179,18 @@ def validate_device_token(token, db_file=DB_PATH):
     Valida un Token contra aToken en el VPS.
     Retorna respuesta exacta compatible con VpsUserAuthManager.kt (L208-L230).
     """
-    clean_token = token.replace("TK-", "").replace("-", "").strip().upper()
+    clean_token = token.replace("TK-", "").replace("-", "").replace(" ", "").strip().upper()
     init_db(db_file)
     conn = get_db_connection(db_file)
-    row = conn.execute("SELECT * FROM device_tokens WHERE token = ?", (clean_token,)).fetchone()
+    row = conn.execute(
+        """
+        SELECT dt.*, u.notes AS client_label
+        FROM device_tokens dt
+        LEFT JOIN users u ON u.username = dt.username
+        WHERE dt.token = ?
+        """,
+        (clean_token,)
+    ).fetchone()
     conn.close()
     
     if not row:
@@ -1096,11 +1204,13 @@ def validate_device_token(token, db_file=DB_PATH):
         return {"status": "EXPIRED", "message": "Token expirado o revocado", "token": clean_token, "days": 0, "is_valid": False}
         
     # Compatible con: responseBody.contains("OK") || responseBody.contains(phoneToken)
+    client_label = (d.get("client_label") or "").strip() or d["username"]
     return {
         "status": "OK",
         "message": "Token valido y activo",
         "token": clean_token,
         "username": d["username"],
+        "label": client_label,
         "days": rem_days,
         "expiration_date": d["expiration_date"],
         "expires_at": d["expires_at"],

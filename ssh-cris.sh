@@ -4159,10 +4159,11 @@ menu_users() {
         echo -e "  ${C_BRACKET}[${C_NUM}08${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🎫 FICHA & TOKEN HC://${NC}      ${C_SUB}(Generar Ficha y Token para la App)${NC}"
         echo -e "  ${C_BRACKET}[${C_NUM}09${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🧹 LIMPIAR VENCIDOS AHORA${NC}   ${C_SUB}(Purgar todas las cuentas expiradas)${NC}"
         echo -e "  ${C_BRACKET}[${C_NUM}10${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}💾 BACKUP & RESTORE SEGURO${NC}  ${C_SUB}(Exportar / Importar Base de Usuarios)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}11${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🔑 LICENCIA MAESTRA ATOKEN${NC}  ${C_SUB}(Certificado Contraseña HTTP Conexión)${NC}"
         msg_bar
         echo -e "  ${C_BRACKET}[${C_NUM}00${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_BG_EXIT} [ REGRESAR AL MENÚ PRINCIPAL ] ${NC}"
         msg_bar
-        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-10]: ${NC}"
+        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-11]: ${NC}"
         read -r u_opt
 
         case "$u_opt" in
@@ -4176,6 +4177,7 @@ menu_users() {
             8|08) generar_token_http_conexion ;;
             9|09) eliminar_caducados ;;
             10) backup_usuarios ;;
+            11) gestionar_licencia_atoken ;;
             0|00) return ;;
             *) echo -e "\n${C_ERR}Opción inválida!${NC}"; sleep 1 ;;
         esac
@@ -4289,7 +4291,7 @@ crear_usuario() {
             ;;
 
         2)
-            # Token Único de Celular (aToken)
+            # Token Único de Celular (aToken) — Usuario=HWID, Contraseña=Licencia Encriptada, Nombre=Alias
             clear
             echo -e "${C_TITLE}=== REGISTRAR TOKEN ÚNICO DE CELULAR (ATOKEN) ===${NC}\n"
             echo -e "${C_SUB}Pide al usuario que copie el token de 16 caracteres que le muestra la App.${NC}"
@@ -4300,38 +4302,64 @@ crear_usuario() {
             local clean_tk; clean_tk=$(echo "$raw_token" | sed 's/TK-//g; s/-//g; s/ //g' | tr 'a-z' 'A-Z')
             [[ -z "$clean_tk" ]] && return
 
-            echo -ne "${C_TEXT}Nombre / Etiqueta del cliente (opcional, Enter = automático): ${C_NUM}"
+            echo -ne "${C_TEXT}Nombre / Etiqueta del cliente (para identificarlo, ej: Juan): ${C_NUM}"
             read -r raw_label
 
             echo -ne "${C_TEXT}Días de duración (default 30): ${C_NUM}"
             read -r days
             [[ ! "$days" =~ ^[0-9]+$ ]] && days=30
 
-            # Registrar en SQLite (sanitiza el nombre y resuelve colisiones sin afectar el token)
-            local u_token
-            u_token=$(TK_VAL="$clean_tk" TK_NAME="$raw_label" TK_DAYS="$days" $SSHPLUS_PY -c "import os, sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; r = crisdev_db.register_device_token(os.environ['TK_VAL'], days=int(os.environ['TK_DAYS']), limit=1, username=os.environ.get('TK_NAME') or None); print(r.get('username', ''))" 2>/dev/null || true)
-            if [[ -z "$u_token" ]]; then
-                u_token="Token_${clean_tk}"
+            # Registrar en SQLite usando Usuario=HWID, Contraseña=Certificado Maestro y Nombre en notes
+            local tk_meta
+            tk_meta=$(TK_VAL="$clean_tk" TK_NAME="$raw_label" TK_DAYS="$days" $SSHPLUS_PY -c "
+import os, sys
+sys.path.append('/opt/ssh-cris')
+import crisdev_db
+r = crisdev_db.register_device_token(
+    os.environ['TK_VAL'],
+    days=int(os.environ['TK_DAYS']),
+    limit=1,
+    notes=os.environ.get('TK_NAME') or None
+)
+print(r['username'] + '|' + r['password'] + '|' + r['label'] + '|' + r['license_mode'] + '|' + r['license_fp'])
+" 2>/dev/null || true)
+
+            local u_token="$clean_tk"
+            local master_pwd=""
+            local client_label="${raw_label:-$clean_tk}"
+            local lic_mode="OFFICIAL"
+            local lic_fp=""
+            if [[ -n "$tk_meta" ]]; then
+                IFS='|' read -r u_token master_pwd client_label lic_mode lic_fp <<< "$tk_meta"
+            fi
+            if [[ -z "$master_pwd" ]]; then
+                master_pwd=$($SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; print(crisdev_db.get_token_license_password())" 2>/dev/null || echo "$clean_tk")
             fi
 
             local exp_date; exp_date=$(date -d "+$days days" "+%Y-%m-%d" 2>/dev/null || date "+%Y-%m-%d")
             if id "$u_token" >/dev/null 2>&1; then
                 chage -E "$exp_date" "$u_token" >/dev/null 2>&1 || true
             else
-                useradd -M -s /bin/false -e "$exp_date" "$u_token" >/dev/null 2>&1 || useradd -M -s /bin/false "$u_token" >/dev/null 2>&1 || true
+                useradd --badname -M -s /bin/false -e "$exp_date" "$u_token" >/dev/null 2>&1 \
+                    || useradd -M -s /bin/false -e "$exp_date" "$u_token" >/dev/null 2>&1 \
+                    || useradd --badname -M -s /bin/false "$u_token" >/dev/null 2>&1 \
+                    || useradd -M -s /bin/false "$u_token" >/dev/null 2>&1 || true
             fi
-            echo "$u_token:$clean_tk" | chpasswd 2>/dev/null || true
+            echo "$u_token:$master_pwd" | chpasswd 2>/dev/null || true
 
             mkdir -p /etc/SSHPlus/senha /root
-            echo "$clean_tk" > "/etc/SSHPlus/senha/$u_token"
+            echo "$master_pwd" > "/etc/SSHPlus/senha/$u_token"
             sed -i "/^$u_token /d" /root/usuarios.db 2>/dev/null || true
             echo "$u_token 1" >> /root/usuarios.db
             sed -i "/^$u_token:/d" "$USER_DATABASE" 2>/dev/null || true
-            echo "$u_token:1:$exp_date:$clean_tk" >> "$USER_DATABASE"
+            echo "$u_token:1:$exp_date:$master_pwd" >> "$USER_DATABASE"
 
             hyst_sync_users >/dev/null 2>&1 || true
 
-            mostrar_ficha_usuario "$u_token" "$clean_tk" "$days" "1" "Token Celular (aToken)"
+            local pass_display="🔒 [CERTIFICADO HTTP CONEXIÓN ${lic_fp}]"
+            [[ "$lic_mode" == "CUSTOM" ]] && pass_display="🔒 [LICENCIA PERSONALIZADA ${lic_fp}]"
+            echo -e "\n ${C_TEXT}🏷️  Nombre / Alias : ${C_OK}${client_label}${NC}"
+            mostrar_ficha_usuario "$u_token" "$pass_display" "$days" "1" "Token Celular (aToken - ${lic_mode})"
             pause
             ;;
 
@@ -4515,7 +4543,7 @@ listar_usuarios() {
     msg_bar
     echo -e "${C_TITLE}                 📋 LISTA DE USUARIOS REGISTRADOS ⚡${NC}"
     msg_bar
-    printf " ${C_TEXT}%-16s %-10s %-8s %-12s %-12s %s${NC}\n" "USUARIO" "TIPO" "LÍMITE" "VENCE" "RESTANTE" "ESTADO"
+    printf " ${C_TEXT}%-17s %-14s %-7s %-6s %-11s %-8s %s${NC}\n" "USUARIO/HWID" "NOMBRE/ALIAS" "TIPO" "LIM" "VENCE" "RESTA" "ESTADO"
     msg_bar
 
     $SSHPLUS_PY -c '
@@ -4527,11 +4555,12 @@ try:
     if not users:
         print("  \033[1;33mNo hay usuarios registrados en la base de datos.\033[0m")
     for u in users:
-        name = u["username"][:15]
-        utype = u.get("user_type", "SSH")[:9]
+        name = u["username"][:16]
+        alias = (u.get("notes") or "-")[:13]
+        utype = u.get("user_type", "SSH")[:6]
         lim = f"{u.get(\"active_sessions\", 0)}/{u.get(\"limit_connections\", 1)}"
-        venc = u.get("expiration_date", "N/A")
-        rem = f"{u.get(\"days_remaining\", 0)} días"
+        venc = u.get("expiration_date", "N/A")[:10]
+        rem = f"{u.get(\"days_remaining\", 0)}d"
         st = u.get("status", "active")
         
         if st == "active":
@@ -4541,12 +4570,100 @@ try:
         else:
             st_badge = "\033[1;31m🔴 VENCIDO\033[0m"
             
-        print(f" \033[1;37m{name:<16}\033[0m \033[0;36m{utype:<10}\033[0m \033[1;32m{lim:<8}\033[0m \033[0;37m{venc:<12}\033[0m \033[1;33m{rem:<12}\033[0m {st_badge}")
+        print(f" \033[1;37m{name:<17}\033[0m \033[1;35m{alias:<14}\033[0m \033[0;36m{utype:<7}\033[0m \033[1;32m{lim:<6}\033[0m \033[0;37m{venc:<11}\033[0m \033[1;33m{rem:<8}\033[0m {st_badge}")
 except Exception as e:
     print(f"Error al listar: {e}")
 '
     msg_bar
     pause
+}
+
+gestionar_licencia_atoken() {
+    while true; do
+        clear
+        msg_bar
+        echo -e "${C_TITLE}     🔑 CERTIFICADO / LICENCIA MAESTRA ATOKEN (HTTP CONEXIÓN) ⚡${NC}"
+        msg_bar
+
+        local info_line
+        info_line=$($SSHPLUS_PY -c "
+import sys
+sys.path.append('/opt/ssh-cris')
+import crisdev_db
+i = crisdev_db.get_token_license_info()
+print(i['mode'] + '|' + i['fingerprint'] + '|' + i['path'])
+" 2>/dev/null || echo "NO_INIT|N/A|/etc/crisdev/httpconexion.lic")
+        local l_mode l_fp l_path
+        IFS='|' read -r l_mode l_fp l_path <<< "$info_line"
+
+        echo -e "  ${C_TEXT}Archivo Certificado : ${C_NUM}${l_path}${NC}"
+        echo -e "  ${C_TEXT}Modo Actual         : ${C_OK}${l_mode}${NC}"
+        echo -e "  ${C_TEXT}Huella SHA-256      : ${C_SUB}${l_fp}${NC}"
+        msg_bar
+        echo -e "  ${C_BRACKET}[${C_NUM}1${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}⚡ Generar / Activar Licencia Oficial HTTP Conexión${NC}"
+        echo -e "          ${C_SUB}(Contraseña fija encriptada 100% compatible con tu App)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}2${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🔐 Declarar Contraseña Maestra Personalizada${NC}"
+        echo -e "          ${C_SUB}(Encripta tu propia contraseña en el certificado .lic)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}3${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_TEXT}🔄 Sincronizar Licencia a TODOS los Usuarios Token${NC}"
+        echo -e "          ${C_SUB}(Actualiza contraseña Linux/SSH/Hysteria de todos los aToken)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}0${C_BRACKET}]${NC} ${C_ARROW}➮${NC} ${C_BG_EXIT} [ VOLVER ] ${NC}"
+        msg_bar
+        echo -ne " ${C_ARROW}╰━━━❪ Opción [0-3]: ${NC}"
+        read -r lopt
+
+        case "$lopt" in
+            1)
+                $SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; r = crisdev_db.save_token_license_cert(password=None, mode='OFFICIAL'); print('OK|' + r['fingerprint'])" 2>/dev/null
+                echo -e "\n ${C_OK}✅ Certificado Oficial HTTP Conexión generado y cifrado en /etc/crisdev/httpconexion.lic${NC}"
+                echo -e " ${C_SUB}Todos los nuevos usuarios Token usarán automáticamente esta licencia maestra.${NC}"
+                pause
+                ;;
+            2)
+                echo -ne "\n ${C_TEXT}Ingresa la nueva contraseña maestra para usuarios Token: ${C_NUM}"
+                read -r custom_pwd
+                if [[ -z "$custom_pwd" ]]; then
+                    echo -e " ${C_ERR}[x] Contraseña vacía, operación cancelada.${NC}"
+                    pause
+                    continue
+                fi
+                LIC_PWD="$custom_pwd" $SSHPLUS_PY -c "import os, sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; crisdev_db.save_token_license_cert(password=os.environ['LIC_PWD'], mode='CUSTOM')" 2>/dev/null
+                echo -e "\n ${C_OK}✅ Contraseña maestra personalizada cifrada en /etc/crisdev/httpconexion.lic${NC}"
+                echo -e " ${C_SUB}Usa la opción [3] si deseas aplicarla a los usuarios Token ya creados.${NC}"
+                pause
+                ;;
+            3)
+                echo -e "\n ${C_TEXT}Sincronizando contraseña maestra a todos los usuarios TOKEN...${NC}"
+                local master_p; master_p=$($SSHPLUS_PY -c "import sys; sys.path.append('/opt/ssh-cris'); import crisdev_db; print(crisdev_db.get_token_license_password())" 2>/dev/null)
+                local tk_users; tk_users=$($SSHPLUS_PY -c "
+import sys
+sys.path.append('/opt/ssh-cris')
+import crisdev_db
+conn = crisdev_db.get_db_connection()
+rows = conn.execute(\"SELECT username, expiration_date FROM users WHERE user_type='TOKEN'\").fetchall()
+conn.execute(\"UPDATE users SET password_plain = ? WHERE user_type='TOKEN'\", (crisdev_db.get_token_license_password(),))
+conn.commit()
+conn.close()
+for r in rows:
+    print(r['username'] + '|' + (r['expiration_date'] or ''))
+" 2>/dev/null)
+                local count=0
+                while IFS='|' read -r tu texp; do
+                    [[ -z "$tu" ]] && continue
+                    echo "$tu:$master_p" | chpasswd 2>/dev/null || true
+                    mkdir -p /etc/SSHPlus/senha
+                    echo "$master_p" > "/etc/SSHPlus/senha/$tu"
+                    sed -i "/^$tu:/d" "$USER_DATABASE" 2>/dev/null || true
+                    echo "$tu:1:${texp}:$master_p" >> "$USER_DATABASE"
+                    count=$((count + 1))
+                done <<< "$tk_users"
+                hyst_sync_users >/dev/null 2>&1 || true
+                echo -e " ${C_OK}✅ Licencia maestra sincronizada en ${count} usuario(s) Token.${NC}"
+                pause
+                ;;
+            0) return ;;
+            *) ;;
+        esac
+    done
 }
 
 monitor_conexiones() {
@@ -4585,7 +4702,8 @@ try:
     if not results:
         print('  \033[1;33mNo se encontraron coincidencias.\033[0m')
     for u in results:
-        print(f'  👤 Usuario: \033[1;32m{u[\"username\"]}\033[0m | Tipo: {u.get(\"user_type\",\"SSH\")} | Límite: {u[\"limit_connections\"]} | Vence: {u[\"expiration_date\"]} ({u[\"days_remaining\"]}d) | HWID: {u.get(\"hwid\",\"Ninguno\")}')
+        alias = u.get(\"notes\") or \"-\"
+        print(f'  👤 Usuario/HWID: \033[1;32m{u[\"username\"]}\033[0m | 🏷️ Alias: \033[1;35m{alias}\033[0m | Tipo: {u.get(\"user_type\",\"SSH\")} | Límite: {u[\"limit_connections\"]} | Vence: {u[\"expiration_date\"]} ({u[\"days_remaining\"]}d)')
 except Exception as e:
     print('Error en búsqueda:', e)
 "
