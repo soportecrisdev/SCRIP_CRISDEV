@@ -123,10 +123,20 @@ if [[ -n "$OCCUPIED" ]]; then
         sleep 1.5
         exit 1
     fi
-    # Detener servicios propios que pudieran ocupar ese puerto
+    # Detener dinámicamente cualquier unidad systemd dueña del proceso en ese puerto
     if echo "$OCCUPIED" | grep -q 'wsproxy-c'; then
-        systemctl stop crisdev-ws-c.service 2>/dev/null || true
-        pkill -9 -x wsproxy-c 2>/dev/null || true
+        for _wcpid in $(pgrep -f 'wsproxy-c' 2>/dev/null); do
+            _owner_svc=$(awk -F/ '/system\.slice/ {print $NF}' "/proc/${_wcpid}/cgroup" 2>/dev/null | grep '\.service$' | head -1)
+            if [[ -n "$_owner_svc" ]]; then
+                systemctl stop "$_owner_svc" 2>/dev/null || true
+                systemctl disable "$_owner_svc" 2>/dev/null || true
+            fi
+        done
+        for _svc in crisdev-ws-c.service sshplus-ws.service wsproxy-c.service ws-c.service websocket.service wsproxy.service; do
+            systemctl stop "$_svc" 2>/dev/null || true
+            systemctl disable "$_svc" 2>/dev/null || true
+        done
+        pkill -9 -f 'wsproxy-c' 2>/dev/null || true
     fi
     if echo "$OCCUPIED" | grep -q 'python'; then
         systemctl stop crisdev-ws-python.service 2>/dev/null || true

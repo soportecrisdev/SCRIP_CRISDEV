@@ -1030,17 +1030,41 @@ menu_proxies_websocket() {
                     read -r wc_act
                     case "$wc_act" in
                         1)
-                            systemctl stop crisdev-ws-c.service 2>/dev/null || true
-                            systemctl disable crisdev-ws-c.service 2>/dev/null || true
-                            pkill -9 -x wsproxy-c 2>/dev/null || true
+                            # Detectar dinámicamente la unidad systemd dueña de wsproxy-c (cualquier nombre legacy)
+                            for _wcpid in $(pgrep -f 'wsproxy-c' 2>/dev/null); do
+                                _owner_svc=$(awk -F/ '/system\.slice/ {print $NF}' "/proc/${_wcpid}/cgroup" 2>/dev/null | grep '\.service$' | head -1)
+                                if [[ -n "$_owner_svc" ]]; then
+                                    systemctl stop "$_owner_svc" 2>/dev/null || true
+                                    systemctl disable "$_owner_svc" 2>/dev/null || true
+                                fi
+                            done
+                            for _svc in crisdev-ws-c.service sshplus-ws.service wsproxy-c.service ws-c.service websocket.service wsproxy.service; do
+                                systemctl stop "$_svc" 2>/dev/null || true
+                                systemctl disable "$_svc" 2>/dev/null || true
+                            done
+                            [[ -f /etc/autostart ]] && sed -i '/wsproxy-c/d' /etc/autostart 2>/dev/null || true
+                            pkill -9 -f 'wsproxy-c' 2>/dev/null || true
                             rm -f /etc/crisdev/ws-c.conf 2>/dev/null || true
-                            echo -e "\n\033[1;32m✔ WebSocket Nativo en C apagado limpiamente.\033[0m"
+                            systemctl daemon-reload 2>/dev/null || true
+                            sleep 0.8
+                            if [[ -z "$(get_proc_ports 'wsproxy-c')" ]]; then
+                                echo -e "\n\033[1;32m✔ WebSocket Nativo en C apagado y deshabilitado limpiamente.\033[0m"
+                            else
+                                echo -e "\n\033[1;31m[!] Aún se detecta wsproxy-c. Verifica procesos/cron externos.\033[0m"
+                            fi
                             sleep 1.5
                             continue
                             ;;
                         2)
-                            systemctl stop crisdev-ws-c.service 2>/dev/null || true
-                            pkill -9 -x wsproxy-c 2>/dev/null || true
+                            for _wcpid in $(pgrep -f 'wsproxy-c' 2>/dev/null); do
+                                _owner_svc=$(awk -F/ '/system\.slice/ {print $NF}' "/proc/${_wcpid}/cgroup" 2>/dev/null | grep '\.service$' | head -1)
+                                [[ -n "$_owner_svc" ]] && systemctl stop "$_owner_svc" 2>/dev/null || true
+                            done
+                            for _svc in crisdev-ws-c.service sshplus-ws.service wsproxy-c.service ws-c.service websocket.service wsproxy.service; do
+                                systemctl stop "$_svc" 2>/dev/null || true
+                                systemctl disable "$_svc" 2>/dev/null || true
+                            done
+                            pkill -9 -f 'wsproxy-c' 2>/dev/null || true
                             ;;
                         3)
                             echo ""
