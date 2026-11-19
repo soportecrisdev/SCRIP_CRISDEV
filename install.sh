@@ -147,7 +147,7 @@ if [[ "$IS_UPDATE" -eq 1 && ( "${1:-}" == "--update" || "${1:-}" == "-u" || "${1
     echo -e "${CYAN}============================================================${NC}"
     echo -e "${WHITE}   ⚡ ACTUALIZACIÓN LIMPIA — HTTP CONEXIÓN (SOLO SCRIPT) ⚡${NC}"
     echo -e "${CYAN}============================================================${NC}"
-    mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/proxy/wsclasico" "$INSTALL_DIR/badvpn" /usr/local/bin /etc/SSHPlus
+    mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/proxy/wsclasico" "$INSTALL_DIR/proxy/wsnativo" "$INSTALL_DIR/badvpn" /usr/local/bin /usr/local/src /etc/SSHPlus
 
     echo -e "${YELLOW}[1/3]${NC} Descargando menú actualizado (ssh-cris.sh)..."
     curl -fsSL "$REPO_RAW/ssh-cris.sh" -o "$INSTALL_DIR/$BIN_NAME" 2>/dev/null || \
@@ -156,7 +156,7 @@ if [[ "$IS_UPDATE" -eq 1 && ( "${1:-}" == "--update" || "${1:-}" == "-u" || "${1
     ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/menu
     ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/menu
 
-    echo -e "${YELLOW}[2/3]${NC} Descargando módulos proxy/wsclasico y badvpn (1GB RAM / 100+ users)..."
+    echo -e "${YELLOW}[2/3]${NC} Descargando módulos proxy/wsclasico, proxy/wsnativo y badvpn..."
     for _pf in wsproxy.py instalar.sh desinstalar.sh check.sh ws.conf.template; do
         curl -fsSL "$REPO_RAW/proxy/wsclasico/$_pf" -o "$INSTALL_DIR/proxy/wsclasico/$_pf" 2>/dev/null || \
             wget -q "$REPO_RAW/proxy/wsclasico/$_pf" -O "$INSTALL_DIR/proxy/wsclasico/$_pf" 2>/dev/null || true
@@ -165,6 +165,13 @@ if [[ "$IS_UPDATE" -eq 1 && ( "${1:-}" == "--update" || "${1:-}" == "-u" || "${1
     cp -af "$INSTALL_DIR/proxy/wsclasico/wsproxy.py" /usr/local/bin/wsproxy.py 2>/dev/null || true
     cp -af "$INSTALL_DIR/proxy/wsclasico/wsproxy.py" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
     chmod 755 /usr/local/bin/wsproxy.py /etc/SSHPlus/wsproxy.py 2>/dev/null || true
+
+    for _nf in wsproxy-c.c instalar.sh desinstalar.sh check.sh watchdog.sh ws-c.conf.template; do
+        curl -fsSL "$REPO_RAW/proxy/wsnativo/$_nf" -o "$INSTALL_DIR/proxy/wsnativo/$_nf" 2>/dev/null || \
+            wget -q "$REPO_RAW/proxy/wsnativo/$_nf" -O "$INSTALL_DIR/proxy/wsnativo/$_nf" 2>/dev/null || true
+    done
+    chmod +x "$INSTALL_DIR/proxy/wsnativo/"*.sh 2>/dev/null || true
+    cp -af "$INSTALL_DIR/proxy/wsnativo/wsproxy-c.c" /usr/local/src/wsproxy-c.c 2>/dev/null || true
 
     for _bf in instalar.sh desinstalar.sh check.sh udp antcrashvpn.sh; do
         curl -fsSL "$REPO_RAW/badvpn/$_bf" -o "$INSTALL_DIR/badvpn/$_bf" 2>/dev/null || \
@@ -320,8 +327,8 @@ else
 fi
 chmod +x "$INSTALL_DIR/$BIN_NAME"
 
-# Desplegar carpeta modular proxy/wsclasico (sin activar puertos automáticamente)
-mkdir -p "$INSTALL_DIR/proxy/wsclasico" "$INSTALL_DIR/badvpn"
+# Desplegar carpeta modular proxy/wsclasico y proxy/wsnativo (sin activar puertos automáticamente)
+mkdir -p "$INSTALL_DIR/proxy/wsclasico" "$INSTALL_DIR/proxy/wsnativo" "$INSTALL_DIR/badvpn"
 for _pf in wsproxy.py instalar.sh desinstalar.sh check.sh ws.conf.template; do
     if [[ -f "./proxy/wsclasico/$_pf" ]]; then
         cp -af "./proxy/wsclasico/$_pf" "$INSTALL_DIR/proxy/wsclasico/$_pf"
@@ -331,6 +338,16 @@ for _pf in wsproxy.py instalar.sh desinstalar.sh check.sh ws.conf.template; do
     fi
 done
 chmod +x "$INSTALL_DIR/proxy/wsclasico/"*.sh "$INSTALL_DIR/proxy/wsclasico/wsproxy.py" 2>/dev/null || true
+
+for _nf in wsproxy-c.c instalar.sh desinstalar.sh check.sh watchdog.sh ws-c.conf.template; do
+    if [[ -f "./proxy/wsnativo/$_nf" ]]; then
+        cp -af "./proxy/wsnativo/$_nf" "$INSTALL_DIR/proxy/wsnativo/$_nf"
+    else
+        curl -fsSL "$REPO_RAW/proxy/wsnativo/$_nf" -o "$INSTALL_DIR/proxy/wsnativo/$_nf" 2>/dev/null || \
+        wget -q "$REPO_RAW/proxy/wsnativo/$_nf" -O "$INSTALL_DIR/proxy/wsnativo/$_nf" 2>/dev/null || true
+    fi
+done
+chmod +x "$INSTALL_DIR/proxy/wsnativo/"*.sh 2>/dev/null || true
 
 # Desplegar carpeta modular badvpn (sin activar puertos automáticamente)
 for _bf in instalar.sh desinstalar.sh check.sh udp antcrashvpn.sh; do

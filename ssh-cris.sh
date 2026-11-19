@@ -860,6 +860,19 @@ ensure_wsclasico_module() {
     chmod +x "${mod_dir}/"*.sh "${mod_dir}/wsproxy.py" 2>/dev/null || true
 }
 
+ensure_wsnativo_module() {
+    local mod_dir="/opt/ssh-cris/proxy/wsnativo"
+    local repo_raw="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy/wsnativo"
+    mkdir -p "$mod_dir"
+    for _f in wsproxy-c.c instalar.sh desinstalar.sh check.sh watchdog.sh ws-c.conf.template; do
+        if [[ ! -s "${mod_dir}/${_f}" ]]; then
+            curl -fsSL "${repo_raw}/${_f}" -o "${mod_dir}/${_f}" 2>/dev/null || \
+            wget -q "${repo_raw}/${_f}" -O "${mod_dir}/${_f}" 2>/dev/null || true
+        fi
+    done
+    chmod +x "${mod_dir}/"*.sh 2>/dev/null || true
+}
+
 get_socks_ssh_ports() {
     local pids=""
     pids=$(pgrep -f '/etc/SSHPlus/proxy\.py' 2>/dev/null | while read -r _p; do
@@ -1016,154 +1029,34 @@ menu_proxies_websocket() {
                 ;;
 
             # ------------------------------------------------------------------
-            # [3] WEBSOCKET NATIVO EN C (epoll 16k conns — Independiente de Python)
+            # [3] WEBSOCKET NATIVO EN C v3.0 (Módulo proxy/wsnativo/)
             # ------------------------------------------------------------------
             3)
+                ensure_wsnativo_module
                 if [[ -n "$ws_c_p" ]]; then
                     clear
-                    echo -e "\E[44;1;37m       WEBSOCKET NATIVO C — ACTIVO EN PUERTO ${ws_c_p}       \E[0m\n"
-                    echo -e "  \033[1;31m[1]\033[0m \033[1;37mDESACTIVAR / APAGAR WEBSOCKET NATIVO C\033[0m"
-                    echo -e "  \033[1;33m[2]\033[0m \033[1;37mCAMBIAR PUERTO / RECONFIGURAR\033[0m"
-                    echo -e "  \033[1;32m[3]\033[0m \033[1;37mPROBAR RESPUESTA HTTP EN VIVO (curl)\033[0m"
+                    echo -e "\E[44;1;37m       WEBSOCKET NATIVO C v3.0 — ACTIVO EN PUERTO ${ws_c_p}       \E[0m\n"
+                    echo -e "  \033[1;31m[1]\033[0m \033[1;37mDESACTIVAR / DESINSTALAR WEBSOCKET NATIVO C\033[0m"
+                    echo -e "  \033[1;33m[2]\033[0m \033[1;37mRECONFIGURAR (Puerto / Destino / Modo HTTP / Banner)\033[0m"
+                    echo -e "  \033[1;32m[3]\033[0m \033[1;37mDIAGNÓSTICO Y TEST EN VIVO (RAM / MTU 1280 / Watchdog)\033[0m"
                     echo -e "  \033[1;36m[0]\033[0m \033[1;37mVOLVER (Mantener activo)\033[0m\n"
                     echo -ne "\033[1;32m¿Qué desea hacer? [0-3]: \033[0m"
                     read -r wc_act
                     case "$wc_act" in
                         1)
-                            # Detectar dinámicamente la unidad systemd dueña de wsproxy-c (cualquier nombre legacy)
-                            for _wcpid in $(pgrep -f 'wsproxy-c' 2>/dev/null); do
-                                _owner_svc=$(awk -F/ '/system\.slice/ {print $NF}' "/proc/${_wcpid}/cgroup" 2>/dev/null | grep '\.service$' | head -1)
-                                if [[ -n "$_owner_svc" ]]; then
-                                    systemctl stop "$_owner_svc" 2>/dev/null || true
-                                    systemctl disable "$_owner_svc" 2>/dev/null || true
-                                fi
-                            done
-                            for _svc in crisdev-ws-c.service sshplus-ws.service wsproxy-c.service ws-c.service websocket.service wsproxy.service; do
-                                systemctl stop "$_svc" 2>/dev/null || true
-                                systemctl disable "$_svc" 2>/dev/null || true
-                            done
-                            rm -f /etc/systemd/system/crisdev-ws-c.service /etc/systemd/system/sshplus-ws.service /etc/systemd/system/wsproxy-c.service 2>/dev/null || true
-                            [[ -f /etc/autostart ]] && sed -i '/wsproxy-c/d' /etc/autostart 2>/dev/null || true
-                            pkill -9 -x 'wsproxy-c' 2>/dev/null || pkill -9 -f 'wsproxy-c' 2>/dev/null || true
-                            rm -f /etc/crisdev/ws-c.conf 2>/dev/null || true
-                            systemctl daemon-reload 2>/dev/null || true
-                            sleep 0.8
-                            if [[ -z "$(ss -tlpn 2>/dev/null | grep '"wsproxy-c"')" ]]; then
-                                echo -e "\n\033[1;32m✔ WebSocket Nativo en C apagado y desinstalado limpiamente.\033[0m"
-                            else
-                                echo -e "\n\033[1;31m[!] Aún se detecta wsproxy-c. Verifica cron o watchdog externo.\033[0m"
-                            fi
+                            bash /opt/ssh-cris/proxy/wsnativo/desinstalar.sh
                             sleep 1.5
-                            continue
                             ;;
                         2)
-                            for _wcpid in $(pgrep -f 'wsproxy-c' 2>/dev/null); do
-                                _owner_svc=$(awk -F/ '/system\.slice/ {print $NF}' "/proc/${_wcpid}/cgroup" 2>/dev/null | grep '\.service$' | head -1)
-                                [[ -n "$_owner_svc" ]] && systemctl stop "$_owner_svc" 2>/dev/null || true
-                            done
-                            for _svc in crisdev-ws-c.service sshplus-ws.service wsproxy-c.service ws-c.service websocket.service wsproxy.service; do
-                                systemctl stop "$_svc" 2>/dev/null || true
-                                systemctl disable "$_svc" 2>/dev/null || true
-                            done
-                            pkill -9 -f 'wsproxy-c' 2>/dev/null || true
+                            bash /opt/ssh-cris/proxy/wsnativo/instalar.sh
                             ;;
                         3)
-                            echo ""
-                            local first_cp; first_cp=$(echo "$ws_c_p" | awk '{print $1}')
-                            curl -i -s -N --max-time 3 "http://127.0.0.1:${first_cp}/" | head -8 || true
-                            echo ""
-                            read -n1 -r -p "Presione cualquier tecla para continuar..."
-                            continue
-                            ;;
-                        *)
-                            continue
+                            bash /opt/ssh-cris/proxy/wsnativo/check.sh
                             ;;
                     esac
-                fi
-
-                clear
-                echo -e "\E[44;1;37m        ACTIVAR WEBSOCKET NATIVO EN C (EPOLL 16K)        \E[0m\n"
-                echo -ne "\033[1;32m[1/4] Puerto de escucha (default 80): \033[1;37m"
-                read -r p_c
-                [[ -z "$p_c" || ! "$p_c" =~ ^[0-9]+$ ]] && p_c=80
-
-                if ss -tlpn 2>/dev/null | grep -qE "[:.]${p_c}[[:space:]]"; then
-                    echo -e "\n\033[1;31m[!] El puerto ${p_c} ya está ocupado por otro servicio.\033[0m"
-                    echo -e "\033[1;33m    Si deseas tener C y Python activos a la vez, usa puertos distintos (ej: 80 y 8080).\033[0m"
-                    sleep 2.5
-                    continue
-                fi
-
-                echo -ne "\033[1;32m[2/4] Puerto local destino (default 22 OpenSSH): \033[1;37m"
-                read -r c_dst
-                [[ -z "$c_dst" || ! "$c_dst" =~ ^[0-9]+$ ]] && c_dst=22
-
-                echo -ne "\033[1;32m[3/4] Código HTTP [101 / 200] (default 101): \033[1;37m"
-                read -r c_code
-                [[ "$c_code" != "200" ]] && c_code="101"
-
-                echo -ne "\033[1;32m[4/4] Minibanner / Mensaje (default HTTP CONEXION): \033[1;37m"
-                read -r c_msg
-                [[ -z "$c_msg" ]] && c_msg="HTTP CONEXION"
-
-                if [[ ! -x /usr/local/bin/wsproxy-c ]]; then
-                    if [[ -f /usr/local/src/wsproxy-c.c && -x "$(command -v gcc 2>/dev/null)" ]]; then
-                        echo -e "\033[1;33m[*] Compilando wsproxy-c con gcc...\033[0m"
-                        gcc -O2 -Wall -Wextra -o /usr/local/bin/wsproxy-c /usr/local/src/wsproxy-c.c 2>/dev/null || true
-                    fi
-                fi
-                chmod 755 /usr/local/bin/wsproxy-c 2>/dev/null || true
-
-                cat > /etc/crisdev/ws-c.conf <<EOF_WSC
-LISTEN_ADDR=0.0.0.0
-LISTEN_PORT=${p_c}
-TARGET_HOST=127.0.0.1
-TARGET_PORT=${c_dst}
-HTTP_STATUS=${c_code}
-BANNER_MSG="${c_msg}"
-IDLE_TIMEOUT=300
-MAX_CONNS=16384
-EOF_WSC
-
-                cat > /etc/systemd/system/crisdev-ws-c.service <<EOF_WSC_SVC
-[Unit]
-Description=CRISDEV Native epoll WebSocket/HTTP Proxy (C Core)
-After=network-online.target ssh.service
-Wants=network-online.target ssh.service
-StartLimitIntervalSec=0
-
-[Service]
-Type=simple
-User=root
-EnvironmentFile=-/etc/crisdev/ws-c.conf
-ExecStart=/bin/sh -c 'exec /usr/local/bin/wsproxy-c --bind "\${LISTEN_ADDR:-0.0.0.0}" --port "\${LISTEN_PORT:-${p_c}}" --target "\${TARGET_HOST:-127.0.0.1}:\${TARGET_PORT:-${c_dst}}" --status "\${HTTP_STATUS:-${c_code}}" --idle "\${IDLE_TIMEOUT:-300}" --max-conns "\${MAX_CONNS:-16384}" \${BANNER_MSG:+--msg "\$BANNER_MSG"}'
-Restart=always
-RestartSec=1
-OOMScoreAdjust=-900
-LimitNOFILE=65535
-MemoryMax=256M
-TasksMax=64
-
-[Install]
-WantedBy=multi-user.target
-EOF_WSC_SVC
-
-                systemctl daemon-reload
-                systemctl enable --now crisdev-ws-c.service >/dev/null 2>&1 || true
-                systemctl restart crisdev-ws-c.service 2>/dev/null || true
-                ufw allow "$p_c"/tcp >/dev/null 2>&1 || true
-                iptables -C INPUT -p tcp --dport "$p_c" -j ACCEPT 2>/dev/null || iptables -I INPUT -p tcp --dport "$p_c" -j ACCEPT 2>/dev/null || true
-
-                sleep 1.2
-                if [[ -n "$(get_proc_ports 'wsproxy-c')" ]]; then
-                    echo -e "\n\033[1;32m✔ WEBSOCKET NATIVO EN C ACTIVADO EN PUERTO ${p_c} (-> 127.0.0.1:${c_dst})\033[0m"
-                    curl -i -s -N --max-time 2 "http://127.0.0.1:${p_c}/" | head -5 || true
                 else
-                    echo -e "\n\033[1;31m✖ Error al iniciar WebSocket C. Logs:\033[0m"
-                    journalctl -u crisdev-ws-c.service -n 10 --no-pager 2>/dev/null || true
+                    bash /opt/ssh-cris/proxy/wsnativo/instalar.sh
                 fi
-                echo ""
-                read -n1 -r -p "Presione cualquier tecla para continuar..."
                 ;;
 
             # ------------------------------------------------------------------

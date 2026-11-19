@@ -1,0 +1,13 @@
+# ==============================================================================
+# Plantilla de Configuración — CRISDEV WebSocket Nativo C v3.0 (Anti-DPI + MTU 1280)
+# ==============================================================================
+LISTEN_ADDR=0.0.0.0
+LISTEN_PORT=80
+TARGET_HOST=127.0.0.1
+TARGET_PORT=22
+HTTP_STATUS=auto
+BANNER_MSG='<font color="cyan"><b>HTTP CONEXION</b></font>'
+BANNER_RAW='HTTP CONEXION'
+BANNER_COLOR='cyan'
+IDLE_TIMEOUT=0
+MAX_CONNS=4096

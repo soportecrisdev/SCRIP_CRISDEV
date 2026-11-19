@@ -67,7 +67,7 @@ static char g_bind_addr[64]     = "0.0.0.0";
 static int  g_listen_port       = 80;
 static char g_target_host[128]  = "127.0.0.1";
 static int  g_target_port       = 22;
-static char g_http_status[16]   = "101";
+static char g_http_status[16]   = "auto";
 static char g_banner_msg[256]   = "";
 static char g_pass[128]         = "";
 static uint64_t g_idle_ms       = 300000ULL; /* 300s default */
@@ -301,7 +301,8 @@ struct conn {
     int          bfd;
     conn_state_t state;
     int          ws_mode;        /* 0 = raw TCP/SSH, 1 = RFC 6455 WS */
-    int          ssh_started;    /* 1 once real non-HTTP payload forwarded */
+    int          ssh_started;
+    int          banner_split_done;    /* 1 once real non-HTTP payload forwarded */
     int          client_eof;
     int          backend_eof;
     int          closed;
@@ -336,13 +337,19 @@ static conn_t   *g_free_head = NULL;
  * -------------------------------------------------------------------------- */
 static void tune_client_socket(int fd) {
     int one = 1;
+    int mss = 1220; /* MTU 1280 efectivo (1:1 con redes moviles 4G/LTE) */
+    int tos = 0x10; /* IPTOS_LOWDELAY para Juegos y Llamadas VoIP */
+#ifdef TCP_MAXSEG
+    setsockopt(fd, IPPROTO_TCP, TCP_MAXSEG, &mss, sizeof(mss));
+#endif
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
     setsockopt(fd, IPPROTO_TCP, TCP_QUICKACK, &one, sizeof(one));
+    setsockopt(fd, IPPROTO_IP, IP_TOS, &tos, sizeof(tos));
     setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
     int keepidle = 25;
     int keepintvl = 10;
-    int keepcnt = 3;
-    unsigned int user_timeout = 45000; /* 45s */
+    int keepcnt = 6;
+    unsigned int user_timeout = 90000; /* 90s Anti-Drop cambio de antena LTE */
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
@@ -478,7 +485,7 @@ static int ws_append_frame(buf_t *out, uint8_t opcode, const uint8_t *payload, s
     return 0;
 }
 
-static int starts_with_http_method(const uint8_t *p, size_t len) {
+static __attribute__((unused)) int starts_with_http_method(const uint8_t *p, size_t len) {
     static const char *methods[] = {
         "GET ", "POST ", "CONNECT ", "HEAD ", "PUT ",
         "OPTIONS ", "DELETE ", "PATCH ", "TRACE ", "CF-RAY "
@@ -515,32 +522,32 @@ static int feed_client_payload(conn_t *c, const uint8_t *data, size_t len) {
         return buf_append(&c->c2b, data, len);
     }
 
-    if (buf_append(&c->pre_ssh, data, len) < 0) return -1;
-
-    while (buf_avail(&c->pre_ssh) > 0) {
+    /* Si el destino es SSH (no OpenVPN 1194), descartar cualquier basura ofuscada/[split] hasta detectar "SSH-" */
+    if (c->target_port != 1194) {
+        if (buf_append(&c->pre_ssh, data, len) < 0) return -1;
         uint8_t *p = buf_ptr(&c->pre_ssh);
         size_t avail = buf_avail(&c->pre_ssh);
-        if (starts_with_http_method(p, avail)) {
-            size_t sep_len = 0;
-            const uint8_t *end = find_header_end(p, avail, &sep_len);
-            if (!end) {
-                if (avail > MAX_HEADER_BYTES) break;
-                return 0; /* wait for rest of decoy HTTP header */
-            }
-            size_t drop = (size_t)(end - p) + sep_len;
-            buf_consume(&c->pre_ssh, drop);
-            continue;
+        const uint8_t *ssh_pos = (const uint8_t *)memmem(p, avail, "SSH-", 4);
+        if (ssh_pos) {
+            size_t skip = (size_t)(ssh_pos - p);
+            buf_consume(&c->pre_ssh, skip);
+            c->ssh_started = 1;
+            if (buf_append(&c->c2b, buf_ptr(&c->pre_ssh), buf_avail(&c->pre_ssh)) < 0) return -1;
+            buf_free(&c->pre_ssh);
+            return 0;
         }
-        break;
+        if (avail > MAX_HEADER_BYTES * 2) {
+            return -1;
+        }
+        /* Conservar solo ultimos 3 bytes por si "SSH-" llega partido entre paquetes */
+        if (avail > 3) {
+            buf_consume(&c->pre_ssh, avail - 3);
+        }
+        return 0;
     }
 
-    size_t rem = buf_avail(&c->pre_ssh);
-    if (rem > 0) {
-        c->ssh_started = 1;
-        if (buf_append(&c->c2b, buf_ptr(&c->pre_ssh), rem) < 0) return -1;
-        buf_free(&c->pre_ssh);
-    }
-    return 0;
+    c->ssh_started = 1;
+    return buf_append(&c->c2b, data, len);
 }
 
 static int process_ws_client_bytes(conn_t *c, const uint8_t *data, size_t len) {
@@ -734,7 +741,15 @@ static void handle_handshake_read(conn_t *c) {
                 conn_schedule_close(c);
                 return;
             }
-            continue;
+            /* Payloads modernos sin doble [crlf]: si ya hay al menos un '\n' y no es un Upgrade incompleto, responder al instante */
+            if (memchr(hb, '\n', hlen) == NULL) {
+                continue;
+            }
+            if (memmem(hb, hlen, "Upgrade:", 8) != NULL && memmem(hb, hlen, "Sec-WebSocket-Key", 17) == NULL) {
+                continue;
+            }
+            end = hb + hlen;
+            sep_len = 0;
         }
 
         size_t head_total = (size_t)(end - hb) + sep_len;
@@ -808,36 +823,56 @@ static void handle_handshake_read(conn_t *c) {
                              has_ws_key);
         c->ws_mode = (has_ws_key && has_ws_ver) ? 1 : 0;
 
-        int use_101 = is_ws_upgrade || (strcmp(g_http_status, "101") == 0);
+        int force_101 = (strcmp(g_http_status, "101") == 0);
+        int is_auto   = (strcmp(g_http_status, "auto") == 0);
+        int use_101   = (has_ws_key && has_ws_ver) || force_101 || (is_auto && is_ws_upgrade);
         int rn = 0;
-        if (use_101) {
+        if (has_ws_key && has_ws_ver) {
+            /* CDN RFC 6455 estricto (RFC 7230) */
+            char accept_b64[64];
+            compute_ws_accept(ws_key, accept_b64);
             rn = snprintf(c->resp_buf, sizeof(c->resp_buf),
                           "HTTP/1.1 101 Switching Protocols\r\n"
                           "Upgrade: websocket\r\n"
-                          "Connection: Upgrade\r\n");
-            if (has_ws_key && rn > 0 && (size_t)rn < sizeof(c->resp_buf)) {
-                char accept_b64[64];
-                compute_ws_accept(ws_key, accept_b64);
-                if (accept_b64[0]) {
-                    rn += snprintf(c->resp_buf + rn, sizeof(c->resp_buf) - (size_t)rn,
-                                   "Sec-WebSocket-Accept: %s\r\n", accept_b64);
-                }
-            }
+                          "Connection: Upgrade\r\n"
+                          "Sec-WebSocket-Accept: %s\r\n", accept_b64);
             if (g_banner_msg[0] && rn > 0 && (size_t)rn < sizeof(c->resp_buf)) {
                 rn += snprintf(c->resp_buf + rn, sizeof(c->resp_buf) - (size_t)rn,
-                               "X-Message: %s\r\n", g_banner_msg);
+                               "X-Banner: %s\r\n", g_banner_msg);
             }
             if (rn > 0 && (size_t)rn + 2 < sizeof(c->resp_buf)) {
                 c->resp_buf[rn++] = '\r';
                 c->resp_buf[rn++] = '\n';
                 c->resp_buf[rn] = '\0';
             }
+        } else if (use_101) {
+            const char *reason = g_banner_msg[0] ? g_banner_msg : "Switching Protocols";
+            rn = snprintf(c->resp_buf, sizeof(c->resp_buf),
+                          "HTTP/1.1 101 %s\r\n"
+                          "Upgrade: websocket\r\n"
+                          "Connection: Upgrade\r\n\r\n", reason);
         } else {
+            /* HTTP 200 limpio (sin Content-Length: 0 ni Upgrade -> Anti-DPI Tigo) */
             const char *reason = g_banner_msg[0] ? g_banner_msg : "Connection Established";
             rn = snprintf(c->resp_buf, sizeof(c->resp_buf),
-                          "HTTP/1.1 %s %s\r\n\r\n", g_http_status, reason);
+                          "HTTP/1.1 200 %s\r\n"
+                          "Connection: keep-alive\r\n\r\n", reason);
         }
         c->resp_len = (rn > 0) ? (size_t)rn : 0;
+
+        /* SEPARACION ESTRICTA HTTP -> SSH (Anti-DPI): vaciar HTTP/1.1 antes de abrir 127.0.0.1:22 */
+        if (c->resp_len > 0) {
+            ssize_t wn = send(c->cfd, c->resp_buf, c->resp_len, MSG_NOSIGNAL);
+            if (wn > 0) {
+                g_total_tx += (uint64_t)wn;
+                if ((size_t)wn >= c->resp_len) {
+                    c->resp_len = 0;
+                } else {
+                    memmove(c->resp_buf, c->resp_buf + wn, c->resp_len - (size_t)wn);
+                    c->resp_len -= (size_t)wn;
+                }
+            }
+        }
 
         /* Keep only leftover bytes after header end */
         buf_consume(&c->hdr, head_total);
@@ -1041,6 +1076,24 @@ static void handle_backend_event(conn_t *c, uint32_t ev) {
                 break;
             }
             c->last_active_ms = now_ms();
+            /* Fragmentacion Anti-DPI del banner SSH: enviar 'SS' y luego 'H-2.0-...' en 2 segmentos TCP */
+            if (!c->ws_mode && !c->banner_split_done && c->target_port != 1194 &&
+                n > 4 && memcmp(tmp, "SSH-", 4) == 0 && buf_avail(&c->b2c) == 0) {
+                c->banner_split_done = 1;
+                ssize_t s2 = send(c->cfd, tmp, 2, MSG_NOSIGNAL);
+                if (s2 == 2) {
+                    g_total_tx += 2;
+                    if (buf_append(&c->b2c, tmp + 2, (size_t)n - 2) < 0) {
+                        conn_schedule_close(c);
+                        return;
+                    }
+                    if (flush_buf_to_fd(c->cfd, &c->b2c, &g_total_tx) < 0) {
+                        conn_schedule_close(c);
+                        return;
+                    }
+                    continue;
+                }
+            }
             int prc = c->ws_mode ? ws_append_frame(&c->b2c, 0x02, tmp, (size_t)n)
                                  : buf_append(&c->b2c, tmp, (size_t)n);
             if (prc < 0) {
@@ -1248,8 +1301,9 @@ int main(int argc, char **argv) {
 
     int one = 1;
     setsockopt(g_listen_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-#ifdef SO_REUSEPORT
-    setsockopt(g_listen_fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
+#ifdef TCP_MAXSEG
+    int listen_mss = 1220;
+    setsockopt(g_listen_fd, IPPROTO_TCP, TCP_MAXSEG, &listen_mss, sizeof(listen_mss));
 #endif
     setsockopt(g_listen_fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
 
