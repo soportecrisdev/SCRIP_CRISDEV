@@ -26,7 +26,7 @@ if SCRIPT_DIR not in sys.path:
 import crisdev_db
 
 CHECK_INTERVAL = int(os.environ.get("LIMITER_INTERVAL", 25)) # Chequeo cada 25 segundos
-TEMP_LOCK_MINUTES = int(os.environ.get("LIMITER_LOCK_MINUTES", 5)) # Bloqueo por 5 minutos
+TEMP_LOCK_MINUTES = int(os.environ.get("LIMITER_LOCK_MINUTES", 0)) # 0 = Solo expulsa excedentes viejos (sin bloquear por reconexiones móviles)
 LOG_FILE = "/var/log/crisdev/limiter.log"
 
 def log_event(message):
@@ -160,8 +160,8 @@ def run_limiter_loop():
                     print(f"🚨 {log_msg}")
                     log_event(log_msg)
 
-                    # Expulsar conexiones sobrantes (las más recientes)
-                    all_pids = total_ssh_pids + total_drop_pids
+                    # Expulsar conexiones sobrantes (siempre las más antiguas/zombis primero)
+                    all_pids = sorted(total_ssh_pids + total_drop_pids, key=lambda x: int(x) if str(x).isdigit() else 0)
                     pids_to_kill = all_pids[:exceeded]
                     for p in pids_to_kill:
                         kill_pid(p)

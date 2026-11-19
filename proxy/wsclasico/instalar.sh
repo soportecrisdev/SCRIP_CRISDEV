@@ -193,6 +193,15 @@ case "${DST_CH:-1}" in
         ;;
 esac
 
+# Protección Anti-Bucle: impedir que WS apunte a su propio puerto de escucha
+if [[ "$TARGET_PORT" == "$WS_PORT" ]]; then
+    echo -e "\n${C_RED}[!] ERROR ANTI-BUCLE: El destino no puede ser el mismo puerto de escucha (${WS_PORT}).${NC}"
+    echo -e "${C_YELLOW}[*] Corrigiendo destino automáticamente a OpenSSH local: 127.0.0.1:${SSH_P}${NC}"
+    TARGET_HOST="127.0.0.1"
+    TARGET_PORT="$SSH_P"
+    sleep 2
+fi
+
 # ------------------------------------------------------------------------------
 # PASO 3: CÓDIGO DE RESPUESTA HTTP
 # ------------------------------------------------------------------------------
@@ -201,8 +210,8 @@ line_bar
 echo -e "${C_CYAN}           CONFIGURAR WEBSOCKET (RESPUESTA HTTP)${NC}"
 line_bar
 echo -e "${C_GREEN}[PASO 3/6] CÓDIGO DE RESPUESTA HTTP${NC}\n"
-echo -e "  ${C_GREEN}[101]${NC} Switching Protocols ${C_YELLOW}(Recomendado: WebSocket / Cloudflare / Conexión)${NC}"
-echo -e "  ${C_GREEN}[200]${NC} HTTP OK             ${C_YELLOW}(Payloads HTTP directos / Fronting)${NC}\n"
+echo -e "  ${C_GREEN}[101]${NC} Switching Protocols ${C_YELLOW}(RECOMENDADO: Anti-corte DPI Tigo/Claro + Cloudflare CDN)${NC}"
+echo -e "  ${C_GREEN}[200]${NC} HTTP OK             ${C_YELLOW}(Solo payloads antiguos; algunas operadoras cortan 200 cada 3-5s)${NC}\n"
 echo -ne "${C_WHITE}Ingresa código de respuesta [101 / 200] (default 101): ${NC}"
 read -r HTTP_CODE
 [[ -z "$HTTP_CODE" ]] && HTTP_CODE="101"
