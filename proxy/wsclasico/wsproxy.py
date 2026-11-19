@@ -2,22 +2,22 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
-CRISDEV Ultra-Stable WebSocket & HTTP Proxy v4.6 (Python epoll Gaming/VoIP Edition)
+CRISDEV Ultra-Stable WebSocket & HTTP Proxy v4.7 (wsutil-Grade Universal Engine)
 -----------------------------------------------------------------------------
-Motor WebSocket Clásico Mejorado y Optimizado para CERO Desconexiones,
-Juegos en Línea (Bajo Ping / Cero Jitter) y Llamadas VoIP:
+Motor WebSocket Clásico de Alto Nivel para Payloads Avanzados, Juegos y VoIP:
   1. Arquitectura Linux epoll pura (selectors.DefaultSelector) sin hilos y
      sin el límite de 1024 descriptores de select.select().
-  2. Cero caídas por inactividad: Sin timeouts artificiales en streaming; la
-     conexión permanece viva durante horas/días mientras el cliente no corte.
-  3. Evasión de muerte por CGNAT móvil (Tigo, Claro, Movistar, Wom, Vivo):
-     TCP_KEEPIDLE=20s, TCP_KEEPINTVL=5s, TCP_KEEPCNT=3 en cliente y backend.
-  4. Baja Latencia para Juegos y Llamadas VoIP:
+  2. Motor Universal de Payloads (estilo wsutil):
+     - Acepta payloads ofuscados (HFU, JUUQ/2.1, emojis, cabeceras rotas).
+     - Estado STATE_WAIT_SSH: filtra restos tras [lf][lf] o paquetes [split]
+       para que NUNCA llegue basura HTTP a OpenSSH/Dropbear (elimina
+       'invalid protocol identifier' / 'Connection reset').
+     - Soporta RFC 6455 (Cloudflare/CloudFront), HTTP 101/200 y SSH directo.
+  3. Cero caídas por inactividad: Sin timeouts artificiales en STATE_STREAMING.
+  4. Anti-CGNAT móvil (Tigo, Claro, Movistar, Wom, Vivo):
+     TCP_KEEPIDLE=20s, TCP_KEEPINTVL=5s, TCP_KEEPCNT=3, TCP_USER_TIMEOUT=30s.
+  5. Baja Latencia para Juegos y Llamadas VoIP:
      TCP_NODELAY=1 + TCP_QUICKACK=1 + IP_TOS=0x10 (IPTOS_LOWDELAY).
-  5. Prevención de Sockets Zombis: TCP_USER_TIMEOUT=30000ms.
-  6. Acumulador de Payloads Fragmentados: Soporta paquetes HTTP partidos por
-     DPI o [split] hasta detectar \\r\\n\\r\\n (hasta 8KB).
-  7. Minibanner HTML en línea de estado HTTP + Encabezados Personalizados.
 =============================================================================
 """
 
@@ -36,6 +36,7 @@ import argparse
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 BUFFER_SIZE = 65536
 MAX_HANDSHAKE_BYTES = 8192
+MAX_WAIT_SSH_DISCARD = 16384
 
 TCP_KEEPIDLE = getattr(socket, "TCP_KEEPIDLE", 4)
 TCP_KEEPINTVL = getattr(socket, "TCP_KEEPINTVL", 5)
@@ -46,19 +47,16 @@ TCP_QUICKACK = getattr(socket, "TCP_QUICKACK", 12)
 
 def tune_socket_stability(sock):
     """Aplica afinamiento de red de baja latencia y anti-desconexión móvil."""
-    # 1. Desactivar Nagle (entrega inmediata para juegos, llamadas y SSH handshake)
     try:
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     except Exception:
         pass
 
-    # 2. Prioridad de baja latencia IP (IPTOS_LOWDELAY = 0x10)
     try:
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_TOS, 0x10)
     except Exception:
         pass
 
-    # 3. Keep-Alive agresivo contra CGNAT móvil (sondeo a los 20s, reintento cada 5s)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPIDLE, 20)
@@ -67,19 +65,16 @@ def tune_socket_stability(sock):
     except Exception:
         pass
 
-    # 4. Timeout de usuario: si un paquete no recibe ACK en 30s, liberar socket
     try:
         sock.setsockopt(socket.IPPROTO_TCP, TCP_USER_TIMEOUT, 30000)
     except Exception:
         pass
 
-    # 5. ACKs rápidos inmediatos (elimina 40ms de Delayed ACK)
     try:
         sock.setsockopt(socket.IPPROTO_TCP, TCP_QUICKACK, 1)
     except Exception:
         pass
 
-    # 6. Buffers equilibrados (evita bufferbloat en juegos sin sacrificar velocidad)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
@@ -91,11 +86,13 @@ class TunnelSession:
     """Representa una sesión de túnel cliente <-> backend."""
     __slots__ = (
         'client_sock', 'target_sock', 'client_fd', 'target_fd',
-        'c2t_buf', 't2c_buf', 'hs_buf', 'state', 'created_at', 'peer_ip'
+        'c2t_buf', 't2c_buf', 'hs_buf', 'discarded_wait',
+        'state', 'created_at', 'peer_ip'
     )
     STATE_HANDSHAKE = 0
-    STATE_STREAMING = 1
-    STATE_CLOSING = 2
+    STATE_WAIT_SSH = 1
+    STATE_STREAMING = 2
+    STATE_CLOSING = 3
 
     def __init__(self, client_sock, peer_ip):
         self.client_sock = client_sock
@@ -105,6 +102,7 @@ class TunnelSession:
         self.c2t_buf = bytearray()
         self.t2c_buf = bytearray()
         self.hs_buf = bytearray()
+        self.discarded_wait = 0
         self.state = self.STATE_HANDSHAKE
         self.created_at = time.monotonic()
         self.peer_ip = peer_ip
@@ -120,6 +118,7 @@ class EpollWsProxy:
         self.status = int(status)
         self.banner = banner.strip() if banner else ""
         self.custom_headers = self._normalize_headers(custom_headers)
+        self.expect_ssh = (self.target_port != 1194)
         self.running = False
         self.selector = selectors.DefaultSelector()
         self.server_sock = None
@@ -151,7 +150,7 @@ class EpollWsProxy:
         self.selector.register(self.server_sock, selectors.EVENT_READ, self._on_accept)
         self.running = True
 
-        print(f"[+] CRISDEV WS Proxy v4.6 [epoll Gaming/VoIP Zero-Reconnect] activo en {self.bind_ip}:{self.port}", flush=True)
+        print(f"[+] CRISDEV WS Proxy v4.7 [wsutil Universal + Gaming/VoIP] activo en {self.bind_ip}:{self.port}", flush=True)
         print(f"[+] Backend destino: {self.target_host}:{self.target_port} (HTTP {self.status})", flush=True)
         if self.banner:
             print(f"[+] Minibanner: {self.banner}", flush=True)
@@ -223,7 +222,7 @@ class EpollWsProxy:
             return False
 
     def _process_handshake(self, session, raw_bytes):
-        # 1. Detección de conexión SSH pura directa
+        # 1. Detección de conexión SSH pura directa sin payload HTTP
         if raw_bytes.startswith(b"SSH-2.0-") or raw_bytes.startswith(b"SSH-1."):
             if not self._connect_target(session):
                 self._close_session(session)
@@ -233,15 +232,13 @@ class EpollWsProxy:
             session.state = TunnelSession.STATE_STREAMING
             return
 
-        # 2. Acumular payloads HTTP fragmentados hasta ver \r\n\r\n (o exceder límite)
+        # 2. Acumular payloads HTTP estándar fragmentados hasta ver \r\n\r\n o \n\n
         session.hs_buf.extend(raw_bytes)
         if len(session.hs_buf) > MAX_HANDSHAKE_BYTES:
             self._close_session(session)
             return
 
-        # Si parece petición HTTP incompleta, esperar siguiente paquete
         if b"\r\n\r\n" not in session.hs_buf and b"\n\n" not in session.hs_buf:
-            # Si no empieza como método HTTP estándar, tratar como payload directo inmediato
             first_word = session.hs_buf[:12].upper()
             http_methods = (b"GET ", b"POST ", b"HEAD ", b"PUT ", b"CONNECT ", b"OPTIONS ", b"PATCH ", b"DELETE ")
             if any(first_word.startswith(m) for m in http_methods):
@@ -268,7 +265,6 @@ class EpollWsProxy:
         reason_200 = self.banner if self.banner else "OK"
         extra_hdrs = self.custom_headers
 
-        # Caso RFC 6455 auténtico (Sec-WebSocket-Key presente)
         if has_ws_key and has_ws_ver:
             key = self._extract_header(raw_str, "Sec-WebSocket-Key")
             accept = base64.b64encode(
@@ -281,7 +277,6 @@ class EpollWsProxy:
                 f"Sec-WebSocket-Accept: {accept}\r\n"
                 f"{extra_hdrs}\r\n"
             ).encode("latin1")
-        # Caso 101 genérico o CDN (Cloudflare / CloudFront / Tigo)
         elif self.status == 101 or has_upgrade or "cloudfront" in lower_str or "cloudflare" in lower_str:
             resp = (
                 f"HTTP/1.1 101 {reason_101}\r\n"
@@ -289,7 +284,6 @@ class EpollWsProxy:
                 f"Connection: Upgrade\r\n"
                 f"{extra_hdrs}\r\n"
             ).encode("latin1")
-        # Caso 200 OK clásico (Inyección directa)
         else:
             resp = (
                 f"HTTP/1.1 200 {reason_200}\r\n"
@@ -301,19 +295,44 @@ class EpollWsProxy:
         session.t2c_buf.extend(resp)
         self._flush_t2c(session)
 
-        # Reenviar datos sobrantes tras el fin de cabeceras (payloads [split] o SSH pegado)
-        idx = full_raw.find(b"\r\n\r\n")
-        sep_len = 4
-        if idx == -1:
-            idx = full_raw.find(b"\n\n")
-            sep_len = 2
-        if idx != -1 and (idx + sep_len) < len(full_raw):
-            remainder = full_raw[idx + sep_len:]
-            if remainder:
-                session.c2t_buf.extend(remainder)
+        # 3. Filtro wsutil anti-basura para SSH:
+        #    Si el payload contenía [lf][lf] en medio (ej. payloads ofuscados/avanzados),
+        #    NUNCA reenviar basura HTTP a OpenSSH/Dropbear. Solo reenviar desde b"SSH-".
+        if self.expect_ssh:
+            ssh_pos = full_raw.find(b"SSH-")
+            if ssh_pos != -1:
+                session.c2t_buf.extend(full_raw[ssh_pos:])
                 self._flush_c2t(session)
+                session.state = TunnelSession.STATE_STREAMING
+            else:
+                session.state = TunnelSession.STATE_WAIT_SSH
+        else:
+            # Destino no-SSH (ej. OpenVPN 1194): reenviar datos tras \r\n\r\n
+            idx = full_raw.find(b"\r\n\r\n")
+            sep_len = 4
+            if idx == -1:
+                idx = full_raw.find(b"\n\n")
+                sep_len = 2
+            if idx != -1 and (idx + sep_len) < len(full_raw):
+                remainder = full_raw[idx + sep_len:]
+                if remainder:
+                    session.c2t_buf.extend(remainder)
+                    self._flush_c2t(session)
+            session.state = TunnelSession.STATE_STREAMING
 
-        session.state = TunnelSession.STATE_STREAMING
+    def _process_wait_ssh(self, session, data):
+        """Descarta restos de payloads [split]/ofuscados hasta detectar b'SSH-'."""
+        ssh_pos = data.find(b"SSH-")
+        if ssh_pos != -1:
+            session.c2t_buf.extend(data[ssh_pos:])
+            self._flush_c2t(session)
+            session.state = TunnelSession.STATE_STREAMING
+            return
+
+        # Si aún no llega 'SSH-', es una segunda parte del payload ([split]) -> descartar
+        session.discarded_wait += len(data)
+        if session.discarded_wait > MAX_WAIT_SSH_DISCARD:
+            self._close_session(session)
 
     def _extract_header(self, text, header_name):
         needle = header_name.lower() + ":"
@@ -351,6 +370,8 @@ class EpollWsProxy:
 
             if session.state == TunnelSession.STATE_HANDSHAKE:
                 self._process_handshake(session, data)
+            elif session.state == TunnelSession.STATE_WAIT_SSH:
+                self._process_wait_ssh(session, data)
             else:
                 session.c2t_buf.extend(data)
                 self._flush_c2t(session)
@@ -443,14 +464,15 @@ class EpollWsProxy:
                     callback = key.data
                     callback(key.fileobj, mask)
 
-                # Limpieza exclusiva de handshakes colgados (>15s sin completar HTTP),
+                # Limpieza exclusiva de handshakes colgados (>20s sin completar SSH),
                 # NUNCA toca conexiones en STATE_STREAMING.
                 now = time.monotonic()
                 if now - last_sweep >= 10.0:
                     last_sweep = now
                     stale = [
                         sess for sess, is_cli in self.sessions_by_fd.values()
-                        if is_cli and sess.state == TunnelSession.STATE_HANDSHAKE and (now - sess.created_at) > 15.0
+                        if is_cli and sess.state in (TunnelSession.STATE_HANDSHAKE, TunnelSession.STATE_WAIT_SSH)
+                        and (now - sess.created_at) > 20.0
                     ]
                     for sess in stale:
                         self._close_session(sess)
@@ -488,7 +510,7 @@ def parse_num(val, default):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="CRISDEV Ultra-Stable WebSocket Proxy v4.6 (Gaming/VoIP Zero-Reconnect)"
+        description="CRISDEV Ultra-Stable WebSocket Proxy v4.7 (wsutil Universal + Gaming/VoIP)"
     )
     parser.add_argument("-b", "--bind", default="0.0.0.0", help="IP de escucha")
     parser.add_argument("-p", "--port", type=str, default=None, help="Puerto de escucha")
