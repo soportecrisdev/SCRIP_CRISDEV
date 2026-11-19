@@ -475,7 +475,7 @@ for p in ("/opt/ssh-cris", "'$(pwd)'"):
 try:
     import crisdev_db
     s = crisdev_db.get_user_stats()
-    print(f"{s[\"total\"]}:{s[\"active\"]}:{s[\"expired\"]}:{s[\"online\"]}:{s[\"locked\"]}")
+    print("{}:{}:{}:{}:{}".format(s["total"], s["active"], s["expired"], s["online"], s["locked"]))
 except Exception:
     pass
 ' 2>/dev/null)
@@ -4558,9 +4558,12 @@ try:
         name = u["username"][:16]
         alias = (u.get("notes") or "-")[:13]
         utype = u.get("user_type", "SSH")[:6]
-        lim = f"{u.get(\"active_sessions\", 0)}/{u.get(\"limit_connections\", 1)}"
-        venc = u.get("expiration_date", "N/A")[:10]
-        rem = f"{u.get(\"days_remaining\", 0)}d"
+        act_sess = u.get("active_sessions", 0)
+        lim_conn = u.get("limit_connections", 1)
+        lim = "{}/{}".format(act_sess, lim_conn)
+        venc = (u.get("expiration_date") or "N/A")[:10]
+        rem_days = u.get("days_remaining", 0)
+        rem = "{}d".format(rem_days)
         st = u.get("status", "active")
         
         if st == "active":
