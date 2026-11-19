@@ -873,6 +873,64 @@ ensure_wsnativo_module() {
     chmod +x "${mod_dir}/"*.sh 2>/dev/null || true
 }
 
+ensure_wsepro_module() {
+    local mod_dir="/opt/ssh-cris/proxy/wsepro"
+    local repo_raw="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy/wsepro"
+    mkdir -p "$mod_dir"
+    for _f in ws-epro instalar.sh desinstalar.sh check.sh config.yml.template; do
+        if [[ ! -s "${mod_dir}/${_f}" ]]; then
+            curl -fsSL "${repo_raw}/${_f}" -o "${mod_dir}/${_f}" 2>/dev/null || \
+            wget -q "${repo_raw}/${_f}" -O "${mod_dir}/${_f}" 2>/dev/null || true
+        fi
+    done
+    chmod +x "${mod_dir}/"*.sh "${mod_dir}/ws-epro" 2>/dev/null || true
+}
+
+ensure_hcr_module() {
+    local mod_dir="/opt/ssh-cris/proxy/hcr"
+    local repo_raw="https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/proxy/hcr"
+    mkdir -p "$mod_dir"
+    for _f in instalar.sh desinstalar.sh check.sh; do
+        if [[ ! -s "${mod_dir}/${_f}" ]]; then
+            curl -fsSL "${repo_raw}/${_f}" -o "${mod_dir}/${_f}" 2>/dev/null || \
+            wget -q "${repo_raw}/${_f}" -O "${mod_dir}/${_f}" 2>/dev/null || true
+        fi
+    done
+    chmod +x "${mod_dir}/"*.sh 2>/dev/null || true
+}
+
+menu_hcr_pro() {
+    ensure_hcr_module
+    while true; do
+        clear
+        local hcr_p
+        hcr_p=$(ss -tlpn 2>/dev/null | grep '"hcr-server"' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs || true)
+
+        msg_bar
+        echo -e "${C_TITLE}       ⚡ HCR RELAY (HTTP CUSTOM RELAY · PLAIN / TLS) ⚡${NC}"
+        msg_bar
+        if [[ -n "$hcr_p" ]]; then
+            echo -e " ${C_ARROW}Estado:${NC} \033[1;32m● ACTIVO\033[0m │ ${C_ARROW}Puerto(s):${NC} \033[1;32m${hcr_p}\033[0m"
+        else
+            echo -e " ${C_ARROW}Estado:${NC} \033[1;31m○ INACTIVO\033[0m"
+        fi
+        echo -e "${C_BORDER}────────────────────────────────────────────────────────────${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}1${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_LABEL}Instalar / Activar HCR Relay${NC} ${C_SUB}(Plain o TLS · frame=2000 · poll=5s)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}2${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_LABEL}Diagnóstico y Logs en Vivo${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}3${C_BRACKET}]${NC} ${C_ARROW}>${NC} \033[1;31mDetener / Desinstalar HCR Relay${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}0${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_BG_EXIT} [ VOLVER AL MENÚ DE PROTOCOLOS ] ${NC}"
+        msg_bar
+        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-3]: ${NC}"
+        read -r h_opt
+        case "$h_opt" in
+            1) bash /opt/ssh-cris/proxy/hcr/instalar.sh ;;
+            2) bash /opt/ssh-cris/proxy/hcr/check.sh ;;
+            3) bash /opt/ssh-cris/proxy/hcr/desinstalar.sh; pause ;;
+            0) return ;;
+        esac
+    done
+}
+
 get_socks_ssh_ports() {
     local pids=""
     pids=$(pgrep -f '/etc/SSHPlus/proxy\.py' 2>/dev/null | while read -r _p; do
@@ -896,18 +954,20 @@ menu_proxies_websocket() {
 
     while true; do
         # Detección 100% REAL por socket TCP escuchando (cero falsos positivos)
-        local sks_ssh_p ws_py_p ws_c_p sks_ovpn_p all_live_ports
+        local sks_ssh_p ws_py_p ws_c_p ws_epro_p sks_ovpn_p all_live_ports
         sks_ssh_p=$(get_socks_ssh_ports)
         ws_py_p=$(get_proc_ports 'wsproxy\.py')
         ws_c_p=$(ss -tlpn 2>/dev/null | grep '"wsproxy-c"' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs || true)
+        ws_epro_p=$(ss -tlpn 2>/dev/null | grep '"ws-epro"' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs || true)
         sks_ovpn_p=$(get_socks_ovpn_ports)
 
-        all_live_ports=$(echo "$sks_ssh_p $ws_py_p $ws_c_p $sks_ovpn_p" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -un | xargs)
+        all_live_ports=$(echo "$sks_ssh_p $ws_py_p $ws_c_p $ws_epro_p $sks_ovpn_p" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -un | xargs)
 
-        local st_sks_ssh st_ws_py st_ws_c st_sks_ovpn
+        local st_sks_ssh st_ws_py st_ws_c st_ws_epro st_sks_ovpn
         [[ -n "$sks_ssh_p" ]]  && st_sks_ssh="\033[1;32m● ACTIVO (: ${sks_ssh_p})\033[0m"  || st_sks_ssh="\033[1;31m○ INACTIVO\033[0m"
         [[ -n "$ws_py_p" ]]    && st_ws_py="\033[1;32m● ACTIVO (: ${ws_py_p})\033[0m"      || st_ws_py="\033[1;31m○ INACTIVO\033[0m"
         [[ -n "$ws_c_p" ]]     && st_ws_c="\033[1;32m● ACTIVO (: ${ws_c_p})\033[0m"        || st_ws_c="\033[1;31m○ INACTIVO\033[0m"
+        [[ -n "$ws_epro_p" ]]  && st_ws_epro="\033[1;32m● ACTIVO (: ${ws_epro_p})\033[0m"  || st_ws_epro="\033[1;31m○ INACTIVO\033[0m"
         [[ -n "$sks_ovpn_p" ]] && st_sks_ovpn="\033[1;32m● ACTIVO (: ${sks_ovpn_p})\033[0m" || st_sks_ovpn="\033[1;31m○ INACTIVO\033[0m"
 
         clear
@@ -923,13 +983,14 @@ menu_proxies_websocket() {
         printf "  ${C_BRACKET}[${C_NUM}1${C_BRACKET}]${NC} ${C_ARROW}>${NC} %-24s %b\n" "SOCKS SSH DIRECTO" "$st_sks_ssh"
         printf "  ${C_BRACKET}[${C_NUM}2${C_BRACKET}]${NC} ${C_ARROW}>${NC} %-24s %b\n" "WEBSOCKET PYTHON v4.9" "$st_ws_py"
         printf "  ${C_BRACKET}[${C_NUM}3${C_BRACKET}]${NC} ${C_ARROW}>${NC} %-24s %b\n" "WEBSOCKET NATIVO EN C" "$st_ws_c"
-        printf "  ${C_BRACKET}[${C_NUM}4${C_BRACKET}]${NC} ${C_ARROW}>${NC} %-24s %b\n" "SOCKS OPENVPN (1194)" "$st_sks_ovpn"
+        printf "  ${C_BRACKET}[${C_NUM}4${C_BRACKET}]${NC} ${C_ARROW}>${NC} %-24s %b\n" "WS-EPRO (HTTP Custom)" "$st_ws_epro"
+        printf "  ${C_BRACKET}[${C_NUM}5${C_BRACKET}]${NC} ${C_ARROW}>${NC} %-24s %b\n" "SOCKS OPENVPN (1194)" "$st_sks_ovpn"
         echo -e "${C_BORDER}────────────────────────────────────────────────────────────${NC}"
-        echo -e "  ${C_BRACKET}[${C_NUM}5${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_LABEL}ABRIR PUERTO EXTRA${NC} ${C_SUB}(Multi-puerto secundario)${NC}"
-        echo -e "  ${C_BRACKET}[${C_NUM}6${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_LABEL}MODIFICAR ESTADO / MINIBANNER Y COLOR${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}6${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_LABEL}ABRIR PUERTO EXTRA${NC} ${C_SUB}(Multi-puerto secundario)${NC}"
+        echo -e "  ${C_BRACKET}[${C_NUM}7${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_LABEL}MODIFICAR ESTADO / MINIBANNER Y COLOR${NC}"
         echo -e "  ${C_BRACKET}[${C_NUM}0${C_BRACKET}]${NC} ${C_ARROW}>${NC} ${C_BG_EXIT} [ VOLVER AL MENÚ DE PROTOCOLOS ] ${NC}"
         msg_bar
-        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-6]: ${NC}"
+        echo -ne " ${C_ARROW}╰━━━❪ Seleccione una opción [0-7]: ${NC}"
         read -r resposta
 
         case "$resposta" in
@@ -1060,9 +1121,40 @@ menu_proxies_websocket() {
                 ;;
 
             # ------------------------------------------------------------------
-            # [4] SOCKS OPENVPN
+            # [4] WS-EPRO (ePro Dev Team · HTTP Custom Engine — proxy/wsepro/)
             # ------------------------------------------------------------------
             4)
+                ensure_wsepro_module
+                if [[ -n "$ws_epro_p" ]]; then
+                    clear
+                    echo -e "\E[44;1;37m          WS-EPRO — ACTIVO EN PUERTO ${ws_epro_p}          \E[0m\n"
+                    echo -e "  \033[1;31m[1]\033[0m \033[1;37mDESACTIVAR / DESINSTALAR WS-EPRO\033[0m"
+                    echo -e "  \033[1;33m[2]\033[0m \033[1;37mRECONFIGURAR (Puerto / Destino YAML)\033[0m"
+                    echo -e "  \033[1;32m[3]\033[0m \033[1;37mDIAGNÓSTICO Y TEST EN VIVO (RAM / MTU 1280 / curl)\033[0m"
+                    echo -e "  \033[1;36m[0]\033[0m \033[1;37mVOLVER (Mantener activo)\033[0m\n"
+                    echo -ne "\033[1;32m¿Qué desea hacer? [0-3]: \033[0m"
+                    read -r we_act
+                    case "$we_act" in
+                        1)
+                            bash /opt/ssh-cris/proxy/wsepro/desinstalar.sh
+                            sleep 1.5
+                            ;;
+                        2)
+                            bash /opt/ssh-cris/proxy/wsepro/instalar.sh
+                            ;;
+                        3)
+                            bash /opt/ssh-cris/proxy/wsepro/check.sh
+                            ;;
+                    esac
+                else
+                    bash /opt/ssh-cris/proxy/wsepro/instalar.sh
+                fi
+                ;;
+
+            # ------------------------------------------------------------------
+            # [5] SOCKS OPENVPN
+            # ------------------------------------------------------------------
+            5)
                 if [[ -n "$sks_ovpn_p" ]]; then
                     clear
                     echo -e "\E[41;1;37m        DESACTIVAR SOCKS OPENVPN (PUERTO ${sks_ovpn_p})        \E[0m\n"
@@ -1094,9 +1186,9 @@ menu_proxies_websocket() {
                 ;;
 
             # ------------------------------------------------------------------
-            # [5] ABRIR PUERTO EXTRA
+            # [6] ABRIR PUERTO EXTRA
             # ------------------------------------------------------------------
-            5)
+            6)
                 clear
                 echo -e "\E[44;1;37m               ABRIR PUERTO EXTRA               \E[0m\n"
                 echo -e "  [1] > WEBSOCKET PYTHON v4.9 (Destino 22)"
@@ -1131,9 +1223,9 @@ menu_proxies_websocket() {
                 ;;
 
             # ------------------------------------------------------------------
-            # [6] MODIFICAR ESTADO / MINIBANNER Y COLOR
+            # [7] MODIFICAR ESTADO / MINIBANNER Y COLOR
             # ------------------------------------------------------------------
-            6)
+            7)
                 clear
                 echo -e "\E[44;1;37m       MODIFICAR MINIBANNER Y COLOR HTML       \E[0m\n"
                 echo -ne "\033[1;32mNuevo texto de minibanner (default: HTTP CONEXION): \033[1;37m"
@@ -3869,8 +3961,10 @@ menu_protocolos() {
         [[ -n "$ssh_p" ]] && active_services+=("🔌 OpenSSH Directo      ➔ Puerto(s): ${C_NUM}${ssh_p}${NC} ${C_SUB}(TCP)${NC}")
         local _ws_c_dsp; _ws_c_dsp=$(ss -tlpn 2>/dev/null | grep '"wsproxy-c"' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs || true)
         local _ws_py_dsp; _ws_py_dsp=$(get_proc_ports 'wsproxy\.py')
-        [[ -n "$_ws_c_dsp" ]] && active_services+=("🔌 WebSocket Nativo C   ➔ Puerto(s): ${C_NUM}${_ws_c_dsp}${NC} ${C_SUB}(TCP) [epoll 16k conns]${NC}")
+        local _ws_epro_dsp; _ws_epro_dsp=$(ss -tlpn 2>/dev/null | grep '"ws-epro"' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs || true)
+        [[ -n "$_ws_c_dsp" ]] && active_services+=("🔌 WebSocket Nativo C   ➔ Puerto(s): ${C_NUM}${_ws_c_dsp}${NC} ${C_SUB}(TCP) [epoll v3.0 Anti-DPI]${NC}")
         [[ -n "$_ws_py_dsp" ]] && active_services+=("🔌 WebSocket Python v4.9 ➔ Puerto(s): ${C_NUM}${_ws_py_dsp}${NC} ${C_SUB}(TCP) [wsutil Zero-Reconnect]${NC}")
+        [[ -n "$_ws_epro_dsp" ]] && active_services+=("🔌 WS-ePro (HTTP Custom) ➔ Puerto(s): ${C_NUM}${_ws_epro_dsp}${NC} ${C_SUB}(TCP) [ePro Dev Team]${NC}")
         [[ -n "$sks_p" ]] && active_services+=("🔌 Proxy SOCKS TCP      ➔ Puerto(s): ${C_NUM}${sks_p}${NC} ${C_SUB}(TCP)${NC}")
         [[ -n "$ssl_p" ]] && active_services+=("🔌 SSL / Stunnel        ➔ Puerto(s): ${C_NUM}${ssl_p}${NC} ${C_SUB}(TCP/TLS)${NC}")
         [[ -n "$drp_p" ]] && active_services+=("🔌 Dropbear SSH         ➔ Puerto(s): ${C_NUM}${drp_p}${NC} ${C_SUB}(TCP)${NC}")
@@ -3943,10 +4037,7 @@ menu_protocolos() {
         [[ $is_ziv_active -eq 1 ]] && sts_ziv="\033[1;32m●\033[0m" || sts_ziv="\033[1;31m○\033[0m"
 
         local sts_ws_any="\033[1;31m○\033[0m"
-        [[ -n "$_ws_c_dsp" || -n "$_ws_py_dsp" || -n "$ws_p" || -n "$sks_p" ]] && sts_ws_any="\033[1;32m●\033[0m"
-
-        local sts_ws_any="[1;31m○[0m"
-        [[ -n "$_ws_c_dsp" || -n "$_ws_py_dsp" || -n "$ws_p" || -n "$sks_p" ]] && sts_ws_any="[1;32m●[0m"
+        [[ -n "$_ws_c_dsp" || -n "$_ws_py_dsp" || -n "$_ws_epro_dsp" || -n "$sks_p" ]] && sts_ws_any="\033[1;32m●\033[0m"
 
         printf "  ${C_BRACKET}[${C_NUM}01${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}11${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "OPENSSH" "$sts_ssh" "OPENVPN" "$sts_ovpn"
         printf "  ${C_BRACKET}[${C_NUM}02${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b    ${C_BRACKET}[${C_NUM}12${C_BRACKET}]${NC} ${C_ARROW}➮${NC} %-17s %b\n" "SOCKS & WEBSOCKET" "$sts_ws_any" "GESTIÓN PUERTOS WS" "$sts_ws_any"
@@ -4003,32 +4094,7 @@ menu_protocolos() {
             14) fun_squid ;;
             15) fun_chisel ;;
             16) menu_bhttp ;;
-            17)
-                [[ -L /bin/hcr-manager && ! -e /bin/hcr-manager ]] && rm -f /bin/hcr-manager 2>/dev/null
-                [[ -L /usr/bin/hcr-manager && ! -e /usr/bin/hcr-manager ]] && rm -f /usr/bin/hcr-manager 2>/dev/null
-                if [[ -s /bin/hcr-manager && -x /bin/hcr-manager && ! -L /bin/hcr-manager ]]; then
-                    /bin/hcr-manager
-                elif [[ -s /usr/bin/hcr-manager && -x /usr/bin/hcr-manager && ! -L /usr/bin/hcr-manager ]]; then
-                    /usr/bin/hcr-manager
-                elif [[ -f /opt/ssh-cris/Modulos/hcr-manager ]]; then
-                    bash /opt/ssh-cris/Modulos/hcr-manager
-                else
-                    clear
-                    echo -e "\033[1;32mDescargando e iniciando HCR Manager...\033[0m"
-                    rm -f /bin/hcr-manager /usr/bin/hcr-manager 2>/dev/null || true
-                    curl -fsSL "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager" -o /bin/hcr-manager 2>/dev/null || \
-                    wget -q "https://raw.githubusercontent.com/soportecrisdev/SCRIP_CRISDEV/main/Modulos/hcr-manager" -O /bin/hcr-manager 2>/dev/null || \
-                    curl -fsSL "https://raw.githubusercontent.com/karl1999x/PandaScript/main/SCRIPTS/hcr-manager" -o /bin/hcr-manager 2>/dev/null || \
-                    wget -q "https://raw.githubusercontent.com/karl1999x/PandaScript/main/SCRIPTS/hcr-manager" -O /bin/hcr-manager 2>/dev/null || true
-                    chmod +x /bin/hcr-manager 2>/dev/null || true
-                    if [[ -s /bin/hcr-manager ]]; then
-                        /bin/hcr-manager
-                    else
-                        echo -e "\033[1;31mError al descargar HCR Manager. Verifique conexion o actualice el repositorio.\033[0m"
-                        sleep 2
-                    fi
-                fi
-                ;;
+            17) menu_hcr_pro ;;
             18)
                 clear
                 echo -e "\033[1;33mTrojan-Go integrado via motor Xray (Puerto 443 / 8443).\033[0m"

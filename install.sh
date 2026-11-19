@@ -147,7 +147,7 @@ if [[ "$IS_UPDATE" -eq 1 && ( "${1:-}" == "--update" || "${1:-}" == "-u" || "${1
     echo -e "${CYAN}============================================================${NC}"
     echo -e "${WHITE}   ⚡ ACTUALIZACIÓN LIMPIA — HTTP CONEXIÓN (SOLO SCRIPT) ⚡${NC}"
     echo -e "${CYAN}============================================================${NC}"
-    mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/proxy/wsclasico" "$INSTALL_DIR/proxy/wsnativo" "$INSTALL_DIR/badvpn" /usr/local/bin /usr/local/src /etc/SSHPlus
+    mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/proxy/wsclasico" "$INSTALL_DIR/proxy/wsnativo" "$INSTALL_DIR/proxy/wsepro" "$INSTALL_DIR/proxy/hcr" "$INSTALL_DIR/badvpn" /usr/local/bin /usr/local/src /etc/SSHPlus
 
     echo -e "${YELLOW}[1/3]${NC} Descargando menú actualizado (ssh-cris.sh)..."
     curl -fsSL "$REPO_RAW/ssh-cris.sh" -o "$INSTALL_DIR/$BIN_NAME" 2>/dev/null || \
@@ -156,7 +156,7 @@ if [[ "$IS_UPDATE" -eq 1 && ( "${1:-}" == "--update" || "${1:-}" == "-u" || "${1
     ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/local/bin/menu
     ln -sfn "$INSTALL_DIR/$BIN_NAME" /usr/bin/menu
 
-    echo -e "${YELLOW}[2/3]${NC} Descargando módulos proxy/wsclasico, proxy/wsnativo y badvpn..."
+    echo -e "${YELLOW}[2/3]${NC} Descargando módulos proxy (wsclasico, wsnativo, wsepro, hcr) y badvpn..."
     for _pf in wsproxy.py instalar.sh desinstalar.sh check.sh ws.conf.template; do
         curl -fsSL "$REPO_RAW/proxy/wsclasico/$_pf" -o "$INSTALL_DIR/proxy/wsclasico/$_pf" 2>/dev/null || \
             wget -q "$REPO_RAW/proxy/wsclasico/$_pf" -O "$INSTALL_DIR/proxy/wsclasico/$_pf" 2>/dev/null || true
@@ -172,6 +172,18 @@ if [[ "$IS_UPDATE" -eq 1 && ( "${1:-}" == "--update" || "${1:-}" == "-u" || "${1
     done
     chmod +x "$INSTALL_DIR/proxy/wsnativo/"*.sh 2>/dev/null || true
     cp -af "$INSTALL_DIR/proxy/wsnativo/wsproxy-c.c" /usr/local/src/wsproxy-c.c 2>/dev/null || true
+
+    for _ef in ws-epro instalar.sh desinstalar.sh check.sh config.yml.template; do
+        curl -fsSL "$REPO_RAW/proxy/wsepro/$_ef" -o "$INSTALL_DIR/proxy/wsepro/$_ef" 2>/dev/null || \
+            wget -q "$REPO_RAW/proxy/wsepro/$_ef" -O "$INSTALL_DIR/proxy/wsepro/$_ef" 2>/dev/null || true
+    done
+    chmod +x "$INSTALL_DIR/proxy/wsepro/"*.sh "$INSTALL_DIR/proxy/wsepro/ws-epro" 2>/dev/null || true
+
+    for _hf in instalar.sh desinstalar.sh check.sh; do
+        curl -fsSL "$REPO_RAW/proxy/hcr/$_hf" -o "$INSTALL_DIR/proxy/hcr/$_hf" 2>/dev/null || \
+            wget -q "$REPO_RAW/proxy/hcr/$_hf" -O "$INSTALL_DIR/proxy/hcr/$_hf" 2>/dev/null || true
+    done
+    chmod +x "$INSTALL_DIR/proxy/hcr/"*.sh 2>/dev/null || true
 
     for _bf in instalar.sh desinstalar.sh check.sh udp antcrashvpn.sh; do
         curl -fsSL "$REPO_RAW/badvpn/$_bf" -o "$INSTALL_DIR/badvpn/$_bf" 2>/dev/null || \
