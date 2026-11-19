@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# INSTALADOR COMPLETO — WEBSOCKET CLÁSICO PYTHON v4.8 (GAMING / VOIP / ANTI-MTU)
+# INSTALADOR COMPLETO — WEBSOCKET CLÁSICO PYTHON v4.9 (GAMING / VOIP / ANTI-MTU)
 # Ubicación: proxy/wsclasico/instalar.sh
 # ==============================================================================
 
@@ -61,12 +61,16 @@ net.core.netdev_max_backlog = 65535
 EOF_SYSCTL
     sysctl -p /etc/sysctl.d/98-crisdev-ws-gaming.conf >/dev/null 2>&1 || true
 
-    # 2. TCP MSS Clamping en iptables (evita Blackhole MTU en operadoras 4G/LTE)
+    # 2. TCP MSS Clamping + MSS fijo 1220 (MTU efectivo 1280 en puerto WS -> 1:1 con móvil LTE)
     if command -v iptables >/dev/null 2>&1; then
         iptables -t mangle -C POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || \
         iptables -t mangle -A POSTROUTING -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
         iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || \
         iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+        if [[ -n "${WS_PORT:-}" && "${WS_PORT}" =~ ^[0-9]+$ ]]; then
+            iptables -t mangle -C OUTPUT -p tcp --sport "${WS_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1220 2>/dev/null || \
+            iptables -t mangle -A OUTPUT -p tcp --sport "${WS_PORT}" --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1220 2>/dev/null || true
+        fi
     fi
 
     # 3. Afinamiento OpenSSH para evitar caídas en túneles largos
@@ -92,7 +96,7 @@ EOF_SSH
 }
 
 clear
-echo -e "${C_BLUE_BG}   ACTIVAR WEBSOCKET CLÁSICO PYTHON v4.8 (INSTALACIÓN COMPLETA)   ${NC}\n"
+echo -e "${C_BLUE_BG}   ACTIVAR WEBSOCKET CLÁSICO PYTHON v4.9 (INSTALACIÓN COMPLETA)   ${NC}\n"
 echo -e "${C_YELLOW}• Motor epoll puro + Anti-CGNAT Keep-Alive (20s/5s) + Cero Timeouts${NC}"
 echo -e "${C_YELLOW}• Optimizado para Juegos (TCP_NODELAY + LowDelay) y Llamadas VoIP${NC}"
 echo -e "${C_YELLOW}• Protección Anti-Bloqueo MTU (MSS Clamping + MTU Probing)${NC}\n"
@@ -209,14 +213,15 @@ clear
 line_bar
 echo -e "${C_CYAN}           CONFIGURAR WEBSOCKET (RESPUESTA HTTP)${NC}"
 line_bar
-echo -e "${C_GREEN}[PASO 3/6] CÓDIGO DE RESPUESTA HTTP${NC}\n"
-echo -e "  ${C_GREEN}[101]${NC} Switching Protocols ${C_YELLOW}(RECOMENDADO: Anti-corte DPI Tigo/Claro + Cloudflare CDN)${NC}"
-echo -e "  ${C_GREEN}[200]${NC} HTTP OK             ${C_YELLOW}(Solo payloads antiguos; algunas operadoras cortan 200 cada 3-5s)${NC}\n"
-echo -ne "${C_WHITE}Ingresa código de respuesta [101 / 200] (default 101): ${NC}"
+echo -e "${C_GREEN}[PASO 3/6] MODO DE RESPUESTA HTTP (ANTI-DPI & CDN)${NC}\n"
+echo -e "  ${C_GREEN}[auto]${NC} INTELIGENTE         ${C_YELLOW}(RECOMENDADO: 101 a CDN/WS + 200 limpio a Payloads Directos)${NC}"
+echo -e "  ${C_GREEN}[101]${NC}  Switching Protocols ${C_YELLOW}(Forzado 101 para Cloudflare / CloudFront / WS)${NC}"
+echo -e "  ${C_GREEN}[200]${NC}  HTTP OK Limpio      ${C_YELLOW}(Forzado 200 sin Content-Length: 0 para Payloads Directos)${NC}\n"
+echo -ne "${C_WHITE}Ingresa modo de respuesta [auto / 101 / 200] (default auto): ${NC}"
 read -r HTTP_CODE
-[[ -z "$HTTP_CODE" ]] && HTTP_CODE="101"
-if [[ "$HTTP_CODE" != "101" && "$HTTP_CODE" != "200" && ! "$HTTP_CODE" =~ ^[0-9]{3}$ ]]; then
-    HTTP_CODE="101"
+[[ -z "$HTTP_CODE" ]] && HTTP_CODE="auto"
+if [[ "$HTTP_CODE" != "auto" && "$HTTP_CODE" != "101" && "$HTTP_CODE" != "200" && ! "$HTTP_CODE" =~ ^[0-9]{3}$ ]]; then
+    HTTP_CODE="auto"
 fi
 
 # ------------------------------------------------------------------------------
@@ -281,12 +286,12 @@ fi
 # ------------------------------------------------------------------------------
 clear
 line_bar
-echo -e "${C_CYAN}     INSTALANDO Y OPTIMIZANDO WEBSOCKET PYTHON v4.8...${NC}"
+echo -e "${C_CYAN}     INSTALANDO Y OPTIMIZANDO WEBSOCKET PYTHON v4.9...${NC}"
 line_bar
 
 mkdir -p "$CONF_DIR" /usr/local/bin /etc/SSHPlus
 
-# Copiar el núcleo v4.8 a /usr/local/bin y /etc/SSHPlus
+# Copiar el núcleo v4.9 a /usr/local/bin y /etc/SSHPlus
 if [[ -f "${SCRIPT_DIR}/wsproxy.py" ]]; then
     cp -af "${SCRIPT_DIR}/wsproxy.py" "$BIN_DEST"
     cp -af "${SCRIPT_DIR}/wsproxy.py" /etc/SSHPlus/wsproxy.py 2>/dev/null || true
@@ -328,7 +333,7 @@ apply_gaming_voip_mtu_tuning
 # Crear servicio systemd limpio con valores resueltos (inmune a errores de expansión)
 cat > "$SERVICE_FILE" <<EOF_SVC
 [Unit]
-Description=CRISDEV Ultra-Stable WebSocket Proxy (Python v4.8 Gaming/VoIP Zero-Reconnect)
+Description=CRISDEV Ultra-Stable WebSocket Proxy (Python v4.9 Gaming/VoIP Zero-Reconnect)
 After=network-online.target ssh.service
 Wants=network-online.target ssh.service
 StartLimitIntervalSec=0
@@ -367,7 +372,7 @@ LIVE_PORT=$(get_service_ports 'wsproxy\.py')
 
 echo ""
 if [[ -n "$LIVE_PORT" ]]; then
-    echo -e "${C_GREEN}✔ WEBSOCKET CLÁSICO PYTHON v4.8 ACTIVADO EXITOSAMENTE${NC}"
+    echo -e "${C_GREEN}✔ WEBSOCKET CLÁSICO PYTHON v4.9 ACTIVADO EXITOSAMENTE${NC}"
     echo -e "${C_WHITE}  • Puerto Activo  : ${C_GREEN}${LIVE_PORT} (TCP)${NC}"
     echo -e "${C_WHITE}  • Destino Local  : ${C_CYAN}${TARGET_HOST}:${TARGET_PORT}${NC}"
     echo -e "${C_WHITE}  • Respuesta HTTP : ${C_GREEN}HTTP ${HTTP_CODE}${NC}"
@@ -385,7 +390,7 @@ if [[ -n "$LIVE_PORT" ]]; then
     echo -e "${C_YELLOW}[*] Prueba en vivo de respuesta HTTP (127.0.0.1:${WS_PORT}):${NC}"
     curl -i -s -N --max-time 2 "http://127.0.0.1:${WS_PORT}/" | head -6 || true
 else
-    echo -e "${C_RED}✖ Error al iniciar WebSocket Python v4.8. Últimos logs:${NC}"
+    echo -e "${C_RED}✖ Error al iniciar WebSocket Python v4.9. Últimos logs:${NC}"
     journalctl -u "$SERVICE_NAME" -n 12 --no-pager 2>/dev/null || true
     exit 1
 fi

@@ -908,7 +908,7 @@ menu_proxies_websocket() {
         fi
         echo -e "${C_BORDER}────────────────────────────────────────────────────────────${NC}"
         printf "  ${C_BRACKET}[${C_NUM}1${C_BRACKET}]${NC} ${C_ARROW}>${NC} %-24s %b\n" "SOCKS SSH DIRECTO" "$st_sks_ssh"
-        printf "  ${C_BRACKET}[${C_NUM}2${C_BRACKET}]${NC} ${C_ARROW}>${NC} %-24s %b\n" "WEBSOCKET PYTHON v4.8" "$st_ws_py"
+        printf "  ${C_BRACKET}[${C_NUM}2${C_BRACKET}]${NC} ${C_ARROW}>${NC} %-24s %b\n" "WEBSOCKET PYTHON v4.9" "$st_ws_py"
         printf "  ${C_BRACKET}[${C_NUM}3${C_BRACKET}]${NC} ${C_ARROW}>${NC} %-24s %b\n" "WEBSOCKET NATIVO EN C" "$st_ws_c"
         printf "  ${C_BRACKET}[${C_NUM}4${C_BRACKET}]${NC} ${C_ARROW}>${NC} %-24s %b\n" "SOCKS OPENVPN (1194)" "$st_sks_ovpn"
         echo -e "${C_BORDER}────────────────────────────────────────────────────────────${NC}"
@@ -991,7 +991,7 @@ menu_proxies_websocket() {
                 ensure_wsclasico_module
                 if [[ -n "$ws_py_p" ]]; then
                     clear
-                    echo -e "\E[44;1;37m      WEBSOCKET PYTHON v4.8 — ACTIVO EN PUERTO ${ws_py_p}      \E[0m\n"
+                    echo -e "\E[44;1;37m      WEBSOCKET PYTHON v4.9 — ACTIVO EN PUERTO ${ws_py_p}      \E[0m\n"
                     echo -e "  \033[1;31m[1]\033[0m \033[1;37mDESACTIVAR / APAGAR WEBSOCKET PYTHON\033[0m"
                     echo -e "  \033[1;33m[2]\033[0m \033[1;37mRECONFIGURAR (Puerto / Destino / Banner / Color)\033[0m"
                     echo -e "  \033[1;32m[3]\033[0m \033[1;37mDIAGNÓSTICO Y TEST EN VIVO (curl / MTU / BadVPN)\033[0m"
@@ -1181,7 +1181,7 @@ EOF_WSC_SVC
             5)
                 clear
                 echo -e "\E[44;1;37m               ABRIR PUERTO EXTRA               \E[0m\n"
-                echo -e "  [1] > WEBSOCKET PYTHON v4.8 (Destino 22)"
+                echo -e "  [1] > WEBSOCKET PYTHON v4.9 (Destino 22)"
                 echo -e "  [2] > SOCKS SSH (Destino 22)"
                 echo -e "  [3] > SOCKS OPENVPN (Destino 1194)"
                 echo -e "  [0] > VOLVER\n"
@@ -3952,7 +3952,7 @@ menu_protocolos() {
         local _ws_c_dsp; _ws_c_dsp=$(get_proc_ports 'wsproxy-c')
         local _ws_py_dsp; _ws_py_dsp=$(get_proc_ports 'wsproxy\.py')
         [[ -n "$_ws_c_dsp" ]] && active_services+=("🔌 WebSocket Nativo C   ➔ Puerto(s): ${C_NUM}${_ws_c_dsp}${NC} ${C_SUB}(TCP) [epoll 16k conns]${NC}")
-        [[ -n "$_ws_py_dsp" ]] && active_services+=("🔌 WebSocket Python v4.8 ➔ Puerto(s): ${C_NUM}${_ws_py_dsp}${NC} ${C_SUB}(TCP) [wsutil Zero-Reconnect]${NC}")
+        [[ -n "$_ws_py_dsp" ]] && active_services+=("🔌 WebSocket Python v4.9 ➔ Puerto(s): ${C_NUM}${_ws_py_dsp}${NC} ${C_SUB}(TCP) [wsutil Zero-Reconnect]${NC}")
         [[ -n "$sks_p" ]] && active_services+=("🔌 Proxy SOCKS TCP      ➔ Puerto(s): ${C_NUM}${sks_p}${NC} ${C_SUB}(TCP)${NC}")
         [[ -n "$ssl_p" ]] && active_services+=("🔌 SSL / Stunnel        ➔ Puerto(s): ${C_NUM}${ssl_p}${NC} ${C_SUB}(TCP/TLS)${NC}")
         [[ -n "$drp_p" ]] && active_services+=("🔌 Dropbear SSH         ➔ Puerto(s): ${C_NUM}${drp_p}${NC} ${C_SUB}(TCP)${NC}")

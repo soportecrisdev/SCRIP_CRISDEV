@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# DIAGNÓSTICO EN VIVO — WEBSOCKET CLÁSICO PYTHON v4.8 (CDN + ANTI-DROP LTE)
+# DIAGNÓSTICO EN VIVO — WEBSOCKET CLÁSICO PYTHON v4.9 (CDN + ANTI-DROP LTE)
 # Ubicación: proxy/wsclasico/check.sh
 # ==============================================================================
 
@@ -15,7 +15,7 @@ NC='\033[0m'
 
 clear
 echo -e "${C_CYAN}============================================================${NC}"
-echo -e "${C_CYAN}     DIAGNÓSTICO EN VIVO — WEBSOCKET PYTHON v4.8${NC}"
+echo -e "${C_CYAN}     DIAGNÓSTICO EN VIVO — WEBSOCKET PYTHON v4.9${NC}"
 echo -e "${C_CYAN}============================================================${NC}"
 
 PIDS=$(pgrep -f 'wsproxy\.py' 2>/dev/null | tr '\n' '|' | sed 's/|$//')
@@ -28,7 +28,7 @@ if [[ -n "$LIVE_PORTS" ]]; then
     # Lectura real de RSS en KB usando ps -eo rss,args
     RAM_KB=$(ps -eo rss,args 2>/dev/null | grep '[w]sproxy\.py' | awk '{s+=$1} END {print s+0}')
     RAM_MB=$(awk "BEGIN {printf \"%.1f MB\", ${RAM_KB:-0}/1024}")
-    echo -e "${C_GREEN}● ESTADO         : ACTIVO Y ESCUCHANDO (v4.8 Carrier-Grade)${NC}"
+    echo -e "${C_GREEN}● ESTADO         : ACTIVO Y ESCUCHANDO (v4.9 Carrier-Grade)${NC}"
     echo -e "${C_WHITE}• Puerto(s) TCP  : ${C_GREEN}${LIVE_PORTS}${NC}"
     echo -e "${C_WHITE}• Memoria RAM    : ${C_CYAN}${RAM_MB}${NC}"
     for _p in $LIVE_PORTS; do
@@ -53,8 +53,13 @@ if iptables -t mangle -S POSTROUTING 2>/dev/null | grep -q 'clamp-mss-to-pmtu'; 
     MSS_CLAMP="ACTIVO"
 fi
 
-echo -e "${C_WHITE}• Interfaz / MTU : ${C_GREEN}${DEF_IFACE:-eth0} (MTU=${IFACE_MTU})${NC} │ Base MSS: ${C_GREEN}${BASE_MSS}${NC}"
-echo -e "${C_WHITE}• MTU Probing    : ${C_GREEN}${MTU_CUR}${NC} │ MSS Clamping: ${C_GREEN}${MSS_CLAMP}${NC} │ TCP: ${C_GREEN}${BBR_CUR}${NC}"
+MSS_1220="INACTIVO"
+if iptables -t mangle -S OUTPUT 2>/dev/null | grep -q 'set-mss 1220'; then
+    MSS_1220="ACTIVO (MTU=1280)"
+fi
+
+echo -e "${C_WHITE}• Interfaz / MTU : ${C_GREEN}${DEF_IFACE:-eth0} (NIC=${IFACE_MTU})${NC} │ WS Efectivo: ${C_GREEN}${MSS_1220}${NC}"
+echo -e "${C_WHITE}• MTU Probing    : ${C_GREEN}${MTU_CUR}${NC} │ Base MSS: ${C_GREEN}${BASE_MSS}${NC} │ Clamping: ${C_GREEN}${MSS_CLAMP}${NC} │ TCP: ${C_GREEN}${BBR_CUR}${NC}"
 
 if ss -tlpn 2>/dev/null | grep -q 'badvpn-udpgw'; then
     echo -e "${C_WHITE}• BadVPN (7300)  : ${C_GREEN}● ACTIVO (Juegos y Llamadas VoIP listos)${NC}"

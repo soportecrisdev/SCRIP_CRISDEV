@@ -1,5 +1,5 @@
 # ==============================================================================
-# Plantilla de Configuración — CRISDEV WebSocket Clásico Python v4.8
+# Plantilla de Configuración — CRISDEV WebSocket Clásico Python v4.9
 # ==============================================================================
 LISTEN_ADDR=0.0.0.0
 LISTEN_PORT=80
