@@ -136,7 +136,9 @@ if [[ -n "$OCCUPIED" ]]; then
             systemctl stop "$_svc" 2>/dev/null || true
             systemctl disable "$_svc" 2>/dev/null || true
         done
-        pkill -9 -f 'wsproxy-c' 2>/dev/null || true
+        rm -f /etc/systemd/system/crisdev-ws-c.service /etc/systemd/system/sshplus-ws.service /etc/systemd/system/wsproxy-c.service 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+        pkill -9 -x 'wsproxy-c' 2>/dev/null || pkill -9 -f 'wsproxy-c' 2>/dev/null || true
     fi
     if echo "$OCCUPIED" | grep -q 'python'; then
         systemctl stop crisdev-ws-python.service 2>/dev/null || true

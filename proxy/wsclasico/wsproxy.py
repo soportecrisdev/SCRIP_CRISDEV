@@ -151,10 +151,6 @@ class EpollWsProxy:
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            self.server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        except Exception:
-            pass
-        try:
             self.server_sock.setsockopt(socket.IPPROTO_TCP, TCP_MAXSEG, CLIENT_MSS_1280)
         except Exception:
             pass

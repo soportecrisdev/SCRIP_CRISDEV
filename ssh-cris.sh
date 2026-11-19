@@ -886,7 +886,7 @@ menu_proxies_websocket() {
         local sks_ssh_p ws_py_p ws_c_p sks_ovpn_p all_live_ports
         sks_ssh_p=$(get_socks_ssh_ports)
         ws_py_p=$(get_proc_ports 'wsproxy\.py')
-        ws_c_p=$(get_proc_ports 'wsproxy-c')
+        ws_c_p=$(ss -tlpn 2>/dev/null | grep '"wsproxy-c"' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs || true)
         sks_ovpn_p=$(get_socks_ovpn_ports)
 
         all_live_ports=$(echo "$sks_ssh_p $ws_py_p $ws_c_p $sks_ovpn_p" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -un | xargs)
@@ -1042,15 +1042,16 @@ menu_proxies_websocket() {
                                 systemctl stop "$_svc" 2>/dev/null || true
                                 systemctl disable "$_svc" 2>/dev/null || true
                             done
+                            rm -f /etc/systemd/system/crisdev-ws-c.service /etc/systemd/system/sshplus-ws.service /etc/systemd/system/wsproxy-c.service 2>/dev/null || true
                             [[ -f /etc/autostart ]] && sed -i '/wsproxy-c/d' /etc/autostart 2>/dev/null || true
-                            pkill -9 -f 'wsproxy-c' 2>/dev/null || true
+                            pkill -9 -x 'wsproxy-c' 2>/dev/null || pkill -9 -f 'wsproxy-c' 2>/dev/null || true
                             rm -f /etc/crisdev/ws-c.conf 2>/dev/null || true
                             systemctl daemon-reload 2>/dev/null || true
                             sleep 0.8
-                            if [[ -z "$(get_proc_ports 'wsproxy-c')" ]]; then
-                                echo -e "\n\033[1;32m✔ WebSocket Nativo en C apagado y deshabilitado limpiamente.\033[0m"
+                            if [[ -z "$(ss -tlpn 2>/dev/null | grep '"wsproxy-c"')" ]]; then
+                                echo -e "\n\033[1;32m✔ WebSocket Nativo en C apagado y desinstalado limpiamente.\033[0m"
                             else
-                                echo -e "\n\033[1;31m[!] Aún se detecta wsproxy-c. Verifica procesos/cron externos.\033[0m"
+                                echo -e "\n\033[1;31m[!] Aún se detecta wsproxy-c. Verifica cron o watchdog externo.\033[0m"
                             fi
                             sleep 1.5
                             continue
@@ -3973,7 +3974,7 @@ menu_protocolos() {
         # Recopilar servicios y puertos con servicio habilitado
         local active_services=()
         [[ -n "$ssh_p" ]] && active_services+=("🔌 OpenSSH Directo      ➔ Puerto(s): ${C_NUM}${ssh_p}${NC} ${C_SUB}(TCP)${NC}")
-        local _ws_c_dsp; _ws_c_dsp=$(get_proc_ports 'wsproxy-c')
+        local _ws_c_dsp; _ws_c_dsp=$(ss -tlpn 2>/dev/null | grep '"wsproxy-c"' | awk '{print $4}' | awk -F: '{print $NF}' | sort -un | xargs || true)
         local _ws_py_dsp; _ws_py_dsp=$(get_proc_ports 'wsproxy\.py')
         [[ -n "$_ws_c_dsp" ]] && active_services+=("🔌 WebSocket Nativo C   ➔ Puerto(s): ${C_NUM}${_ws_c_dsp}${NC} ${C_SUB}(TCP) [epoll 16k conns]${NC}")
         [[ -n "$_ws_py_dsp" ]] && active_services+=("🔌 WebSocket Python v4.9 ➔ Puerto(s): ${C_NUM}${_ws_py_dsp}${NC} ${C_SUB}(TCP) [wsutil Zero-Reconnect]${NC}")
