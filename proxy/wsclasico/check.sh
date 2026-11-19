@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# DIAGNÓSTICO EN VIVO — WEBSOCKET CLÁSICO PYTHON v4.7
+# DIAGNÓSTICO EN VIVO — WEBSOCKET CLÁSICO PYTHON v4.8 (CDN + ANTI-DROP LTE)
 # Ubicación: proxy/wsclasico/check.sh
 # ==============================================================================
 
@@ -15,7 +15,7 @@ NC='\033[0m'
 
 clear
 echo -e "${C_CYAN}============================================================${NC}"
-echo -e "${C_CYAN}     DIAGNÓSTICO EN VIVO — WEBSOCKET PYTHON v4.7${NC}"
+echo -e "${C_CYAN}     DIAGNÓSTICO EN VIVO — WEBSOCKET PYTHON v4.8${NC}"
 echo -e "${C_CYAN}============================================================${NC}"
 
 PIDS=$(pgrep -f 'wsproxy\.py' 2>/dev/null | tr '\n' '|' | sed 's/|$//')
@@ -25,16 +25,27 @@ if [[ -n "$PIDS" ]]; then
 fi
 
 if [[ -n "$LIVE_PORTS" ]]; then
-    RAM_KB=$(ps -ef 2>/dev/null | grep '[w]sproxy\.py' | awk '{s+=$6} END {print s+0}')
+    # Lectura real de RSS en KB usando ps -eo rss,args
+    RAM_KB=$(ps -eo rss,args 2>/dev/null | grep '[w]sproxy\.py' | awk '{s+=$1} END {print s+0}')
     RAM_MB=$(awk "BEGIN {printf \"%.1f MB\", ${RAM_KB:-0}/1024}")
-    echo -e "${C_GREEN}● ESTADO         : ACTIVO Y ESCUCHANDO${NC}"
+    echo -e "${C_GREEN}● ESTADO         : ACTIVO Y ESCUCHANDO (v4.8 Carrier-Grade)${NC}"
     echo -e "${C_WHITE}• Puerto(s) TCP  : ${C_GREEN}${LIVE_PORTS}${NC}"
     echo -e "${C_WHITE}• Memoria RAM    : ${C_CYAN}${RAM_MB}${NC}"
+    for _p in $LIVE_PORTS; do
+        _conns=$(ss -tn state established "( sport = :${_p} )" 2>/dev/null | tail -n +2 | wc -l)
+        echo -e "${C_WHITE}• Conexiones :${_p} : ${C_GREEN}${_conns} clientes activos${NC}"
+    done
 else
     echo -e "${C_RED}○ ESTADO         : INACTIVO (No se detectó socket escuchando)${NC}"
 fi
 
-# Verificar MTU Probing y BBR
+# MTU real de la interfaz principal + TCP Base MSS + MTU Probing + MSS Clamping
+DEF_IFACE=$(ip route 2>/dev/null | awk '/^default/ {print $5; exit}')
+IFACE_MTU="N/A"
+if [[ -n "$DEF_IFACE" ]]; then
+    IFACE_MTU=$(ip link show "$DEF_IFACE" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="mtu") print $(i+1)}' | head -1)
+fi
+BASE_MSS=$(sysctl -n net.ipv4.tcp_base_mss 2>/dev/null || echo "N/A")
 BBR_CUR=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "N/A")
 MTU_CUR=$(sysctl -n net.ipv4.tcp_mtu_probing 2>/dev/null || echo "N/A")
 MSS_CLAMP="INACTIVO"
@@ -42,10 +53,10 @@ if iptables -t mangle -S POSTROUTING 2>/dev/null | grep -q 'clamp-mss-to-pmtu'; 
     MSS_CLAMP="ACTIVO"
 fi
 
-echo -e "${C_WHITE}• Congestión TCP : ${C_GREEN}${BBR_CUR}${NC}"
-echo -e "${C_WHITE}• MTU Probing    : ${C_GREEN}${MTU_CUR}${NC} │ MSS Clamping: ${C_GREEN}${MSS_CLAMP}${NC}"
+echo -e "${C_WHITE}• Interfaz / MTU : ${C_GREEN}${DEF_IFACE:-eth0} (MTU=${IFACE_MTU})${NC} │ Base MSS: ${C_GREEN}${BASE_MSS}${NC}"
+echo -e "${C_WHITE}• MTU Probing    : ${C_GREEN}${MTU_CUR}${NC} │ MSS Clamping: ${C_GREEN}${MSS_CLAMP}${NC} │ TCP: ${C_GREEN}${BBR_CUR}${NC}"
 
-if pgrep -x badvpn-udpgw >/dev/null 2>&1 || pgrep -x udpvpn >/dev/null 2>&1; then
+if ss -tlpn 2>/dev/null | grep -q 'badvpn-udpgw'; then
     echo -e "${C_WHITE}• BadVPN (7300)  : ${C_GREEN}● ACTIVO (Juegos y Llamadas VoIP listos)${NC}"
 else
     echo -e "${C_WHITE}• BadVPN (7300)  : ${C_YELLOW}○ INACTIVO${NC}"

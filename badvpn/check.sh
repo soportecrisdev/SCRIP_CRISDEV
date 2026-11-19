@@ -37,7 +37,7 @@ echo -e "${C_CYAN}------------------------------------------------------------${
 # 2. Consumo de RAM por servicio crítico
 ram_proc_mb() {
     local kb
-    kb=$(ps -ef 2>/dev/null | grep -E "$1" | grep -v grep | awk '{s+=$6} END {print s+0}')
+    kb=$(ps -eo rss,args 2>/dev/null | grep -E "$1" | grep -v grep | awk '{s+=$1} END {print s+0}')
     awk "BEGIN {printf \"%.1f MB\", ${kb:-0}/1024}"
 }
 

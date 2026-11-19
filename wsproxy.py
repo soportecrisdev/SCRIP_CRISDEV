@@ -2,22 +2,21 @@
 # -*- coding: utf-8 -*-
 """
 =============================================================================
-CRISDEV Ultra-Stable WebSocket & HTTP Proxy v4.7 (wsutil-Grade Universal Engine)
+CRISDEV Ultra-Stable WebSocket & HTTP Proxy v4.8 (Carrier-Grade CDN & Universal)
 -----------------------------------------------------------------------------
-Motor WebSocket Clásico de Alto Nivel para Payloads Avanzados, Juegos y VoIP:
-  1. Arquitectura Linux epoll pura (selectors.DefaultSelector) sin hilos y
-     sin el límite de 1024 descriptores de select.select().
+Motor WebSocket Clásico de Alto Nivel para CDN, Payloads Avanzados, Juegos y VoIP:
+  1. Arquitectura Linux epoll pura (selectors.DefaultSelector), liviano (~12MB RAM).
   2. Motor Universal de Payloads (estilo wsutil):
-     - Acepta payloads ofuscados (HFU, JUUQ/2.1, emojis, cabeceras rotas).
-     - Estado STATE_WAIT_SSH: filtra restos tras [lf][lf] o paquetes [split]
-       para que NUNCA llegue basura HTTP a OpenSSH/Dropbear (elimina
-       'invalid protocol identifier' / 'Connection reset').
-     - Soporta RFC 6455 (Cloudflare/CloudFront), HTTP 101/200 y SSH directo.
-  3. Cero caídas por inactividad: Sin timeouts artificiales en STATE_STREAMING.
-  4. Anti-CGNAT móvil (Tigo, Claro, Movistar, Wom, Vivo):
-     TCP_KEEPIDLE=20s, TCP_KEEPINTVL=5s, TCP_KEEPCNT=3, TCP_USER_TIMEOUT=30s.
-  5. Baja Latencia para Juegos y Llamadas VoIP:
-     TCP_NODELAY=1 + TCP_QUICKACK=1 + IP_TOS=0x10 (IPTOS_LOWDELAY).
+     - Acepta payloads ofuscados (HFU, HTTP/1.6 200 ok, JUUQ/2.1, emojis,
+       sin doble [crlf], múltiples [lf][lf], [split], [delay_split]).
+     - Estado STATE_WAIT_SSH: garantiza que NUNCA llegue basura HTTP a OpenSSH.
+  3. Compatibilidad CDN Estricta (Cloudflare / CloudFront / Fastly):
+     - En RFC 6455 responde 'HTTP/1.1 101 Switching Protocols' estricto (RFC 7230).
+     - En HTTP 200 nunca envía 'Content-Length: 0' (evita cortes de DPI móvil).
+  4. Anti-Drop 4G/LTE + Anti-CGNAT + CDN Keep-Alive:
+     TCP_KEEPIDLE=25s, TCP_KEEPINTVL=10s, TCP_KEEPCNT=6, TCP_USER_TIMEOUT=90s.
+     Tolera cambios de antena 4G/LTE sin cerrar el socket ni reconectar.
+  5. Baja Latencia Juegos y VoIP: TCP_NODELAY=1 + TCP_QUICKACK=1 + IPTOS_LOWDELAY.
 =============================================================================
 """
 
@@ -59,14 +58,14 @@ def tune_socket_stability(sock):
 
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPIDLE, 20)
-        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPINTVL, 5)
-        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPCNT, 3)
+        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPIDLE, 25)
+        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPINTVL, 10)
+        sock.setsockopt(socket.IPPROTO_TCP, TCP_KEEPCNT, 6)
     except Exception:
         pass
 
     try:
-        sock.setsockopt(socket.IPPROTO_TCP, TCP_USER_TIMEOUT, 30000)
+        sock.setsockopt(socket.IPPROTO_TCP, TCP_USER_TIMEOUT, 90000)
     except Exception:
         pass
 
@@ -150,7 +149,7 @@ class EpollWsProxy:
         self.selector.register(self.server_sock, selectors.EVENT_READ, self._on_accept)
         self.running = True
 
-        print(f"[+] CRISDEV WS Proxy v4.7 [wsutil Universal + Gaming/VoIP] activo en {self.bind_ip}:{self.port}", flush=True)
+        print(f"[+] CRISDEV WS Proxy v4.8 [Carrier-Grade CDN + Universal + Gaming/VoIP] activo en {self.bind_ip}:{self.port}", flush=True)
         print(f"[+] Backend destino: {self.target_host}:{self.target_port} (HTTP {self.status})", flush=True)
         if self.banner:
             print(f"[+] Minibanner: {self.banner}", flush=True)
@@ -265,20 +264,23 @@ class EpollWsProxy:
             return
 
         reason_101 = self.banner if self.banner else "Switching Protocols"
-        reason_200 = self.banner if self.banner else "OK"
+        reason_200 = self.banner if self.banner else "Connection Established"
         extra_hdrs = self.custom_headers
 
         if has_ws_key and has_ws_ver:
+            # CDN RFC 6455 estricto (Cloudflare / CloudFront / Fastly):
+            # Reason-Phrase limpio sin etiquetas HTML para cumplir RFC 7230 al 100%
             key = self._extract_header(raw_str, "Sec-WebSocket-Key")
             accept = base64.b64encode(
                 hashlib.sha1((key.strip() + WS_GUID).encode("ascii")).digest()
             ).decode("ascii")
+            banner_hdr = f"X-Banner: {self.banner}\r\n" if self.banner else ""
             resp = (
-                f"HTTP/1.1 101 {reason_101}\r\n"
+                f"HTTP/1.1 101 Switching Protocols\r\n"
                 f"Upgrade: websocket\r\n"
                 f"Connection: Upgrade\r\n"
                 f"Sec-WebSocket-Accept: {accept}\r\n"
-                f"{extra_hdrs}\r\n"
+                f"{banner_hdr}{extra_hdrs}\r\n"
             ).encode("latin1")
         elif self.status == 101 or has_upgrade or "cloudfront" in lower_str or "cloudflare" in lower_str:
             resp = (
@@ -288,10 +290,10 @@ class EpollWsProxy:
                 f"{extra_hdrs}\r\n"
             ).encode("latin1")
         else:
+            # HTTP 200 sin Content-Length: 0 (evita que el DPI corte el túnel tras el handshake)
             resp = (
                 f"HTTP/1.1 200 {reason_200}\r\n"
                 f"Connection: keep-alive\r\n"
-                f"Content-Length: 0\r\n"
                 f"{extra_hdrs}\r\n"
             ).encode("latin1")
 
