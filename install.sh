@@ -172,6 +172,25 @@ if [[ "$IS_UPDATE" -eq 1 && ( "${1:-}" == "--update" || "${1:-}" == "-u" || "${1
     done
     chmod +x "$INSTALL_DIR/proxy/wsnativo/"*.sh 2>/dev/null || true
     cp -af "$INSTALL_DIR/proxy/wsnativo/wsproxy-c.c" /usr/local/src/wsproxy-c.c 2>/dev/null || true
+    if [[ -s /usr/local/src/wsproxy-c.c ]] && command -v gcc >/dev/null 2>&1; then
+        gcc -O2 -Wall -Wextra -o /usr/local/bin/wsproxy-c.tmp /usr/local/src/wsproxy-c.c 2>/dev/null && \
+            mv -f /usr/local/bin/wsproxy-c.tmp /usr/local/bin/wsproxy-c && chmod 755 /usr/local/bin/wsproxy-c || \
+            rm -f /usr/local/bin/wsproxy-c.tmp
+    fi
+
+    echo -e "${YELLOW}[2.5/3]${NC} Sincronizando Modulo V2Ray Pro, v2raymanager y watchdog..."
+    mkdir -p /bin/v2ray "$INSTALL_DIR/Modulos/v2ray"
+    for _vf in menu_v2ray.sh instalar.sh v2ray_core.py cert_manager.sh; do
+        curl -fsSL "$REPO_RAW/Modulos/v2ray/$_vf" -o "/bin/v2ray/$_vf" 2>/dev/null || \
+            wget -q "$REPO_RAW/Modulos/v2ray/$_vf" -O "/bin/v2ray/$_vf" 2>/dev/null || true
+        cp -af "/bin/v2ray/$_vf" "$INSTALL_DIR/Modulos/v2ray/$_vf" 2>/dev/null || true
+        chmod +x "/bin/v2ray/$_vf" "$INSTALL_DIR/Modulos/v2ray/$_vf" 2>/dev/null || true
+    done
+    for _um in v2raymanager watchdog.sh; do
+        curl -fsSL "$REPO_RAW/Modulos/$_um" -o "/bin/$_um" 2>/dev/null || \
+            wget -q "$REPO_RAW/Modulos/$_um" -O "/bin/$_um" 2>/dev/null || true
+        chmod +x "/bin/$_um" 2>/dev/null || true
+    done
 
     for _ef in ws-epro instalar.sh desinstalar.sh check.sh config.yml.template; do
         curl -fsSL "$REPO_RAW/proxy/wsepro/$_ef" -o "$INSTALL_DIR/proxy/wsepro/$_ef" 2>/dev/null || \
@@ -254,16 +273,25 @@ _mdls=(
 )
 
 # Copiar o descargar modulos a /bin
+mkdir -p /bin/v2ray "$INSTALL_DIR/Modulos/v2ray"
 if [[ -d "./Modulos" ]]; then
     cp -rf ./Modulos/* /bin/ 2>/dev/null || true
+    cp -rf ./Modulos/v2ray/* "$INSTALL_DIR/Modulos/v2ray/" 2>/dev/null || true
 else
     for _m in "${_mdls[@]}"; do
         curl -fsSL "$REPO_RAW/Modulos/$_m" -o "/bin/$_m" 2>/dev/null || \
         wget -q "$REPO_RAW/Modulos/$_m" -O "/bin/$_m" 2>/dev/null || true
         chmod +x "/bin/$_m" 2>/dev/null || true
     done
+    # Descargar modulo V2Ray Pro (Multi-Puerto / Puerto Unico / Certificados / Generador JSON)
+    for _vf in menu_v2ray.sh instalar.sh v2ray_core.py cert_manager.sh; do
+        curl -fsSL "$REPO_RAW/Modulos/v2ray/$_vf" -o "/bin/v2ray/$_vf" 2>/dev/null || \
+        wget -q "$REPO_RAW/Modulos/v2ray/$_vf" -O "/bin/v2ray/$_vf" 2>/dev/null || true
+        cp -af "/bin/v2ray/$_vf" "$INSTALL_DIR/Modulos/v2ray/$_vf" 2>/dev/null || true
+        chmod +x "/bin/v2ray/$_vf" "$INSTALL_DIR/Modulos/v2ray/$_vf" 2>/dev/null || true
+    done
 fi
-chmod +x /bin/* 2>/dev/null || true
+chmod +x /bin/* /bin/v2ray/* "$INSTALL_DIR/Modulos/v2ray/"* 2>/dev/null || true
 
 # Configurar Auto-Optimizador de Memoria RAM / Swap
 if [[ -f "/bin/optimizar_vps.sh" ]]; then
@@ -276,6 +304,24 @@ if [[ -f "/bin/optimizar_vps.sh" ]]; then
     fi
     sysctl -w vm.swappiness=10 >/dev/null 2>&1 || true
 fi
+
+# Tuning Kernel TCP/BBR Persistente (Alta concurrencia V2Ray/WS/SSH en 4G/LTE)
+cat > /etc/sysctl.d/99-crisdev-v2ray-bbr.conf << 'EOF_SYSCTL'
+# CRISDEV — Kernel TCP/BBR Tuning Persistente (V2Ray / WebSocket / SSH)
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 16384
+net.ipv4.tcp_max_syn_backlog = 8192
+EOF_SYSCTL
+sysctl -p /etc/sysctl.d/99-crisdev-v2ray-bbr.conf >/dev/null 2>&1 || true
 
 # Copiar o descargar herramientas de Install/
 _inst_files=(
@@ -506,11 +552,17 @@ systemctl daemon-reload >/dev/null 2>&1 || true
 echo -e "${YELLOW}[*]${NC} Compilando e instalando Motor Nativo wsproxy-c (epoll - Puerto 80)..."
 mkdir -p /usr/local/src /usr/local/bin
 WS_ARCH="$(uname -m)"
-if [[ -f "./wsproxy-c.c" ]]; then
+# Preferir fuente canonica en proxy/wsnativo/wsproxy-c.c
+if [[ -f "./proxy/wsnativo/wsproxy-c.c" ]]; then
+    cp -af "./proxy/wsnativo/wsproxy-c.c" /usr/local/src/wsproxy-c.c
+elif [[ -f "$INSTALL_DIR/proxy/wsnativo/wsproxy-c.c" ]]; then
+    cp -af "$INSTALL_DIR/proxy/wsnativo/wsproxy-c.c" /usr/local/src/wsproxy-c.c
+elif [[ -f "./wsproxy-c.c" ]]; then
     cp -af "./wsproxy-c.c" /usr/local/src/wsproxy-c.c
 else
+    curl -fsSL "${REPO_RAW}/proxy/wsnativo/wsproxy-c.c" -o /usr/local/src/wsproxy-c.c 2>/dev/null || \
     curl -fsSL "${REPO_RAW}/wsproxy-c.c" -o /usr/local/src/wsproxy-c.c 2>/dev/null || \
-    wget -qO /usr/local/src/wsproxy-c.c "${REPO_RAW}/wsproxy-c.c" 2>/dev/null || true
+    wget -qO /usr/local/src/wsproxy-c.c "${REPO_RAW}/proxy/wsnativo/wsproxy-c.c" 2>/dev/null || true
 fi
 if [[ -s /usr/local/src/wsproxy-c.c ]] && command -v gcc >/dev/null 2>&1; then
     gcc -O2 -Wall -Wextra -o /usr/local/bin/wsproxy-c.tmp /usr/local/src/wsproxy-c.c 2>/dev/null && \
@@ -536,15 +588,20 @@ chmod 755 /usr/local/bin/wsproxy-c 2>/dev/null || true
 mkdir -p /etc/crisdev /etc/SSHPlus
 
 # 1. Copiar Motor Python v4.5 Zero-Reconnect
-if [[ -f "./wsproxy.py" ]]; then
+# Preferir fuente canonica en proxy/wsclasico/wsproxy.py
+if [[ -f "./proxy/wsclasico/wsproxy.py" ]]; then
+    cp -af "./proxy/wsclasico/wsproxy.py" /usr/local/bin/wsproxy.py
+    cp -af "./proxy/wsclasico/wsproxy.py" /etc/SSHPlus/wsproxy.py
+elif [[ -f "$INSTALL_DIR/proxy/wsclasico/wsproxy.py" ]]; then
+    cp -af "$INSTALL_DIR/proxy/wsclasico/wsproxy.py" /usr/local/bin/wsproxy.py
+    cp -af "$INSTALL_DIR/proxy/wsclasico/wsproxy.py" /etc/SSHPlus/wsproxy.py
+elif [[ -f "./wsproxy.py" ]]; then
     cp -af "./wsproxy.py" /usr/local/bin/wsproxy.py
     cp -af "./wsproxy.py" /etc/SSHPlus/wsproxy.py
-elif [[ -f "/opt/ssh-cris/wsproxy.py" ]]; then
-    cp -af "/opt/ssh-cris/wsproxy.py" /usr/local/bin/wsproxy.py
-    cp -af "/opt/ssh-cris/wsproxy.py" /etc/SSHPlus/wsproxy.py
 else
+    curl -fsSL "${REPO_RAW}/proxy/wsclasico/wsproxy.py" -o /usr/local/bin/wsproxy.py 2>/dev/null || \
     curl -fsSL "${REPO_RAW}/wsproxy.py" -o /usr/local/bin/wsproxy.py 2>/dev/null || \
-    wget -qO /usr/local/bin/wsproxy.py "${REPO_RAW}/wsproxy.py" 2>/dev/null || true
+    wget -qO /usr/local/bin/wsproxy.py "${REPO_RAW}/proxy/wsclasico/wsproxy.py" 2>/dev/null || true
     cp -af /usr/local/bin/wsproxy.py /etc/SSHPlus/wsproxy.py 2>/dev/null || true
 fi
 chmod 755 /usr/local/bin/wsproxy.py /etc/SSHPlus/wsproxy.py 2>/dev/null || true
@@ -582,7 +639,7 @@ Type=simple
 User=root
 EnvironmentFile=-/etc/crisdev/ws.conf
 EnvironmentFile=-/etc/crisdev/ws-c.conf
-ExecStart=/bin/sh -c 'exec /usr/local/bin/wsproxy-c --bind "${LISTEN_ADDR:-0.0.0.0}" --port "${LISTEN_PORT:-80}" --target "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" --status "${HTTP_STATUS:-101}" --idle "${IDLE_TIMEOUT:-300}" --max-conns "${MAX_CONNS:-16384}" ${BANNER_MSG:+--msg "$BANNER_MSG"}'
+ExecStart=/bin/sh -c 'exec /usr/local/bin/wsproxy-c --bind "${LISTEN_ADDR:-0.0.0.0}" --port "${LISTEN_PORT:-80}" --target "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" --status "${HTTP_STATUS:-auto}" --idle "${IDLE_TIMEOUT:-300}" --max-conns "${MAX_CONNS:-16384}" ${BANNER_MSG:+--msg "$BANNER_MSG"}'
 Restart=always
 RestartSec=1
 OOMScoreAdjust=-900
@@ -612,7 +669,7 @@ Type=simple
 User=root
 EnvironmentFile=-/etc/crisdev/ws.conf
 EnvironmentFile=-/etc/crisdev/ws-python.conf
-ExecStart=/bin/sh -c 'exec /usr/bin/python3 /usr/local/bin/wsproxy.py -b "${LISTEN_ADDR:-0.0.0.0}" -p "${LISTEN_PORT:-80}" -t "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" -s "${HTTP_STATUS:-101}" ${BANNER_MSG:+-m "$BANNER_MSG"}'
+ExecStart=/bin/sh -c 'exec /usr/bin/python3 /usr/local/bin/wsproxy.py -b "${LISTEN_ADDR:-0.0.0.0}" -p "${LISTEN_PORT:-80}" -t "${TARGET_HOST:-127.0.0.1}:${TARGET_PORT:-22}" -s "${HTTP_STATUS:-auto}" ${BANNER_MSG:+-m "$BANNER_MSG"}'
 Restart=always
 RestartSec=1
 OOMScoreAdjust=-900
@@ -794,12 +851,20 @@ ln -sfn /usr/local/bin/xhttp-server /usr/local/bin/xhttp 2>/dev/null || true
 ln -sfn /usr/local/bin/xhttp-server /bin/xhttp-server 2>/dev/null || true
 ln -sfn /usr/local/bin/xhttp-server /bin/xhttp 2>/dev/null || true
 
-# Generar certificado base para BHTTP TLS si no existe
-if [[ ! -f /etc/bhttp/server.crt || ! -f /etc/bhttp/server.key ]]; then
-    openssl req -x509 -newkey rsa:2048 -days 3650 -nodes \
-        -keyout /etc/bhttp/server.key -out /etc/bhttp/server.crt -subj "/CN=crisdev.online" >/dev/null 2>&1 || true
-    chmod 600 /etc/bhttp/server.key 2>/dev/null || true
-    chmod 644 /etc/bhttp/server.crt 2>/dev/null || true
+# Generar certificado TLS ECDSA centralizado (/etc/ssl/crisdev/) para Stunnel, V2Ray, BHTTP-TLS y Hysteria2
+if [[ ! -f /etc/ssl/crisdev/fullchain.crt || ! -f /etc/ssl/crisdev/private.key ]]; then
+    if [[ -x /bin/v2ray/cert_manager.sh ]]; then
+        bash /bin/v2ray/cert_manager.sh selfsigned "ip.crispdev.online" >/dev/null 2>&1 || true
+    else
+        mkdir -p /etc/ssl/crisdev /etc/bhttp
+        openssl ecparam -name prime256v1 -genkey -noout -out /etc/ssl/crisdev/private.key >/dev/null 2>&1 || true
+        openssl req -new -x509 -key /etc/ssl/crisdev/private.key -out /etc/ssl/crisdev/fullchain.crt -days 3650 \
+            -subj "/CN=ip.crispdev.online" >/dev/null 2>&1 || true
+        chmod 600 /etc/ssl/crisdev/private.key 2>/dev/null || true
+        chmod 644 /etc/ssl/crisdev/fullchain.crt 2>/dev/null || true
+        cp -f /etc/ssl/crisdev/fullchain.crt /etc/bhttp/server.crt 2>/dev/null || true
+        cp -f /etc/ssl/crisdev/private.key /etc/bhttp/server.key 2>/dev/null || true
+    fi
 fi
 
 # Instalar helper bhttp-connect para canal SSH sesión

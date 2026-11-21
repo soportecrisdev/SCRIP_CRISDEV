@@ -31,18 +31,21 @@ AUDIT_LOG = "/etc/crisdev/logs/audit.log"
 SERVER_CONFIG = "/etc/crisdev/data/server_config.json"
 CERT_DIR = "/etc/crisdev/certs"
 
-# Puertos Cloudflare-compatible
+# Puertos Cloudflare-compatible (Mapa Canónico Cero Colisiones)
 PORT_SSH = 22
 PORT_STUNNEL = 443          # SSH-SSL via Stunnel (puerto estandar HTTPS)
-PORT_XRAY_WS = 443          # Xray WebSocket (via Cloudflare)
-PORT_XRAY_GRPC = 2083       # Xray gRPC (Cloudflare compatible)
-PORT_XRAY_VLESS = 2096      # Xray VLESS
+PORT_XRAY_WS = 8443         # V2Ray/Xray VMess + WS + TLS (sin colision con Stunnel 443)
+PORT_XRAY_VLESS = 2096      # V2Ray/Xray VLESS + WS + TLS (Cloudflare compatible)
+PORT_XRAY_PLAIN = 8880      # V2Ray/Xray VMess + WS sin TLS (Cloudflare HTTP + passthrough :80)
+PORT_XRAY_VLESS_LOCAL = 8882  # V2Ray/Xray VLESS local (passthrough desde wsproxy :80 / CF Flexible :443)
+PORT_XRAY_GRPC = 2087       # Reservado gRPC TLS (sin colision con XHTTP 2053/2083)
+SSL_CRISDEV_DIR = "/etc/ssl/crisdev"
 PORT_HYSTERIA = 443         # Hysteria2 UDP
 PORT_UDP_CUSTOM = "7100-7200"
 PORT_BADVPN = 7300
 PORT_SLOWDNS = 5300
 PORT_SOCKS = 7777           # Python SOCKS proxy
-PORT_WS_EPRO = 80           # WebSocket Python (Cloudflare HTTP)
+PORT_WS_EPRO = 80           # WebSocket Python (SSH / + Passthrough V2Ray /vless y /b7YMkKX8/)
 
 
 # ============================================================================
@@ -591,70 +594,158 @@ def _hy_sync_users(restart: bool = True):
         _cmd("systemctl restart zivpn 2>/dev/null || true", sudo=True)
 
 
-# --- XRAY / V2Ray ---
-XRAY_CONF_DIR = "/usr/local/etc/xray"
+# --- XRAY / V2Ray (Multi-Puerto sin colisiones) ---
+XRAY_CONF_DIR = "/etc/v2ray"
+
+
+def _is_tcp_port_busy(port: int) -> bool:
+    """Comprueba si un puerto TCP ya esta ocupado por otro servicio (evita matar Stunnel/BHTTP/XHTTP)."""
+    out = _cmd(f"ss -tlpn 2>/dev/null | grep -E ':{port}\\b'")
+    return bool(out.strip())
+
+
+def _issue_letsencrypt_cert(domain: str):
+    """Emite certificado oficial Let's Encrypt ECDSA P-256 con renovacion automatica para todos los servicios TLS."""
+    if not domain:
+        error_msg("Debes indicar un dominio apuntando a esta VPS (ej. ip.crispdev.online).")
+        return False
+    info_msg(f"Emitiendo certificado oficial Let's Encrypt ECDSA para {domain}...")
+    _cmd("which socat >/dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq socat)", sudo=True, timeout=120)
+    _cmd("test -x /root/.acme.sh/acme.sh || (curl -s https://get.acme.sh | sh -s email=admin@crispdev.online)", sudo=True, timeout=120)
+    _cmd("/root/.acme.sh/acme.sh --set-default-ca --server letsencrypt", sudo=True)
+    _cmd(f"mkdir -p {SSL_CRISDEV_DIR}", sudo=True)
+
+    # Pausa breve en puerto 80 solo durante validacion HTTP-01
+    _cmd("systemctl stop crisdev-ws-python.service 2>/dev/null || true", sudo=True)
+    res = _cmd(
+        f"/root/.acme.sh/acme.sh --issue -d {domain} --standalone --keylength ec-256 --server letsencrypt --force",
+        sudo=True,
+        timeout=120,
+    )
+    _cmd("systemctl start crisdev-ws-python.service 2>/dev/null || true", sudo=True)
+
+    reload_sh = (
+        "#!/usr/bin/env bash\nset -e\n"
+        f'CERT="{SSL_CRISDEV_DIR}/fullchain.crt"\n'
+        f'KEY="{SSL_CRISDEV_DIR}/private.key"\n'
+        f'PEM="{SSL_CRISDEV_DIR}/stunnel.pem"\n'
+        'if [[ -s "$CERT" && -s "$KEY" ]]; then\n'
+        '  cat "$CERT" "$KEY" > "$PEM"\n'
+        '  chmod 644 "$CERT" && chmod 600 "$KEY" "$PEM"\n'
+        '  cp -f "$PEM" /etc/stunnel/stunnel.pem && chmod 600 /etc/stunnel/stunnel.pem\n'
+        '  systemctl restart stunnel4 2>/dev/null || true\n'
+        '  systemctl restart v2ray 2>/dev/null || systemctl restart xray 2>/dev/null || true\n'
+        '  if [[ -d /etc/bhttp ]]; then cp -f "$CERT" /etc/bhttp/server.crt && cp -f "$KEY" /etc/bhttp/server.key && systemctl restart bhttp-tls 2>/dev/null || true; fi\n'
+        '  if [[ -d /etc/hysteria2 ]]; then cp -f "$CERT" /etc/hysteria2/server.crt && cp -f "$KEY" /etc/hysteria2/server.key && systemctl restart hysteria2 2>/dev/null || true; fi\n'
+        'fi\n'
+    )
+    _cmd("bash -c 'cat > /usr/local/bin/crisdev-cert-reload.sh'", input_text=reload_sh, sudo=True)
+    _cmd("chmod 755 /usr/local/bin/crisdev-cert-reload.sh", sudo=True)
+    _cmd(
+        f"/root/.acme.sh/acme.sh --install-cert -d {domain} --ecc "
+        f"--fullchain-file {SSL_CRISDEV_DIR}/fullchain.crt "
+        f"--key-file {SSL_CRISDEV_DIR}/private.key "
+        f'--reloadcmd "/usr/local/bin/crisdev-cert-reload.sh"',
+        sudo=True,
+    )
+    if os.path.exists(f"{SSL_CRISDEV_DIR}/fullchain.crt"):
+        ok_msg(f"Certificado Let's Encrypt ECDSA instalado en {SSL_CRISDEV_DIR}/")
+        _audit("CERT_LETSENCRYPT", f"ECDSA emitido para {domain}")
+        return True
+    error_msg("No se pudo emitir Let's Encrypt; revisa que el dominio apunte directo a la VPS (nube gris).")
+    return False
 
 
 def _install_xray():
-    """Instala Xray-core con VLESS+WS+TLS."""
-    info_msg("Instalando Xray-core...")
-    _cmd(
-        "bash -c \"$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)\" -- install",
-        sudo=True,
-        timeout=180,
-    )
+    """Configura V2Ray/Xray multi-puerto sin colisiones (8443 VMess TLS, 2096 VLESS TLS, 8880 VMess Plain, 8882 VLESS :80)."""
+    info_msg("Configurando V2Ray/Xray Multi-Puerto (sin tocar Stunnel/BHTTP/XHTTP/HCR)...")
 
-    # Generar UUID
+    cert_crt = f"{SSL_CRISDEV_DIR}/fullchain.crt"
+    cert_key = f"{SSL_CRISDEV_DIR}/private.key"
+    if not (os.path.exists(cert_crt) and os.path.exists(cert_key)):
+        # Fallback seguro a certificado ECDSA autofirmado si aun no hay Let's Encrypt
+        os.makedirs(SSL_CRISDEV_DIR, exist_ok=True)
+        _cmd(
+            f"openssl ecparam -name prime256v1 -genkey -noout -out {cert_key} && "
+            f"openssl req -new -x509 -key {cert_key} -out {cert_crt} -days 3650 -subj '/CN=ip.crispdev.online'",
+            sudo=True,
+        )
+
     uuid = _cmd("cat /proc/sys/kernel/random/uuid", sudo=True).strip()
     if not uuid:
-        uuid = "a3b4c5d6-e7f8-9a0b-c1d2-e3f4a5b6c7d8"
+        uuid = "dc5293ed-36e7-401a-b0b9-5c2ac33e6ecf"
 
-    # Configuracion VLESS + WebSocket
-    ws_path = "/ws"
-    conf = (
-        '{\n'
-        '  "log": {"loglevel": "warning"},\n'
-        '  "inbounds": [\n'
-        '    {\n'
-        '      "listen": "127.0.0.1",\n'
-        f'      "port": 10001,\n'
-        '      "protocol": "vless",\n'
-        '      "settings": {\n'
-        f'        "clients": [{{"id": "{uuid}", "flow": ""}}],\n'
-        '        "decryption": "none"\n'
-        '      },\n'
-        '      "streamSettings": {\n'
-        '        "network": "ws",\n'
-        '        "wsSettings": {\n'
-        f'          "path": "{ws_path}",\n'
-        '          "headers": {"Host": "test.crisdev.online"}\n'
-        '        }\n'
-        '      }\n'
-        '    }\n'
-        '  ],\n'
-        '  "outbounds": [\n'
-        '    {"protocol": "freedom", "tag": "direct"},\n'
-        '    {"protocol": "blackhole", "tag": "blocked"}\n'
-        '  ],\n'
-        '  "routing": {\n'
-        '    "rules": [\n'
-        '      {"type": "field", "ip": ["geoip:private"], "outboundTag": "blocked"},\n'
-        '      {"type": "field", "outboundTag": "blocked", "protocol": ["bittorrent"]}\n'
-        '    ]\n'
-        '  }\n'
-        '}\n'
-    )
+    inbounds = []
+    # Verificar cada puerto antes de asignar para no chocar con otros servicios
+    candidates = [
+        ("vmess-ws-tls-8443", PORT_XRAY_WS, "0.0.0.0", "vmess", True, "/b7YMkKX8/"),
+        ("vless-ws-tls-2096", PORT_XRAY_VLESS, "0.0.0.0", "vless", True, "/vless"),
+        ("vmess-ws-plain-8880", PORT_XRAY_PLAIN, "0.0.0.0", "vmess", False, "/b7YMkKX8/"),
+        ("vless-ws-plain-8882", PORT_XRAY_VLESS_LOCAL, "127.0.0.1", "vless", False, "/vless"),
+    ]
+    for tag, port, listen_addr, proto, use_tls, ws_path in candidates:
+        ib = {
+            "tag": tag,
+            "port": port,
+            "listen": listen_addr,
+            "protocol": proto,
+            "settings": (
+                {"clients": [{"id": uuid, "alterId": 0}]}
+                if proto == "vmess"
+                else {"clients": [{"id": uuid}], "decryption": "none"}
+            ),
+            "streamSettings": {
+                "network": "ws",
+                "security": "tls" if use_tls else "none",
+                "wsSettings": {"path": ws_path},
+            },
+            "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
+        }
+        if use_tls:
+            ib["streamSettings"]["tlsSettings"] = {
+                "alpn": ["http/1.1"],
+                "minVersion": "1.2",
+                "certificates": [{"certificateFile": cert_crt, "keyFile": cert_key}],
+            }
+        inbounds.append(ib)
+
+    conf_obj = {
+        "log": {
+            "access": "/var/log/v2ray/access.log",
+            "error": "/var/log/v2ray/error.log",
+            "loglevel": "warning",
+        },
+        "inbounds": inbounds,
+        "outbounds": [
+            {"protocol": "freedom", "settings": {"domainStrategy": "UseIPv4"}, "tag": "direct"},
+            {"protocol": "blackhole", "settings": {}, "tag": "block"},
+        ],
+        "routing": {
+            "domainStrategy": "AsIs",
+            "rules": [
+                {
+                    "type": "field",
+                    "ip": ["0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7"],
+                    "outboundTag": "block",
+                }
+            ],
+        },
+    }
 
     os.makedirs(XRAY_CONF_DIR, exist_ok=True)
-    _cmd(f"bash -c 'cat > {XRAY_CONF_DIR}/config.json'", input_text=conf, sudo=True)
+    _cmd(f"cp -a {XRAY_CONF_DIR}/config.json {XRAY_CONF_DIR}/config.json.bak 2>/dev/null || true", sudo=True)
+    _cmd(f"bash -c 'cat > {XRAY_CONF_DIR}/config.json'", input_text=json.dumps(conf_obj, indent=2), sudo=True)
 
-    _cmd("systemctl enable xray", sudo=True)
-    _cmd("systemctl restart xray", sudo=True)
+    # Abrir puertos en iptables sin alterar reglas de otros protocolos
+    for p in (PORT_XRAY_WS, PORT_XRAY_VLESS, PORT_XRAY_PLAIN):
+        _cmd(f"iptables -C INPUT -p tcp --dport {p} -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -p tcp --dport {p} -j ACCEPT", sudo=True)
 
-    ok_msg("Xray-core instalado (VLESS+WS)")
+    svc = "v2ray" if os.path.exists("/etc/systemd/system/v2ray.service") else "xray"
+    _cmd(f"systemctl enable {svc} && systemctl restart {svc}", sudo=True)
+
+    ok_msg(f"V2Ray/Xray Multi-Puerto activo ({svc}): 8443(VMess TLS), 2096(VLESS TLS), 8880(VMess Plain), 80/443(via wsproxy)")
     info_msg(f"UUID: {uuid}")
-    info_msg(f"WebSocket path: {ws_path}")
-    _audit("XRAY_INSTALL", f"VLESS+WS, UUID: {uuid}")
+    _audit("XRAY_INSTALL", f"Multi-port V2Ray/Xray, UUID: {uuid}")
 
 
 def _stop_xray():
@@ -1227,14 +1318,16 @@ def mod_xray():
         header()
         breadcrumb("> XRAY / V2Ray")
         print()
-        print(f"    {bold('1)')} Estado Xray-core")
-        print(f"    {bold('2)')} Reiniciar Xray")
-        print(f"    {bold('3)')} Ver logs Xray")
+        print(f"    {bold('1)')} Estado V2Ray/Xray (Multi-Puerto)")
+        print(f"    {bold('2)')} Reiniciar V2Ray/Xray")
+        print(f"    {bold('3)')} Ver logs V2Ray/Xray")
         print(f"    {bold('4)')} Hysteria2 estado")
         print(f"    {bold('5)')} Reiniciar Hysteria2")
         print(f"    {bold('6)')} udp-custom estado")
         print(f"    {bold('7)')} Reiniciar udp-custom")
         print(f"    {bold('8)')} Generar links de conexion")
+        print(f"    {bold('9)')} Reconfigurar V2Ray Multi-Puerto (8443/2096/8880/80)")
+        print(f"    {bold('10)')} Emitir Certificado Oficial Let's Encrypt (ECDSA)")
         print()
         separator()
         print(f"    {dim('[0] Volver')}")
@@ -1243,7 +1336,7 @@ def mod_xray():
         if opt == "1":
             _xray_status()
         elif opt == "2":
-            _xray_restart("xray")
+            _xray_restart("v2ray" if os.path.exists("/etc/systemd/system/v2ray.service") else "xray")
         elif opt == "3":
             _xray_logs()
         elif opt == "4":
@@ -1256,6 +1349,11 @@ def mod_xray():
             _xray_restart("udp-custom")
         elif opt == "8":
             _generate_links()
+        elif opt == "9":
+            _install_xray()
+        elif opt == "10":
+            dom = prompt_input("Dominio directo a la VPS (ej. ip.crispdev.online)")
+            _issue_letsencrypt_cert(dom)
         elif opt == "0":
             return
         else:

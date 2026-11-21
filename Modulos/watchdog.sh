@@ -118,9 +118,9 @@ check_and_heal() {
         fi
     done
 
-    # 11. Puerto 80 / WebSocket (wsproxy-c gestionado EXCLUSIVAMENTE por systemd sshplus-ws.service)
+    # 11. Puerto 80 / WebSocket (sshplus-ws.service en C o crisdev-ws-python.service en Python)
     #     Incluye sonda HTTP 101 real (doble verificacion) y limpieza de copias legacy en screen.
-    if [[ -f /etc/systemd/system/sshplus-ws.service ]]; then
+    if [[ -f /etc/systemd/system/sshplus-ws.service ]] && systemctl is-enabled --quiet sshplus-ws.service 2>/dev/null; then
         # Limpiar cualquier copia huerfana legacy en screen/wsproxy.py que intente robar el puerto
         if pgrep -f '/etc/SSHPlus/wsproxy\.py' >/dev/null 2>&1; then
             for sid in $(screen -ls 2>/dev/null | grep '\.ws' | awk '{print $1}'); do
@@ -160,6 +160,42 @@ check_and_heal() {
                 systemctl restart sshplus-ws.service 2>/dev/null || true
                 log_event "⚠️ ALERTA: sshplus-ws (puerto ${ws_port}) no respondió sonda HTTP 101 tras 2 intentos. ¡Reiniciado!"
             fi
+        fi
+    elif [[ -f /etc/systemd/system/crisdev-ws-python.service ]] && systemctl is-enabled --quiet crisdev-ws-python.service 2>/dev/null; then
+        if ! systemctl is-active --quiet crisdev-ws-python.service 2>/dev/null; then
+            systemctl restart crisdev-ws-python.service 2>/dev/null || true
+            log_event "⚠️ ALERTA: crisdev-ws-python (puerto 80) estaba caído. ¡Auto-recuperado!"
+        else
+            local probe_ok=0
+            for _try in 1 2; do
+                if (exec 3<>"/dev/tcp/127.0.0.1/80" 2>/dev/null && \
+                    printf 'GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n' >&3 && \
+                    IFS= read -r -t 3 _resp <&3 && \
+                    [[ "$_resp" == *"101"* || "$_resp" == *"200"* ]]); then
+                    exec 3>&- 2>/dev/null || true
+                    probe_ok=1
+                    break
+                fi
+                exec 3>&- 2>/dev/null || true
+                sleep 1
+            done
+            if [[ "$probe_ok" -eq 0 ]]; then
+                systemctl restart crisdev-ws-python.service 2>/dev/null || true
+                log_event "⚠️ ALERTA: crisdev-ws-python (puerto 80) no respondió sonda HTTP 101 tras 2 intentos. ¡Reiniciado!"
+            fi
+        fi
+    fi
+
+    # 12. V2Ray / Xray Core (Multi-Puerto VMess/VLESS)
+    if [[ -f /etc/systemd/system/v2ray.service || -f /lib/systemd/system/v2ray.service ]] && systemctl is-enabled --quiet v2ray.service 2>/dev/null; then
+        if ! systemctl is-active --quiet v2ray.service 2>/dev/null; then
+            systemctl restart v2ray.service 2>/dev/null || true
+            log_event "⚠️ ALERTA: V2Ray (v2ray.service) estaba caído. ¡Auto-recuperado con éxito!"
+        fi
+    elif [[ -f /etc/systemd/system/xray.service || -f /lib/systemd/system/xray.service ]] && systemctl is-enabled --quiet xray.service 2>/dev/null; then
+        if ! systemctl is-active --quiet xray.service 2>/dev/null; then
+            systemctl restart xray.service 2>/dev/null || true
+            log_event "⚠️ ALERTA: Xray (xray.service) estaba caído. ¡Auto-recuperado con éxito!"
         fi
     fi
 }

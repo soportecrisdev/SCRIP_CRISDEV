@@ -98,7 +98,7 @@ class TunnelSession:
     __slots__ = (
         'client_sock', 'target_sock', 'client_fd', 'target_fd',
         'c2t_buf', 't2c_buf', 'hs_buf', 'discarded_wait',
-        'banner_split_done', 'state', 'created_at', 'peer_ip'
+        'banner_split_done', 'is_v2ray', 'state', 'created_at', 'peer_ip'
     )
     STATE_HANDSHAKE = 0
     STATE_WAIT_SSH = 1
@@ -115,6 +115,7 @@ class TunnelSession:
         self.hs_buf = bytearray()
         self.discarded_wait = 0
         self.banner_split_done = False
+        self.is_v2ray = False
         self.state = self.STATE_HANDSHAKE
         self.created_at = time.monotonic()
         self.peer_ip = peer_ip
@@ -216,13 +217,35 @@ class EpollWsProxy:
             except Exception:
                 pass
 
-    def _connect_target(self, session):
+    def _match_v2ray_route(self, req_path):
+        if not req_path or req_path == "/":
+            return None
+        if req_path.startswith("/b7YMkKX8"):
+            return 8880
+        if req_path.startswith("/vless"):
+            return 8882
+        try:
+            routes_file = "/etc/v2ray/wsproxy_routes.conf"
+            if os.path.isfile(routes_file):
+                with open(routes_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if "=" in line and not line.startswith("#"):
+                            p, port_s = line.split("=", 1)
+                            p = p.strip()
+                            if p and p != "/" and req_path.startswith(p):
+                                return int(port_s.strip())
+        except Exception:
+            pass
+        return None
+
+    def _connect_target(self, session, override_port=None):
         try:
             target_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             target_sock.setblocking(False)
             tune_socket_stability(target_sock, is_client=False)
             try:
-                target_sock.connect((self.target_host, self.target_port))
+                target_sock.connect((self.target_host, override_port or self.target_port))
             except (BlockingIOError, InterruptedError):
                 pass
             session.target_sock = target_sock
@@ -266,14 +289,40 @@ class EpollWsProxy:
         except Exception:
             raw_str = ""
 
+        # V2RAY_PASSTHROUGH + V2RAY_TURBO_BUF: enruta paths V2Ray (fijos + /etc/v2ray/wsproxy_routes.conf)
+        _first_line = raw_str.split("\r\n", 1)[0]
+        _fl_parts = _first_line.split()
+        _req_path = _fl_parts[1] if len(_fl_parts) >= 2 else ""
+        _v2_port = self._match_v2ray_route(_req_path)
+        if _v2_port:
+            if not self._connect_target(session, override_port=_v2_port):
+                self._close_session(session)
+                return
+            session.is_v2ray = True
+            for _s in (session.client_sock, session.target_sock):
+                if _s:
+                    try:
+                        _s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 524288)
+                        _s.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 524288)
+                        _s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    except Exception:
+                        pass
+            session.c2t_buf.extend(full_raw)
+            self._flush_c2t(session)
+            session.state = TunnelSession.STATE_STREAMING
+            return
+
         lower_str = raw_str.lower()
         has_ws_key = "sec-websocket-key" in lower_str
         has_ws_ver = "sec-websocket-version" in lower_str
         has_upgrade = "upgrade" in lower_str and "websocket" in lower_str
         is_cdn = ("cloudfront" in lower_str or "cloudflare" in lower_str or "fastly" in lower_str)
 
-        reason_101 = self.banner if self.banner else "Switching Protocols"
-        reason_200 = self.banner if self.banner else "Connection Established"
+        # Evitar HTML (<font ...>) en la Reason-Phrase de la linea de estado HTTP/1.1 (compatibilidad HTTP Custom)
+        has_html_banner = bool(self.banner and ("<" in self.banner or ">" in self.banner))
+        reason_101 = "Switching Protocols" if (not self.banner or has_html_banner) else self.banner
+        reason_200 = "Connection Established" if (not self.banner or has_html_banner) else self.banner
+        banner_hdr = f"X-Banner: {self.banner}\r\n" if self.banner else ""
         extra_hdrs = self.custom_headers
 
         # Decisión inteligente de respuesta HTTP (RFC 6455 / 101 / 200 limpio)
@@ -282,7 +331,6 @@ class EpollWsProxy:
             accept = base64.b64encode(
                 hashlib.sha1((key.strip() + WS_GUID).encode("ascii")).digest()
             ).decode("ascii")
-            banner_hdr = f"X-Banner: {self.banner}\r\n" if self.banner else ""
             resp = (
                 f"HTTP/1.1 101 Switching Protocols\r\n"
                 f"Upgrade: websocket\r\n"
@@ -295,14 +343,14 @@ class EpollWsProxy:
                 f"HTTP/1.1 101 {reason_101}\r\n"
                 f"Upgrade: websocket\r\n"
                 f"Connection: Upgrade\r\n"
-                f"{extra_hdrs}\r\n"
+                f"{banner_hdr}{extra_hdrs}\r\n"
             ).encode("latin1")
         else:
-            # HTTP 200 limpio (sin Content-Length: 0 ni Upgrade: websocket -> anti-corte DPI Tigo)
+            # HTTP 200 limpio (sin Content-Length: 0 ni Upgrade: websocket -> anti-corte DPI)
             resp = (
                 f"HTTP/1.1 200 {reason_200}\r\n"
                 f"Connection: keep-alive\r\n"
-                f"{extra_hdrs}\r\n"
+                f"{banner_hdr}{extra_hdrs}\r\n"
             ).encode("latin1")
 
         # 3. SEPARACIÓN ESTRICTA HTTP -> SSH (Anti-DPI):
@@ -369,7 +417,7 @@ class EpollWsProxy:
 
         if mask & selectors.EVENT_READ:
             try:
-                data = client_sock.recv(BUFFER_SIZE)
+                data = client_sock.recv(262144 if session.is_v2ray else BUFFER_SIZE)
             except (BlockingIOError, InterruptedError):
                 return
             except ConnectionResetError:
@@ -404,7 +452,7 @@ class EpollWsProxy:
 
         if mask & selectors.EVENT_READ:
             try:
-                data = target_sock.recv(BUFFER_SIZE)
+                data = target_sock.recv(262144 if session.is_v2ray else BUFFER_SIZE)
             except (BlockingIOError, InterruptedError):
                 return
             except ConnectionResetError:

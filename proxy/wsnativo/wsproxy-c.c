@@ -2,7 +2,7 @@
  * =============================================================================
  * CRISDEV wsproxy-c — High-Performance Native Linux epoll WebSocket/HTTP Proxy
  * =============================================================================
- * Designed for HTTP Conexion (DoriaXVPN / CrisDEV) on Port 80 (or custom port):
+ * Designed for HTTP Conexion (CrisDEV) on Port 80 (or custom port):
  *  - Single-threaded Linux epoll event loop (non-blocking I/O, zero threads/conn)
  *  - Supports 16,384+ concurrent tunnels (no 1024 FD select() limit)
  *  - Constant ~2-5 MB RAM footprint, zero per-connection disk I/O
@@ -699,6 +699,43 @@ static int start_backend_connect(conn_t *c) {
     return 0;
 }
 
+/* V2Ray dynamic passthrough matcher (/vless -> 8882, /b7YMkKX8 -> 8880 + /etc/v2ray/wsproxy_routes.conf) */
+static int match_v2ray_route(const char *header_copy) {
+    const char *sp1 = strchr(header_copy, ' ');
+    if (!sp1) return 0;
+    sp1++;
+    const char *sp2 = sp1;
+    while (*sp2 && *sp2 != ' ' && *sp2 != '\r' && *sp2 != '\n') sp2++;
+    size_t plen = (size_t)(sp2 - sp1);
+    if (plen <= 1 || sp1[0] != '/') return 0;
+
+    if (plen >= 9 && strncmp(sp1, "/b7YMkKX8", 9) == 0) return 8880;
+    if (plen >= 6 && strncmp(sp1, "/vless", 6) == 0) return 8882;
+
+    FILE *fp = fopen("/etc/v2ray/wsproxy_routes.conf", "r");
+    if (fp) {
+        char line[256];
+        while (fgets(line, sizeof(line), fp)) {
+            if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+            char *eq = strchr(line, '=');
+            if (!eq) continue;
+            *eq = '\0';
+            char *rp = line;
+            while (*rp == ' ' || *rp == '\t') rp++;
+            size_t rlen = strlen(rp);
+            while (rlen > 0 && (rp[rlen - 1] == ' ' || rp[rlen - 1] == '\t')) rlen--;
+            if (rlen > 1 && rp[0] == '/' && plen >= rlen && strncmp(sp1, rp, rlen) == 0) {
+                int port = atoi(eq + 1);
+                fclose(fp);
+                if (port > 0 && port <= 65535) return port;
+                return 0;
+            }
+        }
+        fclose(fp);
+    }
+    return 0;
+}
+
 static void handle_handshake_read(conn_t *c) {
     uint8_t tmp[4096];
     for (;;) {
@@ -760,6 +797,23 @@ static void handle_handshake_read(conn_t *c) {
         if (copy_len > MAX_HEADER_BYTES) copy_len = MAX_HEADER_BYTES;
         memcpy(header_copy, hb, copy_len);
         header_copy[copy_len] = '\0';
+
+        /* V2RAY_PASSTHROUGH: enruta paths V2Ray sin afectar SSH ni capar BBR */
+        int v2_port = match_v2ray_route(header_copy);
+        if (v2_port > 0) {
+            c->ws_mode = 0;
+            c->ssh_started = 1;
+            c->banner_split_done = 1;
+            c->target_port = v2_port;
+            c->resp_len = 0;
+            int bigbuf = 524288;
+            setsockopt(c->cfd, SOL_SOCKET, SO_RCVBUF, &bigbuf, sizeof(bigbuf));
+            setsockopt(c->cfd, SOL_SOCKET, SO_SNDBUF, &bigbuf, sizeof(bigbuf));
+            if (start_backend_connect(c) < 0) {
+                conn_schedule_close(c);
+            }
+            return;
+        }
 
         /* Parse headers */
         char upgrade_val[64]  = "";

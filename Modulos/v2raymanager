@@ -1,5 +1,11 @@
 #!/bin/bash
 # lang=es v2raymanager v3-2026
+# Redirige al nuevo Modulo V2Ray Pro (Multi-Puerto / Puerto Unico / Certificados / Generador JSON)
+if [[ -x "/bin/v2ray/menu_v2ray.sh" ]]; then
+    exec bash /bin/v2ray/menu_v2ray.sh "$@"
+elif [[ -x "/opt/ssh-cris/Modulos/v2ray/menu_v2ray.sh" ]]; then
+    exec bash /opt/ssh-cris/Modulos/v2ray/menu_v2ray.sh "$@"
+fi
 #====================================================
 #
 #====================================================
